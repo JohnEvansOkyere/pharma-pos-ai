@@ -31,7 +31,6 @@ env/
 # Database
 *.db
 *.sqlite3
-*.sql
 
 # Logs
 logs/
@@ -90,3 +89,14 @@ frontend/electron/out/
 
 # Installer builds
 installer-builds/
+
+# Docker Documentation (exclude from git, keep README.md)
+DOCKER_DEPLOYMENT.md
+DOCKER_FILES_SUMMARY.md
+QUICK_START.md
+deploy.sh
+
+# Database files (exclude from git)
+database/
+!database/.gitkeep
+
