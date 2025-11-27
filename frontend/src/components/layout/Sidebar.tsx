@@ -17,7 +17,7 @@ const navigation = [
   { name: 'Sales', href: '/sales', icon: FiDollarSign },
   { name: 'Suppliers', href: '/suppliers', icon: FiUsers },
   { name: 'Notifications', href: '/notifications', icon: FiBell },
-  { name: 'Settings', href: '/settings', icon: FiSettings, adminOnly: true },
+  { name: 'Settings', href: '/settings', icon: FiSettings, adminOrManager: true },
 ]
 
 export default function Sidebar() {
@@ -34,7 +34,11 @@ export default function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto custom-scrollbar">
         {navigation
-          .filter((item) => !item.adminOnly || user?.role === 'admin')
+          .filter((item) => {
+            if (item.adminOnly) return user?.role === 'admin'
+            if (item.adminOrManager) return user?.role === 'admin' || user?.role === 'manager'
+            return true
+          })
           .map((item) => (
             <NavLink
               key={item.name}

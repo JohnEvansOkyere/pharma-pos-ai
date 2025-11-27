@@ -35,17 +35,38 @@ def require_admin(current_user: User = Depends(get_current_active_user)):
     return current_user
 
 
+def require_admin_or_manager(current_user: User = Depends(get_current_active_user)):
+    """
+    Dependency to check if current user is admin or manager.
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        User object if admin or manager
+
+    Raises:
+        HTTPException: If user is not admin or manager
+    """
+    if current_user.role not in [UserRole.ADMIN, UserRole.MANAGER]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin or Manager access required"
+        )
+    return current_user
+
+
 @router.get("", response_model=List[UserSchema])
 def list_users(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin_or_manager)
 ):
     """
-    List all users (Admin only).
+    List all users (Admin or Manager).
 
     Args:
         db: Database session
-        current_user: Current authenticated admin user
+        current_user: Current authenticated admin or manager user
 
     Returns:
         List of users
@@ -58,22 +79,33 @@ def list_users(
 def create_user(
     user_data: UserCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin_or_manager)
 ):
     """
-    Create a new user (Admin only).
+    Create a new user (Admin or Manager).
+
+    Managers can only create cashier users.
+    Admins can create users with any role.
 
     Args:
         user_data: User creation data
         db: Database session
-        current_user: Current authenticated admin user
+        current_user: Current authenticated admin or manager user
 
     Returns:
         Created user object
 
     Raises:
-        HTTPException: If username or email already exists
+        HTTPException: If username or email already exists, or if manager tries to create non-cashier
     """
+    # Managers can only create cashiers
+    if current_user.role == UserRole.MANAGER:
+        if user_data.role != UserRole.CASHIER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers can only create cashier users"
+            )
+
     # Check if username exists
     if db.query(User).filter(User.username == user_data.username).first():
         raise HTTPException(
@@ -111,22 +143,25 @@ def update_user(
     user_id: int,
     user_data: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin_or_manager)
 ):
     """
-    Update a user (Admin only).
+    Update a user (Admin or Manager).
+
+    Managers can only update cashier users and cannot change roles.
+    Admins can update any user and change roles.
 
     Args:
         user_id: User ID
         user_data: User update data
         db: Database session
-        current_user: Current authenticated admin user
+        current_user: Current authenticated admin or manager user
 
     Returns:
         Updated user object
 
     Raises:
-        HTTPException: If user not found
+        HTTPException: If user not found or manager tries to update non-cashier
     """
     db_user = db.query(User).filter(User.id == user_id).first()
     if not db_user:
@@ -134,6 +169,19 @@ def update_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    # Managers can only update cashiers and cannot change roles
+    if current_user.role == UserRole.MANAGER:
+        if db_user.role != UserRole.CASHIER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers can only update cashier users"
+            )
+        if user_data.role is not None and user_data.role != UserRole.CASHIER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers cannot change user roles"
+            )
 
     # Update fields
     if user_data.email is not None:
@@ -171,18 +219,21 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin_or_manager)
 ):
     """
-    Delete a user (Admin only).
+    Delete a user (Admin or Manager).
+
+    Managers can only delete cashier users.
+    Admins can delete any user.
 
     Args:
         user_id: User ID
         db: Database session
-        current_user: Current authenticated admin user
+        current_user: Current authenticated admin or manager user
 
     Raises:
-        HTTPException: If user not found or trying to delete self
+        HTTPException: If user not found, trying to delete self, or manager tries to delete non-cashier
     """
     if user_id == current_user.id:
         raise HTTPException(
@@ -196,6 +247,14 @@ def delete_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
+
+    # Managers can only delete cashiers
+    if current_user.role == UserRole.MANAGER:
+        if db_user.role != UserRole.CASHIER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Managers can only delete cashier users"
+            )
 
     db.delete(db_user)
     db.commit()

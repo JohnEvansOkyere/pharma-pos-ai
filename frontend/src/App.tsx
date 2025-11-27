@@ -42,6 +42,21 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Admin or Manager route component
+function AdminOrManagerRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuthStore()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (user?.role !== 'admin' && user?.role !== 'manager') {
+    return <Navigate to="/pos" replace />
+  }
+
+  return <>{children}</>
+}
+
 function App() {
   const { loadUser } = useAuthStore()
 
@@ -85,9 +100,9 @@ function App() {
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="settings" element={
-            <AdminRoute>
+            <AdminOrManagerRoute>
               <SettingsPage />
-            </AdminRoute>
+            </AdminOrManagerRoute>
           } />
         </Route>
 

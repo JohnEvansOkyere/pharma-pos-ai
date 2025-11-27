@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import toast from 'react-hot-toast'
 import { FiPlus, FiEdit, FiTrash, FiX } from 'react-icons/fi'
+import { useAuthStore } from '../stores/authStore'
 
 interface User {
   id: number
@@ -14,6 +15,7 @@ interface User {
 }
 
 export default function SettingsPage() {
+  const { user: currentUser } = useAuthStore()
   const [users, setUsers] = useState<User[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -193,18 +195,22 @@ export default function SettingsPage() {
                     {new Date(user.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-6 py-4 space-x-2">
-                    <button
-                      onClick={() => handleEdit(user)}
-                      className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
-                    >
-                      <FiEdit />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(user.id)}
-                      className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                    >
-                      <FiTrash />
-                    </button>
+                    {(currentUser?.role === 'admin' || (currentUser?.role === 'manager' && user.role === 'cashier')) && (
+                      <>
+                        <button
+                          onClick={() => handleEdit(user)}
+                          className="text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300"
+                        >
+                          <FiEdit />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(user.id)}
+                          className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                        >
+                          <FiTrash />
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -305,11 +311,21 @@ export default function SettingsPage() {
                   onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                   className="input w-full"
                   required
+                  disabled={currentUser?.role === 'manager'}
                 >
                   <option value="cashier">Cashier/Teller</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
+                  {currentUser?.role === 'admin' && (
+                    <>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                    </>
+                  )}
                 </select>
+                {currentUser?.role === 'manager' && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Managers can only create cashier users
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center">
