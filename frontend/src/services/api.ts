@@ -193,6 +193,39 @@ class ApiClient {
     return response.data
   }
 
+  async getExpiringProducts(params?: any) {
+    const response = await this.client.get('/dashboard/expiring-products', {
+      params,
+    })
+    return response.data
+  }
+
+  async getOverstockItems() {
+    const response = await this.client.get('/dashboard/overstock-items')
+    return response.data
+  }
+
+  async getProfitByCategory(params?: any) {
+    const response = await this.client.get('/dashboard/profit-by-category', {
+      params,
+    })
+    return response.data
+  }
+
+  async getRevenueAnalysis(params?: any) {
+    const response = await this.client.get('/dashboard/revenue-analysis', {
+      params,
+    })
+    return response.data
+  }
+
+  async getFinancialKPIs(params?: any) {
+    const response = await this.client.get('/dashboard/financial-kpis', {
+      params,
+    })
+    return response.data
+  }
+
   // Notification endpoints
   async getNotifications(params?: any) {
     const response = await this.client.get('/notifications', { params })
@@ -235,6 +268,26 @@ class ApiClient {
   async getProfitMarginAnalysis() {
     const response = await this.client.get('/insights/profit-margin-analysis')
     return response.data
+  }
+
+  // Users endpoints (Admin only)
+  async getUsers() {
+    const response = await this.client.get('/users')
+    return response.data
+  }
+
+  async createUser(userData: any) {
+    const response = await this.client.post('/users', userData)
+    return response.data
+  }
+
+  async updateUser(userId: number, userData: any) {
+    const response = await this.client.put(`/users/${userId}`, userData)
+    return response.data
+  }
+
+  async deleteUser(userId: number) {
+    await this.client.delete(`/users/${userId}`)
   }
 }
 

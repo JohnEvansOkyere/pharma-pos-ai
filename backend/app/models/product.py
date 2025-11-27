@@ -1,15 +1,41 @@
 """
 Product and ProductBatch models for inventory management.
+Enhanced for professional pharmaceutical POS system.
 """
-from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, Date, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, Date, ForeignKey, Enum as SQLEnum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from enum import Enum
 
 from app.db.base import Base
 
 
+class DosageForm(str, Enum):
+    """Pharmaceutical dosage forms."""
+    TABLET = "tablet"
+    CAPSULE = "capsule"
+    SYRUP = "syrup"
+    INJECTION = "injection"
+    SUSPENSION = "suspension"
+    CREAM = "cream"
+    OINTMENT = "ointment"
+    DROPS = "drops"
+    POWDER = "powder"
+    INHALER = "inhaler"
+    SUPPOSITORY = "suppository"
+    PATCH = "patch"
+    OTHER = "other"
+
+
+class PrescriptionStatus(str, Enum):
+    """Prescription requirement status."""
+    PRESCRIPTION_REQUIRED = "prescription_required"
+    PRESCRIPTION_OPTIONAL = "prescription_optional"
+    OTC = "over_the_counter"  # Over-the-counter
+
+
 class Product(Base):
-    """Product master data model."""
+    """Product master data model - Enhanced for pharmaceutical management."""
 
     __tablename__ = "products"
 
@@ -20,14 +46,35 @@ class Product(Base):
     barcode = Column(String(100), unique=True, index=True)
     description = Column(Text)
 
-    # Pricing
+    # Pharmaceutical-specific fields
+    dosage_form = Column(SQLEnum(DosageForm), nullable=False, default=DosageForm.TABLET)
+    strength = Column(String(50))  # e.g., "500mg", "10ml"
+    prescription_status = Column(SQLEnum(PrescriptionStatus), default=PrescriptionStatus.OTC)
+    active_ingredient = Column(String(200))  # Main active pharmaceutical ingredient
+    manufacturer = Column(String(200))
+
+    # Drug information
+    usage_instructions = Column(Text)  # How to take the medication
+    side_effects = Column(Text)  # Common side effects
+    contraindications = Column(Text)  # When not to use
+    storage_conditions = Column(String(200))  # e.g., "Store below 25°C"
+
+    # Regulatory
+    drug_license_number = Column(String(100))  # FDA/regulatory number
+    is_narcotic = Column(Boolean, default=False)  # Controlled substance
+    requires_id = Column(Boolean, default=False)  # Requires customer ID
+
+    # Pricing (GH₵ - Ghana Cedis)
     cost_price = Column(Float, nullable=False)  # Purchase/cost price
     selling_price = Column(Float, nullable=False)  # Retail price
+    wholesale_price = Column(Float)  # Bulk pricing
     mrp = Column(Float)  # Maximum retail price
 
     # Inventory
     total_stock = Column(Integer, default=0, nullable=False)
     low_stock_threshold = Column(Integer, default=10, nullable=False)
+    reorder_level = Column(Integer, default=20)  # Automatic reorder trigger
+    reorder_quantity = Column(Integer, default=100)  # Suggested reorder qty
 
     # Relationships
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
@@ -44,7 +91,7 @@ class Product(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     def __repr__(self):
-        return f"<Product(id={self.id}, name='{self.name}', sku='{self.sku}')>"
+        return f"<Product(id={self.id}, name='{self.name}', form='{self.dosage_form}')>"
 
 
 class ProductBatch(Base):
@@ -60,6 +107,14 @@ class ProductBatch(Base):
     manufacture_date = Column(Date)
     expiry_date = Column(Date, nullable=False)
     cost_price = Column(Float, nullable=False)
+
+    # Batch-specific info
+    location = Column(String(100))  # Storage location (e.g., "Shelf A3")
+    received_date = Column(Date, server_default=func.current_date())
+
+    # Quality control
+    is_quarantined = Column(Boolean, default=False)  # Quality hold
+    quarantine_reason = Column(Text)
 
     # Relationship
     product = relationship("Product", back_populates="batches")

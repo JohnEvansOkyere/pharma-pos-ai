@@ -270,3 +270,279 @@ def get_staff_performance(
         }
         for r in results
     ]
+
+
+@router.get("/expiring-products")
+def get_expiring_products(
+    days: int = 30,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    """
+    Get products expiring within specified days.
+
+    Args:
+        days: Number of days threshold (30, 60, or 90)
+        limit: Maximum number of products to return
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        List of expiring products with details
+    """
+    expiry_threshold = date.today() + timedelta(days=days)
+
+    results = db.query(
+        Product.id,
+        Product.name,
+        Product.sku,
+        Product.dosage_form,
+        Product.strength,
+        Product.total_stock,
+        Product.selling_price,
+        ProductBatch.batch_number,
+        ProductBatch.quantity.label("batch_quantity"),
+        ProductBatch.expiry_date,
+        Product.cost_price
+    ).join(
+        ProductBatch, ProductBatch.product_id == Product.id
+    ).filter(
+        ProductBatch.expiry_date <= expiry_threshold,
+        ProductBatch.expiry_date >= date.today(),
+        ProductBatch.quantity > 0,
+        ProductBatch.is_quarantined == False,
+        Product.is_active == True
+    ).order_by(
+        ProductBatch.expiry_date.asc()
+    ).limit(limit).all()
+
+    return [
+        {
+            "product_id": r.id,
+            "product_name": r.name,
+            "sku": r.sku,
+            "dosage_form": r.dosage_form.value if r.dosage_form else None,
+            "strength": r.strength,
+            "total_stock": r.total_stock,
+            "batch_number": r.batch_number,
+            "batch_quantity": r.batch_quantity,
+            "expiry_date": str(r.expiry_date),
+            "days_until_expiry": (r.expiry_date - date.today()).days,
+            "value_at_risk": float(r.cost_price * r.batch_quantity),
+        }
+        for r in results
+    ]
+
+
+@router.get("/overstock-items")
+def get_overstock_items(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    """
+    Get products with overstock (stock significantly above reorder level).
+
+    Args:
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        List of overstocked products
+    """
+    products = db.query(Product).filter(
+        Product.is_active == True,
+        Product.total_stock > Product.reorder_level * 3  # 3x reorder level
+    ).all()
+
+    return [
+        {
+            "product_id": p.id,
+            "product_name": p.name,
+            "sku": p.sku,
+            "dosage_form": p.dosage_form.value if p.dosage_form else None,
+            "strength": p.strength,
+            "total_stock": p.total_stock,
+            "reorder_level": p.reorder_level,
+            "excess_stock": p.total_stock - p.reorder_level,
+            "capital_tied": float(p.cost_price * p.total_stock),
+        }
+        for p in products
+    ]
+
+
+@router.get("/profit-by-category")
+def get_profit_by_category(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    """
+    Get profit margins by product category.
+
+    Args:
+        days: Number of days to analyze
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Profit data by category
+    """
+    from app.models.category import Category
+
+    start_date = datetime.now() - timedelta(days=days)
+
+    results = db.query(
+        Category.id,
+        Category.name,
+        func.sum(SaleItem.total_price).label("total_revenue"),
+        func.sum(SaleItem.quantity).label("total_quantity")
+    ).join(
+        Product, Product.category_id == Category.id
+    ).join(
+        SaleItem, SaleItem.product_id == Product.id
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    ).filter(
+        Sale.created_at >= start_date
+    ).group_by(
+        Category.id, Category.name
+    ).all()
+
+    category_profits = []
+    for r in results:
+        # Calculate profit for this category
+        category_profit = 0.0
+        category_sales = db.query(SaleItem).join(
+            Product, Product.id == SaleItem.product_id
+        ).join(
+            Sale, Sale.id == SaleItem.sale_id
+        ).filter(
+            Product.category_id == r.id,
+            Sale.created_at >= start_date
+        ).all()
+
+        for item in category_sales:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                profit = (item.unit_price - product.cost_price) * item.quantity
+                category_profit += profit
+
+        profit_margin = (category_profit / float(r.total_revenue) * 100) if r.total_revenue > 0 else 0
+
+        category_profits.append({
+            "category_id": r.id,
+            "category_name": r.name,
+            "total_revenue": float(r.total_revenue),
+            "total_profit": category_profit,
+            "profit_margin": profit_margin,
+            "items_sold": r.total_quantity,
+        })
+
+    return sorted(category_profits, key=lambda x: x["total_profit"], reverse=True)
+
+
+@router.get("/revenue-analysis")
+def get_revenue_analysis(
+    period: str = "daily",  # daily, weekly, monthly
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    Get revenue analysis for different periods.
+
+    Args:
+        period: Time period (daily, weekly, monthly)
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Revenue analysis data
+    """
+    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start = today_start - timedelta(days=today_start.weekday())
+    month_start = today_start.replace(day=1)
+
+    # Daily revenue
+    daily_sales = db.query(Sale).filter(Sale.created_at >= today_start).all()
+    daily_revenue = sum(sale.total_amount for sale in daily_sales)
+
+    # Weekly revenue
+    weekly_sales = db.query(Sale).filter(Sale.created_at >= week_start).all()
+    weekly_revenue = sum(sale.total_amount for sale in weekly_sales)
+
+    # Monthly revenue
+    monthly_sales = db.query(Sale).filter(Sale.created_at >= month_start).all()
+    monthly_revenue = sum(sale.total_amount for sale in monthly_sales)
+
+    # Average basket value
+    avg_basket = daily_revenue / len(daily_sales) if daily_sales else 0.0
+
+    return {
+        "daily_revenue": daily_revenue,
+        "daily_transactions": len(daily_sales),
+        "weekly_revenue": weekly_revenue,
+        "weekly_transactions": len(weekly_sales),
+        "monthly_revenue": monthly_revenue,
+        "monthly_transactions": len(monthly_sales),
+        "average_basket_value": avg_basket,
+    }
+
+
+@router.get("/financial-kpis")
+def get_financial_kpis(
+    days: int = 30,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> Dict[str, Any]:
+    """
+    Get comprehensive financial KPIs.
+
+    Args:
+        days: Number of days to analyze
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        Financial KPI data
+    """
+    start_date = datetime.now() - timedelta(days=days)
+
+    # Get all sales in period
+    sales = db.query(Sale).filter(Sale.created_at >= start_date).all()
+
+    total_revenue = sum(sale.total_amount for sale in sales)
+
+    # Calculate gross profit
+    gross_profit = 0.0
+    for sale in sales:
+        for item in sale.items:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
+            if product:
+                profit = (item.unit_price - product.cost_price) * item.quantity
+                gross_profit += profit
+
+    # Net profit (simplified - just subtracting estimated overhead)
+    overhead_rate = 0.15  # 15% overhead estimate
+    net_profit = gross_profit * (1 - overhead_rate)
+
+    # Average basket value
+    avg_basket = total_revenue / len(sales) if sales else 0.0
+
+    # Credit sales (sales with payment method = credit)
+    credit_sales = db.query(Sale).filter(
+        Sale.created_at >= start_date,
+        Sale.payment_method == "credit"
+    ).all()
+    outstanding_credit = sum(sale.total_amount for sale in credit_sales)
+
+    return {
+        "total_revenue": total_revenue,
+        "gross_profit": gross_profit,
+        "net_profit": net_profit,
+        "profit_margin": (gross_profit / total_revenue * 100) if total_revenue > 0 else 0,
+        "average_basket_value": avg_basket,
+        "total_transactions": len(sales),
+        "outstanding_credit": outstanding_credit,
+        "credit_sales_count": len(credit_sales),
+    }

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import toast from 'react-hot-toast'
-import { FiAlertCircle, FiPackage, FiInfo } from 'react-icons/fi'
+import { FiAlertCircle, FiPackage, FiInfo, FiAlertTriangle, FiTrendingUp, FiArchive, FiXCircle } from 'react-icons/fi'
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([])
@@ -26,9 +26,19 @@ export default function NotificationsPage() {
   const getIcon = (type: string) => {
     switch (type) {
       case 'expiry':
-        return <FiAlertCircle className="h-5 w-5 text-red-600" />
+        return <FiAlertCircle className="h-5 w-5 text-orange-600" />
+      case 'near_expiry':
+        return <FiAlertTriangle className="h-5 w-5 text-red-600" />
       case 'low_stock':
         return <FiPackage className="h-5 w-5 text-yellow-600" />
+      case 'out_of_stock':
+        return <FiXCircle className="h-5 w-5 text-red-700" />
+      case 'overstock':
+        return <FiTrendingUp className="h-5 w-5 text-purple-600" />
+      case 'dead_stock':
+        return <FiArchive className="h-5 w-5 text-gray-600" />
+      case 'system':
+        return <FiInfo className="h-5 w-5 text-blue-600" />
       default:
         return <FiInfo className="h-5 w-5 text-blue-600" />
     }

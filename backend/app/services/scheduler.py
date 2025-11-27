@@ -43,6 +43,42 @@ class SchedulerService:
             replace_existing=True,
         )
 
+        # Schedule out of stock checks
+        self.scheduler.add_job(
+            self.check_out_of_stock,
+            CronTrigger(hour=settings.LOW_STOCK_CHECK_HOUR, minute=15),
+            id="check_out_of_stock",
+            name="Check out of stock",
+            replace_existing=True,
+        )
+
+        # Schedule near expiry checks (critical - check twice daily)
+        self.scheduler.add_job(
+            self.check_near_expiry,
+            CronTrigger(hour="8,20", minute=0),
+            id="check_near_expiry",
+            name="Check near expiry products",
+            replace_existing=True,
+        )
+
+        # Schedule dead stock checks (weekly - Monday at 11 AM)
+        self.scheduler.add_job(
+            self.check_dead_stock,
+            CronTrigger(day_of_week="mon", hour=11, minute=0),
+            id="check_dead_stock",
+            name="Check dead stock",
+            replace_existing=True,
+        )
+
+        # Schedule overstock checks (weekly - Monday at 11:30 AM)
+        self.scheduler.add_job(
+            self.check_overstock,
+            CronTrigger(day_of_week="mon", hour=11, minute=30),
+            id="check_overstock",
+            name="Check overstock",
+            replace_existing=True,
+        )
+
         self.scheduler.start()
         logger.info("Background scheduler started")
 
@@ -73,6 +109,54 @@ class SchedulerService:
             NotificationService.check_low_stock(db)
         except Exception as e:
             logger.error(f"Error in low stock check task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def check_out_of_stock():
+        """Task to check for out of stock products."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running out of stock check task")
+            NotificationService.check_out_of_stock(db)
+        except Exception as e:
+            logger.error(f"Error in out of stock check task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def check_near_expiry():
+        """Task to check for products expiring within 7 days."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running near expiry check task")
+            NotificationService.check_near_expiry(db)
+        except Exception as e:
+            logger.error(f"Error in near expiry check task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def check_dead_stock():
+        """Task to check for dead stock products."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running dead stock check task")
+            NotificationService.check_dead_stock(db)
+        except Exception as e:
+            logger.error(f"Error in dead stock check task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def check_overstock():
+        """Task to check for overstocked products."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running overstock check task")
+            NotificationService.check_overstock(db)
+        except Exception as e:
+            logger.error(f"Error in overstock check task: {str(e)}")
         finally:
             db.close()
 

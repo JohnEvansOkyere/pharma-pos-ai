@@ -19,7 +19,7 @@ class ActivityLog(Base):
     entity_type = Column(String(50))  # e.g., "product", "sale", "user"
     entity_id = Column(Integer)
     description = Column(Text)
-    metadata = Column(JSON)  # Additional contextual data
+    extra_data = Column(JSON)  # Additional contextual data (renamed from metadata)
     ip_address = Column(String(50))
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

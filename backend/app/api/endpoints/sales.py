@@ -87,6 +87,9 @@ def create_sale(
 
         sale_items_data.append({
             "product_id": item.product_id,
+            "product_name": product.name,
+            "dosage_form": product.dosage_form.value if product.dosage_form else None,
+            "strength": product.strength,
             "quantity": item.quantity,
             "unit_price": item.unit_price,
             "discount_amount": item.discount_amount,
@@ -142,7 +145,7 @@ def create_sale(
     return db_sale
 
 
-@router.get("", response_model=List[SaleSchema])
+@router.get("", response_model=List[SaleWithItems])
 def list_sales(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
@@ -163,7 +166,7 @@ def list_sales(
         current_user: Current authenticated user
 
     Returns:
-        List of sales
+        List of sales with items
     """
     query = db.query(Sale)
 

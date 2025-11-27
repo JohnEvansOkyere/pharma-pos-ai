@@ -2,47 +2,89 @@ import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import { useCartStore } from '../stores/cartStore'
 import toast from 'react-hot-toast'
-import { FiSearch, FiTrash2, FiShoppingCart } from 'react-icons/fi'
+import { FiSearch, FiTrash2, FiShoppingCart, FiPrinter } from 'react-icons/fi'
+
+interface Product {
+  id: number
+  name: string
+  generic_name?: string
+  sku: string
+  barcode?: string
+  dosage_form: string
+  strength?: string
+  selling_price: number
+  total_stock: number
+  manufacturer?: string
+  nearest_expiry?: string
+}
 
 export default function POSPage() {
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
-  const [isSearching, setIsSearching] = useState(false)
+  const [allProducts, setAllProducts] = useState<Product[]>([])
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([])
+  const [isLoading, setIsLoading] = useState(false)
   const [customerName, setCustomerName] = useState('')
   const [customerPhone, setCustomerPhone] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState('cash')
-  const [amountPaid, setAmountPaid] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'momo'>('cash')
+  const [momoNumber, setMomoNumber] = useState('')
+  const [momoReference, setMomoReference] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [lastSale, setLastSale] = useState<any>(null)
+  const [showPrintDialog, setShowPrintDialog] = useState(false)
 
   const { items, addItem, updateQuantity, removeItem, clearCart, getSubtotal } =
     useCartStore()
 
+  // Load all products on mount
   useEffect(() => {
-    if (searchQuery.length >= 2) {
-      searchProducts()
-    } else {
-      setSearchResults([])
-    }
-  }, [searchQuery])
+    loadAllProducts()
+  }, [])
 
-  const searchProducts = async () => {
-    setIsSearching(true)
+  // Filter products based on search query
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      const filtered = allProducts.filter(
+        (p) =>
+          p.name.toLowerCase().includes(query) ||
+          p.generic_name?.toLowerCase().includes(query) ||
+          p.sku.toLowerCase().includes(query) ||
+          p.barcode?.toLowerCase().includes(query) ||
+          p.manufacturer?.toLowerCase().includes(query)
+      )
+      setFilteredProducts(filtered)
+    } else {
+      setFilteredProducts(allProducts)
+    }
+  }, [searchQuery, allProducts])
+
+  const loadAllProducts = async () => {
+    setIsLoading(true)
     try {
-      const results = await api.searchProducts(searchQuery)
-      setSearchResults(results)
+      const products = await api.getProducts({ limit: 1000 })
+      setAllProducts(products)
+      setFilteredProducts(products)
     } catch (error) {
-      console.error('Search failed:', error)
+      console.error('Failed to load products:', error)
+      toast.error('Failed to load products')
     } finally {
-      setIsSearching(false)
+      setIsLoading(false)
     }
   }
 
-  const handleAddToCart = (product: any) => {
+  const handleAddToCart = (product: Product) => {
     try {
-      addItem(product, 1)
+      addItem(
+        {
+          id: product.id,
+          name: product.name,
+          sku: product.sku,
+          selling_price: product.selling_price,
+          total_stock: product.total_stock,
+        },
+        1
+      )
       toast.success(`Added ${product.name} to cart`)
-      setSearchQuery('')
-      setSearchResults([])
     } catch (error: any) {
       toast.error(error.message)
     }
@@ -67,45 +109,46 @@ export default function POSPage() {
       return
     }
 
-    const paid = parseFloat(amountPaid)
-    const total = getSubtotal()
-
-    if (isNaN(paid) || paid < total) {
-      toast.error('Invalid payment amount')
+    if (paymentMethod === 'momo' && !momoNumber) {
+      toast.error('Please enter MOMO number')
       return
     }
 
     setIsProcessing(true)
 
     try {
+      const total = getSubtotal()
+
       const saleData = {
         items: items.map((item) => ({
           product_id: item.product_id,
           quantity: item.quantity,
           unit_price: item.unit_price,
-          discount_amount: item.discount_amount,
+          discount_amount: item.discount_amount || 0,
         })),
         payment_method: paymentMethod,
-        amount_paid: paid,
+        amount_paid: total, // Auto-calculated total
         customer_name: customerName || undefined,
         customer_phone: customerPhone || undefined,
+        momo_number: paymentMethod === 'momo' ? momoNumber : undefined,
+        momo_reference: paymentMethod === 'momo' ? momoReference : undefined,
         discount_amount: 0,
         tax_amount: 0,
       }
 
       const sale = await api.createSale(saleData)
 
-      toast.success(
-        `Sale completed! Invoice: ${sale.invoice_number}\nChange: $${sale.change_amount.toFixed(
-          2
-        )}`
-      )
+      setLastSale(sale)
+      setShowPrintDialog(true)
+
+      toast.success(`Sale completed! Invoice: ${sale.invoice_number}`)
 
       // Clear cart and form
       clearCart()
       setCustomerName('')
       setCustomerPhone('')
-      setAmountPaid('')
+      setMomoNumber('')
+      setMomoReference('')
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Sale failed')
     } finally {
@@ -113,15 +156,21 @@ export default function POSPage() {
     }
   }
 
+  const handlePrintReceipt = () => {
+    // TODO: Implement actual printing
+    window.print()
+    setShowPrintDialog(false)
+    setLastSale(null)
+  }
+
   const subtotal = getSubtotal()
-  const change = parseFloat(amountPaid) - subtotal || 0
 
   return (
-    <div className="h-full flex flex-col lg:flex-row gap-6">
-      {/* Left Panel - Product Search & Cart */}
-      <div className="flex-1 flex flex-col space-y-6">
+    <div className="h-screen flex flex-col lg:flex-row gap-6 p-6 overflow-hidden">
+      {/* Left Panel - All Products List */}
+      <div className="flex-1 flex flex-col gap-6 min-h-0">
         {/* Search */}
-        <div className="card p-6">
+        <div className="card p-6 flex-shrink-0">
           <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
             Search Products
           </h2>
@@ -132,129 +181,212 @@ export default function POSPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input pl-10"
-              placeholder="Search by name, SKU, or barcode..."
+              placeholder="Search by name, SKU, barcode, or manufacturer..."
               autoFocus
             />
           </div>
-
-          {/* Search Results */}
-          {searchResults.length > 0 && (
-            <div className="mt-4 space-y-2 max-h-64 overflow-y-auto custom-scrollbar">
-              {searchResults.map((product) => (
-                <div
-                  key={product.id}
-                  onClick={() => handleAddToCart(product)}
-                  className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                >
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-medium text-gray-900 dark:text-gray-100">
-                        {product.name}
-                      </p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        SKU: {product.sku} • Stock: {product.total_stock}
-                      </p>
-                    </div>
-                    <p className="font-semibold text-primary-600 dark:text-primary-400">
-                      ${product.selling_price.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Cart */}
-        <div className="card p-6 flex-1">
-          <div className="flex justify-between items-center mb-4">
+        {/* All Products List */}
+        <div className="card p-6 flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex justify-between items-center mb-4 flex-shrink-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Cart ({items.length})
+              {searchQuery ? 'Search Results' : 'All Products'} (
+              {filteredProducts.length})
             </h2>
-            {items.length > 0 && (
+            {searchQuery && (
               <button
-                onClick={clearCart}
-                className="text-sm text-red-600 hover:text-red-700"
+                onClick={() => setSearchQuery('')}
+                className="text-sm text-primary-600 hover:text-primary-700"
               >
-                Clear All
+                Clear Search
               </button>
             )}
           </div>
 
-          {items.length === 0 ? (
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
+            </div>
+          ) : filteredProducts.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-              <FiShoppingCart className="h-12 w-12 mb-3" />
-              <p>Cart is empty</p>
+              <p>No products found</p>
             </div>
           ) : (
-            <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-96">
-              {items.map((item) => (
-                <div
-                  key={item.product_id}
-                  className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg"
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1">
-                      <p className="font-medium text-gray-900 dark:text-gray-100">
-                        {item.name}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        ${item.unit_price.toFixed(2)} each
-                      </p>
+            <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1 min-h-0">
+              {filteredProducts.map((product) => {
+                // Calculate expiry status
+                let expiryStatus = 'good'
+                let expiryColor = 'text-green-600 dark:text-green-400'
+                let expiryBg = 'bg-green-50 dark:bg-green-900/20'
+
+                if (product.nearest_expiry) {
+                  const expiryDate = new Date(product.nearest_expiry)
+                  const today = new Date()
+                  const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+
+                  if (daysUntilExpiry < 0) {
+                    expiryStatus = 'expired'
+                    expiryColor = 'text-red-700 dark:text-red-400'
+                    expiryBg = 'bg-red-50 dark:bg-red-900/20'
+                  } else if (daysUntilExpiry <= 30) {
+                    expiryStatus = 'critical'
+                    expiryColor = 'text-red-600 dark:text-red-400'
+                    expiryBg = 'bg-red-50 dark:bg-red-900/20'
+                  } else if (daysUntilExpiry <= 90) {
+                    expiryStatus = 'warning'
+                    expiryColor = 'text-orange-600 dark:text-orange-400'
+                    expiryBg = 'bg-orange-50 dark:bg-orange-900/20'
+                  } else if (daysUntilExpiry <= 180) {
+                    expiryStatus = 'caution'
+                    expiryColor = 'text-yellow-600 dark:text-yellow-400'
+                    expiryBg = 'bg-yellow-50 dark:bg-yellow-900/20'
+                  }
+                }
+
+                return (
+                  <div
+                    key={product.id}
+                    onClick={() => handleAddToCart(product)}
+                    className="p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
+                          {product.name}
+                        </p>
+                        <div className="mt-1 space-y-0.5">
+                          <p className="text-sm text-gray-600 dark:text-gray-400">
+                            {product.dosage_form}
+                            {product.strength && ` • ${product.strength}`}
+                          </p>
+                          {product.manufacturer && (
+                            <p className="text-xs text-gray-500 dark:text-gray-500">
+                              {product.manufacturer}
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-500 dark:text-gray-500">
+                            SKU: {product.sku} • Stock: {product.total_stock}
+                          </p>
+                          {product.nearest_expiry && (
+                            <div className="mt-1">
+                              <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${expiryBg} ${expiryColor}`}>
+                                Exp: {new Date(product.nearest_expiry).toLocaleDateString('en-GB')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right ml-4">
+                        <p className="font-bold text-lg text-primary-600 dark:text-primary-400">
+                          GH₵ {product.selling_price.toFixed(2)}
+                        </p>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => removeItem(item.product_id)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <FiTrash2 className="h-4 w-4" />
-                    </button>
                   </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() =>
-                          handleQuantityChange(
-                            item.product_id,
-                            item.quantity - 1
-                          )
-                        }
-                        className="px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                      >
-                        -
-                      </button>
-                      <span className="w-12 text-center font-medium">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() =>
-                          handleQuantityChange(
-                            item.product_id,
-                            item.quantity + 1
-                          )
-                        }
-                        className="px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-gray-700"
-                      >
-                        +
-                      </button>
-                    </div>
-                    <p className="font-semibold text-primary-600 dark:text-primary-400">
-                      ${item.total_price.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
       </div>
 
+      {/* Middle Panel - Cart */}
+      <div className="lg:w-80 card p-6 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex justify-between items-center mb-4 flex-shrink-0">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Cart ({items.length})
+          </h2>
+          {items.length > 0 && (
+            <button
+              onClick={clearCart}
+              className="text-sm text-red-600 hover:text-red-700"
+            >
+              Clear All
+            </button>
+          )}
+        </div>
+
+        {items.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-gray-400 flex-1">
+            <FiShoppingCart className="h-12 w-12 mb-3" />
+            <p>Cart is empty</p>
+            <p className="text-xs mt-2">Click products to add</p>
+          </div>
+        ) : (
+          <div className="space-y-3 overflow-y-auto custom-scrollbar flex-1">
+            {items.map((item) => (
+              <div
+                key={item.product_id}
+                className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg"
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex-1">
+                    <p className="font-medium text-sm text-gray-900 dark:text-gray-100">
+                      {item.name}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      GH₵ {item.unit_price.toFixed(2)} each
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => removeItem(item.product_id)}
+                    className="text-red-600 hover:text-red-700"
+                  >
+                    <FiTrash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() =>
+                        handleQuantityChange(item.product_id, item.quantity - 1)
+                      }
+                      className="px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm font-medium"
+                    >
+                      -
+                    </button>
+                    <span className="w-12 text-center font-medium text-sm">
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() =>
+                        handleQuantityChange(item.product_id, item.quantity + 1)
+                      }
+                      className="px-2 py-1 border rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-sm font-medium"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <p className="font-semibold text-primary-600 dark:text-primary-400">
+                    GH₵ {item.total_price.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Cart Total */}
+        {items.length > 0 && (
+          <div className="mt-4 pt-4 border-t flex-shrink-0">
+            <div className="flex justify-between text-lg font-bold">
+              <span>Total:</span>
+              <span className="text-primary-600 dark:text-primary-400">
+                GH₵ {subtotal.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Right Panel - Checkout */}
-      <div className="lg:w-96 card p-6 flex flex-col">
-        <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
+      <div className="lg:w-96 card p-6 flex flex-col min-h-0 overflow-hidden">
+        <h2 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100 flex-shrink-0">
           Checkout
         </h2>
 
-        <div className="space-y-4 flex-1">
+        <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar min-h-0">
           {/* Customer Info */}
           <div>
             <label className="label">Customer Name (Optional)</label>
@@ -278,60 +410,64 @@ export default function POSPage() {
             />
           </div>
 
-          {/* Payment Method */}
+          {/* Payment Method - Only MOMO and Cash */}
           <div>
-            <label className="label">Payment Method</label>
+            <label className="label">Payment Method *</label>
             <select
               value={paymentMethod}
-              onChange={(e) => setPaymentMethod(e.target.value)}
+              onChange={(e) => setPaymentMethod(e.target.value as 'cash' | 'momo')}
               className="input"
             >
               <option value="cash">Cash</option>
-              <option value="card">Card</option>
-              <option value="upi">UPI</option>
+              <option value="momo">Mobile Money (MOMO)</option>
             </select>
           </div>
 
-          {/* Amount Paid */}
-          <div>
-            <label className="label">Amount Paid</label>
-            <input
-              type="number"
-              step="0.01"
-              value={amountPaid}
-              onChange={(e) => setAmountPaid(e.target.value)}
-              className="input"
-              placeholder="0.00"
-            />
-          </div>
+          {/* MOMO Fields */}
+          {paymentMethod === 'momo' && (
+            <>
+              <div>
+                <label className="label">MOMO Number *</label>
+                <input
+                  type="tel"
+                  value={momoNumber}
+                  onChange={(e) => setMomoNumber(e.target.value)}
+                  className="input"
+                  placeholder="0XX XXX XXXX"
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">MOMO Reference (Optional)</label>
+                <input
+                  type="text"
+                  value={momoReference}
+                  onChange={(e) => setMomoReference(e.target.value)}
+                  className="input"
+                  placeholder="Transaction reference"
+                />
+              </div>
+            </>
+          )}
 
-          {/* Summary */}
-          <div className="border-t pt-4 space-y-2">
+          {/* Summary - Total auto-calculated from cart */}
+          <div className="border-t pt-4 space-y-3">
             <div className="flex justify-between text-sm">
               <span className="text-gray-600 dark:text-gray-400">
-                Subtotal:
+                Items ({items.length}):
               </span>
-              <span className="font-medium">${subtotal.toFixed(2)}</span>
+              <span className="font-medium">GH₵ {subtotal.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-lg font-bold">
-              <span>Total:</span>
+            <div className="flex justify-between text-xl font-bold">
+              <span>Total Amount:</span>
               <span className="text-primary-600 dark:text-primary-400">
-                ${subtotal.toFixed(2)}
+                GH₵ {subtotal.toFixed(2)}
               </span>
             </div>
-            {amountPaid && (
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600 dark:text-gray-400">
-                  Change:
-                </span>
-                <span
-                  className={`font-medium ${
-                    change < 0 ? 'text-red-600' : 'text-green-600'
-                  }`}
-                >
-                  ${change.toFixed(2)}
-                </span>
-              </div>
+            {paymentMethod === 'cash' && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                💡 Exact cash payment required
+              </p>
             )}
           </div>
         </div>
@@ -340,11 +476,52 @@ export default function POSPage() {
         <button
           onClick={handleCompleteSale}
           disabled={items.length === 0 || isProcessing}
-          className="btn-primary w-full mt-4 disabled:opacity-50"
+          className="btn-primary w-full mt-4 disabled:opacity-50 flex-shrink-0"
         >
-          {isProcessing ? 'Processing...' : 'Complete Sale'}
+          {isProcessing ? 'Processing...' : `Complete Sale - GH₵ ${subtotal.toFixed(2)}`}
         </button>
       </div>
+
+      {/* Print Dialog Modal */}
+      {showPrintDialog && lastSale && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="card p-8 max-w-md w-full mx-4">
+            <h2 className="text-2xl font-bold text-green-600 mb-4 text-center">
+              ✅ Sale Completed!
+            </h2>
+            <div className="space-y-2 mb-6">
+              <p className="text-center">
+                <span className="text-gray-600">Invoice:</span>{' '}
+                <span className="font-bold">{lastSale.invoice_number}</span>
+              </p>
+              <p className="text-center text-2xl font-bold text-primary-600">
+                GH₵ {lastSale.total_amount.toFixed(2)}
+              </p>
+              <p className="text-center text-sm text-gray-500">
+                Payment: {lastSale.payment_method === 'momo' ? 'Mobile Money' : 'Cash'}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handlePrintReceipt}
+                className="btn-primary flex-1 flex items-center justify-center gap-2"
+              >
+                <FiPrinter />
+                Print Receipt
+              </button>
+              <button
+                onClick={() => {
+                  setShowPrintDialog(false)
+                  setLastSale(null)
+                }}
+                className="btn-secondary flex-1"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

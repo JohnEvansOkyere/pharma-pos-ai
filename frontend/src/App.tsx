@@ -11,6 +11,7 @@ import POSPage from './pages/POSPage'
 import SalesPage from './pages/SalesPage'
 import SuppliersPage from './pages/SuppliersPage'
 import NotificationsPage from './pages/NotificationsPage'
+import SettingsPage from './pages/SettingsPage'
 
 // Layout
 import MainLayout from './components/layout/MainLayout'
@@ -21,6 +22,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
+// Admin-only route component
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuthStore()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (user?.role !== 'admin') {
+    return <Navigate to="/pos" replace />
   }
 
   return <>{children}</>
@@ -57,16 +73,25 @@ function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
+          <Route index element={<Navigate to="/pos" replace />} />
+          <Route path="dashboard" element={
+            <AdminRoute>
+              <DashboardPage />
+            </AdminRoute>
+          } />
           <Route path="products" element={<ProductsPage />} />
           <Route path="pos" element={<POSPage />} />
           <Route path="sales" element={<SalesPage />} />
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="settings" element={
+            <AdminRoute>
+              <SettingsPage />
+            </AdminRoute>
+          } />
         </Route>
 
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/pos" replace />} />
       </Routes>
     </BrowserRouter>
   )

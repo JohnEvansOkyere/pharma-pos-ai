@@ -1,45 +1,43 @@
 # FastAPI Core
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-python-multipart==0.0.6
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+python-multipart==0.0.12
 
 # Database
-sqlalchemy==2.0.25
-alembic==1.13.1
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
+sqlalchemy==2.0.36
+alembic==1.14.0
+# PostgreSQL drivers - OPTIONAL (only if using PostgreSQL)
+# For Python 3.13+, install separately after core packages
+# Or use SQLite (no additional packages needed)
 
 # Authentication
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-bcrypt==4.1.2
+bcrypt==4.2.0
 
 # Background Jobs
 apscheduler==3.10.4
 
 # HTTP Client
-httpx==0.26.0
-requests==2.31.0
+httpx==0.27.2
+requests==2.32.3
 
 # Utilities
-python-dotenv==1.0.0
-python-dateutil==2.8.2
+python-dotenv==1.0.1
+python-dateutil==2.9.0
 
-# Excel/CSV Export
-openpyxl==3.1.2
-pandas==2.1.4
+# Excel/CSV Export (optional)
+openpyxl==3.1.5
+pandas==2.2.3
 
-# PDF Generation
-reportlab==4.0.9
+# PDF Generation (optional)
+reportlab==4.2.5
 
 # Validation
-email-validator==2.1.0
+email-validator==2.2.0
 
 # Development
-pytest==7.4.4
-pytest-asyncio==0.23.3
-black==24.1.1
-flake8==7.0.0
-mypy==1.8.0
+pytest==8.3.3
+pytest-asyncio==0.24.0

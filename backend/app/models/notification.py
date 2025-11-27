@@ -13,6 +13,9 @@ class NotificationType(str, Enum):
     EXPIRY = "expiry"
     LOW_STOCK = "low_stock"
     DEAD_STOCK = "dead_stock"
+    OUT_OF_STOCK = "out_of_stock"
+    OVERSTOCK = "overstock"
+    NEAR_EXPIRY = "near_expiry"
     SYSTEM = "system"
 
 

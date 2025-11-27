@@ -23,10 +23,10 @@ from app.api.dependencies import get_current_active_user, require_manager
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
-@router.get("", response_model=List[ProductSchema])
+@router.get("", response_model=List[ProductSearch])
 def list_products(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=10000),
     category_id: Optional[int] = None,
     is_active: Optional[bool] = None,
     db: Session = Depends(get_db),
@@ -44,8 +44,10 @@ def list_products(
         current_user: Current authenticated user
 
     Returns:
-        List of products
+        List of products with expiry information
     """
+    from sqlalchemy import func
+
     query = db.query(Product)
 
     if category_id:
@@ -55,7 +57,49 @@ def list_products(
         query = query.filter(Product.is_active == is_active)
 
     products = query.offset(skip).limit(limit).all()
-    return products
+
+    # Enrich products with nearest expiry date from batches and category name
+    from app.models.category import Category
+
+    result = []
+    for product in products:
+        # Get category name
+        category_name = None
+        if product.category_id:
+            category = db.query(Category).filter(Category.id == product.category_id).first()
+            if category:
+                category_name = category.name
+
+        product_dict = {
+            "id": product.id,
+            "name": product.name,
+            "generic_name": product.generic_name,
+            "sku": product.sku,
+            "barcode": product.barcode,
+            "dosage_form": product.dosage_form,
+            "strength": product.strength,
+            "selling_price": product.selling_price,
+            "cost_price": product.cost_price,
+            "total_stock": product.total_stock,
+            "low_stock_threshold": product.low_stock_threshold,
+            "manufacturer": product.manufacturer,
+            "category_name": category_name,
+            "nearest_expiry": None
+        }
+
+        # Get earliest expiry date from non-quarantined batches
+        earliest_batch = db.query(ProductBatch).filter(
+            ProductBatch.product_id == product.id,
+            ProductBatch.is_quarantined == False,
+            ProductBatch.quantity > 0
+        ).order_by(ProductBatch.expiry_date.asc()).first()
+
+        if earliest_batch:
+            product_dict["nearest_expiry"] = earliest_batch.expiry_date
+
+        result.append(product_dict)
+
+    return result
 
 
 @router.get("/search", response_model=List[ProductSearch])
@@ -75,7 +119,7 @@ def search_products(
         current_user: Current authenticated user
 
     Returns:
-        List of matching products
+        List of matching products with expiry information
     """
     search_term = f"%{q}%"
     products = db.query(Product).filter(
@@ -88,7 +132,48 @@ def search_products(
         Product.is_active == True
     ).limit(limit).all()
 
-    return products
+    # Enrich products with nearest expiry date from batches and category name
+    from app.models.category import Category
+
+    result = []
+    for product in products:
+        # Get category name
+        category_name = None
+        if product.category_id:
+            category = db.query(Category).filter(Category.id == product.category_id).first()
+            if category:
+                category_name = category.name
+
+        product_dict = {
+            "id": product.id,
+            "name": product.name,
+            "generic_name": product.generic_name,
+            "sku": product.sku,
+            "barcode": product.barcode,
+            "dosage_form": product.dosage_form,
+            "strength": product.strength,
+            "selling_price": product.selling_price,
+            "cost_price": product.cost_price,
+            "total_stock": product.total_stock,
+            "low_stock_threshold": product.low_stock_threshold,
+            "manufacturer": product.manufacturer,
+            "category_name": category_name,
+            "nearest_expiry": None
+        }
+
+        # Get earliest expiry date from non-quarantined batches
+        earliest_batch = db.query(ProductBatch).filter(
+            ProductBatch.product_id == product.id,
+            ProductBatch.is_quarantined == False,
+            ProductBatch.quantity > 0
+        ).order_by(ProductBatch.expiry_date.asc()).first()
+
+        if earliest_batch:
+            product_dict["nearest_expiry"] = earliest_batch.expiry_date
+
+        result.append(product_dict)
+
+    return result
 
 
 @router.get("/{product_id}", response_model=ProductWithBatches)
