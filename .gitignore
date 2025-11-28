@@ -92,6 +92,8 @@ installer-builds/
 
 # Documentation (exclude all except README.md)
 *.md
+*.tx
+!requirements.txt
 !README.md
 deploy.sh
 
