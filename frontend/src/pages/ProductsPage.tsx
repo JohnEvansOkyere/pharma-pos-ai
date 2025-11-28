@@ -7,7 +7,6 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([])
   const [categories, setCategories] = useState<any[]>([])
   const [suppliers, setSuppliers] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState<any | null>(null)
   const [formData, setFormData] = useState({
@@ -39,14 +38,11 @@ export default function ProductsPage() {
   }, [])
 
   const loadProducts = async () => {
-    setIsLoading(true)
     try {
       const data = await api.getProducts({ limit: 1000 })
       setProducts(data)
     } catch (error) {
       toast.error('Failed to load products')
-    } finally {
-      setIsLoading(false)
     }
   }
 

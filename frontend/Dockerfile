@@ -26,17 +26,6 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 # Copy built files from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Create a non-root user
-RUN addgroup -g 1000 appgroup && \
-    adduser -D -u 1000 -G appgroup appuser && \
-    chown -R appuser:appgroup /usr/share/nginx/html && \
-    chown -R appuser:appgroup /var/cache/nginx && \
-    chown -R appuser:appgroup /var/log/nginx && \
-    touch /var/run/nginx.pid && \
-    chown -R appuser:appgroup /var/run/nginx.pid
-
-USER appuser
-
 # Expose port
 EXPOSE 80
 

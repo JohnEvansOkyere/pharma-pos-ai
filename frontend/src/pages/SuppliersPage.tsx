@@ -5,21 +5,17 @@ import { FiPlus } from 'react-icons/fi'
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     loadSuppliers()
   }, [])
 
   const loadSuppliers = async () => {
-    setIsLoading(true)
     try {
       const data = await api.getSuppliers()
       setSuppliers(data)
     } catch (error) {
       toast.error('Failed to load suppliers')
-    } finally {
-      setIsLoading(false)
     }
   }
 

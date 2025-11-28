@@ -216,7 +216,6 @@ export default function POSPage() {
             <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1 min-h-0">
               {filteredProducts.map((product) => {
                 // Calculate expiry status
-                let expiryStatus = 'good'
                 let expiryColor = 'text-green-600 dark:text-green-400'
                 let expiryBg = 'bg-green-50 dark:bg-green-900/20'
 
@@ -226,19 +225,15 @@ export default function POSPage() {
                   const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
 
                   if (daysUntilExpiry < 0) {
-                    expiryStatus = 'expired'
                     expiryColor = 'text-red-700 dark:text-red-400'
                     expiryBg = 'bg-red-50 dark:bg-red-900/20'
                   } else if (daysUntilExpiry <= 30) {
-                    expiryStatus = 'critical'
                     expiryColor = 'text-red-600 dark:text-red-400'
                     expiryBg = 'bg-red-50 dark:bg-red-900/20'
                   } else if (daysUntilExpiry <= 90) {
-                    expiryStatus = 'warning'
                     expiryColor = 'text-orange-600 dark:text-orange-400'
                     expiryBg = 'bg-orange-50 dark:bg-orange-900/20'
                   } else if (daysUntilExpiry <= 180) {
-                    expiryStatus = 'caution'
                     expiryColor = 'text-yellow-600 dark:text-yellow-400'
                     expiryBg = 'bg-yellow-50 dark:bg-yellow-900/20'
                   }

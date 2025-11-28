@@ -5,21 +5,17 @@ import { FiAlertCircle, FiPackage, FiInfo, FiAlertTriangle, FiTrendingUp, FiArch
 
 export default function NotificationsPage() {
   const [notifications, setNotifications] = useState<any[]>([])
-  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     loadNotifications()
   }, [])
 
   const loadNotifications = async () => {
-    setIsLoading(true)
     try {
       const data = await api.getNotifications({ limit: 50 })
       setNotifications(data)
     } catch (error) {
       toast.error('Failed to load notifications')
-    } finally {
-      setIsLoading(false)
     }
   }
 
