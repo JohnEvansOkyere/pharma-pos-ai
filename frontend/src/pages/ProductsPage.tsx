@@ -14,12 +14,9 @@ export default function ProductsPage() {
     generic_name: '',
     sku: '',
     barcode: '',
-    description: '',
-    dosage_form: 'tablet',
+    dosage_form: 'TABLET',
     strength: '',
-    prescription_status: 'otc',
-    active_ingredient: '',
-    manufacturer: '',
+    prescription_status: 'OTC',
     cost_price: '',
     selling_price: '',
     wholesale_price: '',
@@ -27,8 +24,11 @@ export default function ProductsPage() {
     reorder_level: '20',
     reorder_quantity: '100',
     category_id: '',
-    supplier_id: '',
-    is_active: true
+    is_active: true,
+    // Initial batch information
+    batch_number: '',
+    initial_quantity: '',
+    expiry_date: ''
   })
 
   useEffect(() => {
@@ -67,16 +67,23 @@ export default function ProductsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    const productData = {
-      ...formData,
+    // Build product data - only include fields that backend expects
+    const productData: any = {
+      name: formData.name,
+      generic_name: formData.generic_name || null,
+      sku: formData.sku,
+      barcode: formData.barcode || null,
+      dosage_form: formData.dosage_form,
+      strength: formData.strength || null,
+      prescription_status: formData.prescription_status,
       cost_price: parseFloat(formData.cost_price),
       selling_price: parseFloat(formData.selling_price),
-      wholesale_price: formData.wholesale_price ? parseFloat(formData.wholesale_price) : undefined,
+      wholesale_price: formData.wholesale_price ? parseFloat(formData.wholesale_price) : null,
       low_stock_threshold: parseInt(formData.low_stock_threshold),
       reorder_level: parseInt(formData.reorder_level),
       reorder_quantity: parseInt(formData.reorder_quantity),
       category_id: parseInt(formData.category_id),
-      supplier_id: formData.supplier_id ? parseInt(formData.supplier_id) : undefined
+      is_active: formData.is_active
     }
 
     try {
@@ -84,14 +91,36 @@ export default function ProductsPage() {
         await api.updateProduct(editingProduct.id, productData)
         toast.success('Product updated successfully')
       } else {
-        await api.createProduct(productData)
+        // Create product first
+        const createdProduct = await api.createProduct(productData)
+
+        // If initial batch data is provided, create the batch
+        if (formData.batch_number && formData.initial_quantity && formData.expiry_date) {
+          const batchData = {
+            product_id: createdProduct.id,
+            batch_number: formData.batch_number,
+            quantity: parseInt(formData.initial_quantity),
+            expiry_date: formData.expiry_date,
+            cost_price: parseFloat(formData.cost_price)
+          }
+          await api.createProductBatch(createdProduct.id, batchData)
+        }
+
         toast.success('Product created successfully')
       }
       setShowModal(false)
       resetForm()
       loadProducts()
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || 'Failed to save product')
+      console.error('Save product error:', error)
+      const errorDetail = error.response?.data?.detail
+      if (typeof errorDetail === 'string') {
+        toast.error(errorDetail)
+      } else if (Array.isArray(errorDetail)) {
+        toast.error(errorDetail.map((e: any) => e.msg).join(', '))
+      } else {
+        toast.error('Failed to save product')
+      }
     }
   }
 
@@ -102,12 +131,9 @@ export default function ProductsPage() {
       generic_name: product.generic_name || '',
       sku: product.sku,
       barcode: product.barcode || '',
-      description: product.description || '',
       dosage_form: product.dosage_form,
       strength: product.strength || '',
       prescription_status: product.prescription_status,
-      active_ingredient: product.active_ingredient || '',
-      manufacturer: product.manufacturer || '',
       cost_price: product.cost_price.toString(),
       selling_price: product.selling_price.toString(),
       wholesale_price: product.wholesale_price?.toString() || '',
@@ -115,8 +141,10 @@ export default function ProductsPage() {
       reorder_level: product.reorder_level.toString(),
       reorder_quantity: product.reorder_quantity.toString(),
       category_id: product.category_id.toString(),
-      supplier_id: product.supplier_id?.toString() || '',
-      is_active: product.is_active
+      is_active: product.is_active,
+      batch_number: '',
+      initial_quantity: '',
+      expiry_date: ''
     })
     setShowModal(true)
   }
@@ -139,12 +167,9 @@ export default function ProductsPage() {
       generic_name: '',
       sku: '',
       barcode: '',
-      description: '',
-      dosage_form: 'tablet',
+      dosage_form: 'TABLET',
       strength: '',
-      prescription_status: 'otc',
-      active_ingredient: '',
-      manufacturer: '',
+      prescription_status: 'OTC',
       cost_price: '',
       selling_price: '',
       wholesale_price: '',
@@ -152,8 +177,10 @@ export default function ProductsPage() {
       reorder_level: '20',
       reorder_quantity: '100',
       category_id: '',
-      supplier_id: '',
-      is_active: true
+      is_active: true,
+      batch_number: '',
+      initial_quantity: '',
+      expiry_date: ''
     })
     setEditingProduct(null)
   }
@@ -389,17 +416,6 @@ export default function ProductsPage() {
                         className="input"
                       />
                     </div>
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Description
-                      </label>
-                      <textarea
-                        value={formData.description}
-                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                        className="input"
-                        rows={3}
-                      />
-                    </div>
                   </div>
                 </div>
 
@@ -419,17 +435,19 @@ export default function ProductsPage() {
                         onChange={(e) => setFormData({ ...formData, dosage_form: e.target.value })}
                         className="input"
                       >
-                        <option value="tablet">Tablet</option>
-                        <option value="capsule">Capsule</option>
-                        <option value="syrup">Syrup</option>
-                        <option value="injection">Injection</option>
-                        <option value="cream">Cream</option>
-                        <option value="ointment">Ointment</option>
-                        <option value="drops">Drops</option>
-                        <option value="inhaler">Inhaler</option>
-                        <option value="powder">Powder</option>
-                        <option value="suppository">Suppository</option>
-                        <option value="other">Other</option>
+                        <option value="TABLET">Tablet</option>
+                        <option value="CAPSULE">Capsule</option>
+                        <option value="SYRUP">Syrup</option>
+                        <option value="INJECTION">Injection</option>
+                        <option value="SUSPENSION">Suspension</option>
+                        <option value="CREAM">Cream</option>
+                        <option value="OINTMENT">Ointment</option>
+                        <option value="DROPS">Drops</option>
+                        <option value="POWDER">Powder</option>
+                        <option value="INHALER">Inhaler</option>
+                        <option value="SUPPOSITORY">Suppository</option>
+                        <option value="PATCH">Patch</option>
+                        <option value="OTHER">Other</option>
                       </select>
                     </div>
                     <div>
@@ -454,32 +472,10 @@ export default function ProductsPage() {
                         onChange={(e) => setFormData({ ...formData, prescription_status: e.target.value })}
                         className="input"
                       >
-                        <option value="otc">OTC</option>
-                        <option value="prescription">Prescription</option>
-                        <option value="controlled">Controlled</option>
+                        <option value="OTC">OTC (Over The Counter)</option>
+                        <option value="PRESCRIPTION_REQUIRED">Prescription Required</option>
+                        <option value="PRESCRIPTION_OPTIONAL">Prescription Optional</option>
                       </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Active Ingredient
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.active_ingredient}
-                        onChange={(e) => setFormData({ ...formData, active_ingredient: e.target.value })}
-                        className="input"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Manufacturer
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.manufacturer}
-                        onChange={(e) => setFormData({ ...formData, manufacturer: e.target.value })}
-                        className="input"
-                      />
                     </div>
                   </div>
                 </div>
@@ -573,12 +569,12 @@ export default function ProductsPage() {
                   </div>
                 </div>
 
-                {/* Category & Supplier */}
+                {/* Category */}
                 <div>
                   <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
                     Classification
                   </h3>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         Category *
@@ -597,25 +593,57 @@ export default function ProductsPage() {
                         ))}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                        Supplier
-                      </label>
-                      <select
-                        value={formData.supplier_id}
-                        onChange={(e) => setFormData({ ...formData, supplier_id: e.target.value })}
-                        className="input"
-                      >
-                        <option value="">Select Supplier</option>
-                        {suppliers.map((sup) => (
-                          <option key={sup.id} value={sup.id}>
-                            {sup.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
                   </div>
                 </div>
+
+                {/* Initial Batch Information (for new products) */}
+                {!editingProduct && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
+                      Initial Stock Batch
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Batch Number *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={formData.batch_number}
+                          onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
+                          className="input"
+                          placeholder="e.g., BATCH2024001"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Initial Quantity *
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          min="0"
+                          value={formData.initial_quantity}
+                          onChange={(e) => setFormData({ ...formData, initial_quantity: e.target.value })}
+                          className="input"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                          Expiry Date *
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={formData.expiry_date}
+                          onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
+                          className="input"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Form Actions */}
                 <div className="flex justify-end space-x-3 pt-4 border-t dark:border-gray-700">

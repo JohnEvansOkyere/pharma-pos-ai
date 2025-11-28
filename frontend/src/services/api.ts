@@ -5,7 +5,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+// Use nginx proxy (/api) in production, or direct API URL in development
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
 class ApiClient {
   private client: AxiosInstance
@@ -59,13 +60,13 @@ class ApiClient {
 
   // Auth endpoints
   async login(username: string, password: string) {
-    const formData = new FormData()
+    const formData = new URLSearchParams()
     formData.append('username', username)
     formData.append('password', password)
 
     const response = await this.client.post('/auth/login', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Content-Type': 'application/x-www-form-urlencoded',
       },
     })
     return response.data
@@ -115,6 +116,11 @@ class ApiClient {
 
   async getLowStockProducts() {
     const response = await this.client.get('/products/low-stock')
+    return response.data
+  }
+
+  async createProductBatch(productId: number, batchData: any) {
+    const response = await this.client.post(`/products/${productId}/batches`, batchData)
     return response.data
   }
 

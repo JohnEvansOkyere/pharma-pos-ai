@@ -7,6 +7,19 @@
     <meta name="description" content="Offline-capable Pharmaceutical POS System" />
     <meta name="theme-color" content="#4F46E5" />
     <title>PHARMA-POS-AI</title>
+    <!-- Polyfill for adoptedStyleSheets compatibility -->
+    <script>
+      if (document.adoptedStyleSheets && !Array.isArray(document.adoptedStyleSheets)) {
+        Object.defineProperty(document, 'adoptedStyleSheets', {
+          get() {
+            return Array.from(this._adoptedStyleSheets || []);
+          },
+          set(sheets) {
+            this._adoptedStyleSheets = sheets;
+          }
+        });
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

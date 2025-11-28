@@ -12,26 +12,26 @@ from app.db.base import Base
 
 class DosageForm(str, Enum):
     """Pharmaceutical dosage forms."""
-    TABLET = "tablet"
-    CAPSULE = "capsule"
-    SYRUP = "syrup"
-    INJECTION = "injection"
-    SUSPENSION = "suspension"
-    CREAM = "cream"
-    OINTMENT = "ointment"
-    DROPS = "drops"
-    POWDER = "powder"
-    INHALER = "inhaler"
-    SUPPOSITORY = "suppository"
-    PATCH = "patch"
-    OTHER = "other"
+    TABLET = "TABLET"
+    CAPSULE = "CAPSULE"
+    SYRUP = "SYRUP"
+    INJECTION = "INJECTION"
+    SUSPENSION = "SUSPENSION"
+    CREAM = "CREAM"
+    OINTMENT = "OINTMENT"
+    DROPS = "DROPS"
+    POWDER = "POWDER"
+    INHALER = "INHALER"
+    SUPPOSITORY = "SUPPOSITORY"
+    PATCH = "PATCH"
+    OTHER = "OTHER"
 
 
 class PrescriptionStatus(str, Enum):
     """Prescription requirement status."""
-    PRESCRIPTION_REQUIRED = "prescription_required"
-    PRESCRIPTION_OPTIONAL = "prescription_optional"
-    OTC = "over_the_counter"  # Over-the-counter
+    PRESCRIPTION_REQUIRED = "PRESCRIPTION_REQUIRED"
+    PRESCRIPTION_OPTIONAL = "PRESCRIPTION_OPTIONAL"
+    OTC = "OTC"  # Over-the-counter
 
 
 class Product(Base):
