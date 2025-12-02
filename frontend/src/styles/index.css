@@ -62,3 +62,42 @@
     @apply block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1;
   }
 }
+
+/* ========== PRINT STYLES ========== */
+@media print {
+  /* Hide everything by default */
+  body * {
+    visibility: hidden;
+  }
+  
+  /* Only show receipt */
+  .receipt-print-area,
+  .receipt-print-area * {
+    visibility: visible;
+  }
+  
+  .receipt-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  
+  /* Remove margins and set page size */
+  @page {
+    margin: 0;
+    size: 80mm auto;
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+  
+  /* Force black text on white background */
+  * {
+    color: #000 !important;
+    background: #fff !important;
+  }
+}
