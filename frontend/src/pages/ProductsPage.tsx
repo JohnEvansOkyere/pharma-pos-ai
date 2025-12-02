@@ -64,6 +64,33 @@ export default function ProductsPage() {
     }
   }
 
+  // ========== NEW: AUTO-GENERATION FUNCTIONS ==========
+  const generateSKU = () => {
+    const prefix = formData.category_id ? 
+      categories.find(c => c.id.toString() === formData.category_id)?.name.substring(0, 3).toUpperCase() || 'PRD' 
+      : 'PRD'
+    const timestamp = Date.now().toString().slice(-6)
+    const random = Math.random().toString(36).substring(2, 5).toUpperCase()
+    return `${prefix}-${timestamp}${random}`
+  }
+
+  const generateBarcode = () => {
+    // Generate 13-digit EAN barcode (Ghana country code: 620)
+    const countryCode = '620'
+    const random = Math.floor(Math.random() * 1000000000).toString().padStart(9, '0')
+    return `${countryCode}${random}`
+  }
+
+  const generateBatchNumber = () => {
+    const date = new Date()
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const random = Math.random().toString(36).substring(2, 6).toUpperCase()
+    return `BATCH${year}${month}${day}${random}`
+  }
+  // ========== END AUTO-GENERATION FUNCTIONS ==========
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -125,28 +152,36 @@ export default function ProductsPage() {
   }
 
   const handleEdit = (product: any) => {
-    setEditingProduct(product)
-    setFormData({
-      name: product.name,
-      generic_name: product.generic_name || '',
-      sku: product.sku,
-      barcode: product.barcode || '',
-      dosage_form: product.dosage_form,
-      strength: product.strength || '',
-      prescription_status: product.prescription_status,
-      cost_price: product.cost_price.toString(),
-      selling_price: product.selling_price.toString(),
-      wholesale_price: product.wholesale_price?.toString() || '',
-      low_stock_threshold: product.low_stock_threshold.toString(),
-      reorder_level: product.reorder_level.toString(),
-      reorder_quantity: product.reorder_quantity.toString(),
-      category_id: product.category_id.toString(),
-      is_active: product.is_active,
-      batch_number: '',
-      initial_quantity: '',
-      expiry_date: ''
-    })
-    setShowModal(true)
+    console.log('Edit clicked for product:', product)
+    
+    try {
+      setEditingProduct(product)
+      setFormData({
+        name: product.name || '',
+        generic_name: product.generic_name || '',
+        sku: product.sku || '',
+        barcode: product.barcode || '',
+        dosage_form: product.dosage_form || 'TABLET',
+        strength: product.strength || '',
+        prescription_status: product.prescription_status || 'OTC',
+        cost_price: product.cost_price?.toString() || '',
+        selling_price: product.selling_price?.toString() || '',
+        wholesale_price: product.wholesale_price?.toString() || '',
+        low_stock_threshold: product.low_stock_threshold?.toString() || '10',
+        reorder_level: product.reorder_level?.toString() || '20',
+        reorder_quantity: product.reorder_quantity?.toString() || '100',
+        category_id: product.category_id?.toString() || '',
+        is_active: product.is_active ?? true,
+        batch_number: '',
+        initial_quantity: '',
+        expiry_date: ''
+      })
+      setShowModal(true)
+      console.log('Modal should open now')
+    } catch (error) {
+      console.error('Edit error:', error)
+      toast.error('Failed to open edit form')
+    }
   }
 
   const handleDelete = async (productId: number) => {
@@ -196,9 +231,17 @@ export default function ProductsPage() {
             Manage your inventory
           </p>
         </div>
+        {/* ========== UPDATED: Auto-generate on modal open ========== */}
         <button
           onClick={() => {
             resetForm()
+            // Auto-generate values when adding new product
+            setFormData(prev => ({
+              ...prev,
+              sku: generateSKU(),
+              barcode: generateBarcode(),
+              batch_number: generateBatchNumber()
+            }))
             setShowModal(true)
           }}
           className="btn-primary flex items-center"
@@ -393,28 +436,50 @@ export default function ProductsPage() {
                         className="input"
                       />
                     </div>
+                    {/* ========== UPDATED: SKU with Auto Button ========== */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         SKU *
                       </label>
-                      <input
-                        type="text"
-                        required
-                        value={formData.sku}
-                        onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                        className="input"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          required
+                          value={formData.sku}
+                          onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                          className="input flex-1"
+                          placeholder="Auto-generated"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, sku: generateSKU() })}
+                          className="px-3 py-2 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/50 text-sm font-medium whitespace-nowrap"
+                        >
+                          Auto
+                        </button>
+                      </div>
                     </div>
+                    {/* ========== UPDATED: Barcode with Auto Button ========== */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                         Barcode
                       </label>
-                      <input
-                        type="text"
-                        value={formData.barcode}
-                        onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                        className="input"
-                      />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={formData.barcode}
+                          onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                          className="input flex-1"
+                          placeholder="Auto-generated"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, barcode: generateBarcode() })}
+                          className="px-3 py-2 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/50 text-sm font-medium whitespace-nowrap"
+                        >
+                          Auto
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -603,18 +668,28 @@ export default function ProductsPage() {
                       Initial Stock Batch
                     </h3>
                     <div className="grid grid-cols-2 gap-4">
+                      {/* ========== UPDATED: Batch Number with Auto Button ========== */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                           Batch Number *
                         </label>
-                        <input
-                          type="text"
-                          required
-                          value={formData.batch_number}
-                          onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
-                          className="input"
-                          placeholder="e.g., BATCH2024001"
-                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            required
+                            value={formData.batch_number}
+                            onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
+                            className="input flex-1"
+                            placeholder="e.g., BATCH20250102ABCD"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, batch_number: generateBatchNumber() })}
+                            className="px-3 py-2 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded hover:bg-primary-200 dark:hover:bg-primary-900/50 text-sm font-medium whitespace-nowrap"
+                          >
+                            Auto
+                          </button>
+                        </div>
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
