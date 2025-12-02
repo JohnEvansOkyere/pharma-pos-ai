@@ -206,6 +206,13 @@ class ApiClient {
     return response.data
   }
 
+  async getLowStockItems(params?: any) {
+  const response = await this.client.get('/dashboard/low-stock-items', {
+    params,
+  })
+  return response.data
+  }
+
   async getOverstockItems() {
     const response = await this.client.get('/dashboard/overstock-items')
     return response.data

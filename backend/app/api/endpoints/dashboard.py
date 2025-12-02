@@ -184,6 +184,47 @@ def get_slow_moving_products(
     return slow_movers[:limit]
 
 
+@router.get("/low-stock-items")
+def get_low_stock_items(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+) -> List[Dict[str, Any]]:
+    """
+    Get products with low stock (at or below low stock threshold).
+
+    Args:
+        limit: Maximum number of products to return
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        List of low stock products with details
+    """
+    products = db.query(Product).filter(
+        Product.is_active == True,
+        Product.total_stock <= Product.low_stock_threshold
+    ).order_by(
+        Product.total_stock.asc()
+    ).limit(limit).all()
+
+    return [
+        {
+            "product_id": p.id,
+            "product_name": p.name,
+            "sku": p.sku,
+            "dosage_form": p.dosage_form.value if p.dosage_form else None,
+            "strength": p.strength,
+            "current_stock": p.total_stock,
+            "low_stock_threshold": p.low_stock_threshold,
+            "reorder_level": p.reorder_level,
+            "units_needed": max(0, p.reorder_level - p.total_stock),
+            "status": "out_of_stock" if p.total_stock == 0 else "low_stock",
+        }
+        for p in products
+    ]
+
+
 @router.get("/sales-trend")
 def get_sales_trend(
     days: int = 7,
@@ -545,4 +586,4 @@ def get_financial_kpis(
         "total_transactions": len(sales),
         "outstanding_credit": outstanding_credit,
         "credit_sales_count": len(credit_sales),
-    }
+    }  

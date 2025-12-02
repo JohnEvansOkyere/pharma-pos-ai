@@ -4,6 +4,8 @@ Background scheduler for periodic tasks.
 import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from pytz import timezone
+
 from sqlalchemy.orm import Session
 
 from app.db.base import SessionLocal
@@ -17,7 +19,9 @@ class SchedulerService:
     """Background scheduler service."""
 
     def __init__(self):
-        self.scheduler = BackgroundScheduler()
+        # Configure scheduler with explicit timezone
+        tz = timezone(getattr(settings, 'TIMEZONE', 'UTC'))
+        self.scheduler = BackgroundScheduler(timezone=tz)
 
     def start(self):
         """Start the background scheduler."""
@@ -25,10 +29,13 @@ class SchedulerService:
             logger.info("Background scheduler disabled in settings")
             return
 
+        # Get timezone for cron jobs
+        tz = timezone(getattr(settings, 'TIMEZONE', 'UTC'))
+        
         # Schedule expiry checks
         self.scheduler.add_job(
             self.check_expiring_products,
-            CronTrigger(hour=settings.EXPIRY_CHECK_HOUR, minute=0),
+            CronTrigger(hour=settings.EXPIRY_CHECK_HOUR, minute=0, timezone=tz),
             id="check_expiring_products",
             name="Check expiring products",
             replace_existing=True,
@@ -37,25 +44,16 @@ class SchedulerService:
         # Schedule low stock checks
         self.scheduler.add_job(
             self.check_low_stock,
-            CronTrigger(hour=settings.LOW_STOCK_CHECK_HOUR, minute=0),
+            CronTrigger(hour=settings.LOW_STOCK_CHECK_HOUR, minute=0, timezone=tz),
             id="check_low_stock",
             name="Check low stock",
-            replace_existing=True,
-        )
-
-        # Schedule out of stock checks
-        self.scheduler.add_job(
-            self.check_out_of_stock,
-            CronTrigger(hour=settings.LOW_STOCK_CHECK_HOUR, minute=15),
-            id="check_out_of_stock",
-            name="Check out of stock",
             replace_existing=True,
         )
 
         # Schedule near expiry checks (critical - check twice daily)
         self.scheduler.add_job(
             self.check_near_expiry,
-            CronTrigger(hour="8,20", minute=0),
+            CronTrigger(hour="8,20", minute=0, timezone=tz),
             id="check_near_expiry",
             name="Check near expiry products",
             replace_existing=True,
@@ -64,7 +62,7 @@ class SchedulerService:
         # Schedule dead stock checks (weekly - Monday at 11 AM)
         self.scheduler.add_job(
             self.check_dead_stock,
-            CronTrigger(day_of_week="mon", hour=11, minute=0),
+            CronTrigger(day_of_week="mon", hour=11, minute=0, timezone=tz),
             id="check_dead_stock",
             name="Check dead stock",
             replace_existing=True,
@@ -73,14 +71,18 @@ class SchedulerService:
         # Schedule overstock checks (weekly - Monday at 11:30 AM)
         self.scheduler.add_job(
             self.check_overstock,
-            CronTrigger(day_of_week="mon", hour=11, minute=30),
+            CronTrigger(day_of_week="mon", hour=11, minute=30, timezone=tz),
             id="check_overstock",
             name="Check overstock",
             replace_existing=True,
         )
 
         self.scheduler.start()
-        logger.info("Background scheduler started")
+        logger.info(f"Background scheduler started with timezone: {tz}")
+        
+        # Log next run times for debugging
+        for job in self.scheduler.get_jobs():
+            logger.info(f"Job '{job.name}' - Next run: {job.next_run_time}")
 
     def stop(self):
         """Stop the background scheduler."""

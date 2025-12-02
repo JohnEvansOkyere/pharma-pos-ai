@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     ENABLE_EMAIL_NOTIFICATIONS: bool = False
     N8N_WEBHOOK_URL: Optional[str] = None
 
+
+    TIMEZONE: str = "Africa/Accra"
+    
     # Scheduler
     ENABLE_BACKGROUND_SCHEDULER: bool = True
     EXPIRY_CHECK_HOUR: int = 9

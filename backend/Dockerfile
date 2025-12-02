@@ -4,10 +4,16 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Set timezone environment variable (can be overridden by docker-compose)
+ENV TZ=Africa/Accra
+
+# Install system dependencies including tzdata for timezone support
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file

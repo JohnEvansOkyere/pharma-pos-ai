@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   # PostgreSQL Database
   db:
@@ -25,7 +24,6 @@ services:
       retries: 5
     networks:
       - pharma-network
-
   # Backend API
   backend:
     build:
@@ -34,21 +32,17 @@ services:
     container_name: pharma-pos-backend
     restart: unless-stopped
     environment:
-      # Database
-      DATABASE_URL: postgresql://${POSTGRES_USER:-pharma_user}:${POSTGRES_PASSWORD:-changeme123}@db:5432/${POSTGRES_DB:-pharma_pos}
-
-      # JWT
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-this-in-production-min-32-chars}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
-
-      # App
       APP_NAME: "Pharma POS AI"
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DEBUG: ${DEBUG:-false}
-
-      # CORS
       BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173","http://frontend","http://localhost"]'
+      # Add timezone for APScheduler CronTrigger
+      TIMEZONE: ${TIMEZONE:-Africa/Accra}
+      TZ: Africa/Accra
     ports:
       - "8000:8000"
     depends_on:
@@ -64,7 +58,6 @@ services:
       start_period: 40s
     networks:
       - pharma-network
-
   # Frontend
   frontend:
     build:
@@ -75,7 +68,7 @@ services:
     environment:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       - backend
     healthcheck:
@@ -85,11 +78,29 @@ services:
       retries: 3
     networks:
       - pharma-network
-
+  # pgAdmin (Database UI)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pharma-pos-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - db
+    networks:
+      - pharma-network
+    volumes:
+    - pgadmin_data:/var/lib/pgadmin
+    
 volumes:
   postgres_data:
     driver: local
-
+    
+  pgadmin_data:
+    driver: local
 networks:
   pharma-network:
     driver: bridge

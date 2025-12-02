@@ -69,6 +69,19 @@ interface ExpiringProduct {
   value_at_risk: number
 }
 
+interface LowStockItem {
+  product_id: number
+  product_name: string
+  sku: string
+  dosage_form: string
+  strength: string
+  current_stock: number
+  low_stock_threshold: number
+  reorder_level: number
+  units_needed: number
+  status: 'out_of_stock' | 'low_stock'
+}
+
 interface OverstockItem {
   product_id: number
   product_name: string
@@ -98,6 +111,7 @@ export default function DashboardPage() {
   const [revenueAnalysis, setRevenueAnalysis] = useState<RevenueAnalysis | null>(null)
   const [financialKPIs, setFinancialKPIs] = useState<FinancialKPIs | null>(null)
   const [expiringProducts, setExpiringProducts] = useState<ExpiringProduct[]>([])
+  const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [overstockItems, setOverstockItems] = useState<OverstockItem[]>([])
   const [profitByCategory, setProfitByCategory] = useState<ProfitByCategory[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -145,6 +159,7 @@ export default function DashboardPage() {
         revenueData,
         financialData,
         expiringData,
+        lowStockData,
         overstockData,
         profitCategoryData,
       ] = await Promise.all([
@@ -155,6 +170,7 @@ export default function DashboardPage() {
         api.getRevenueAnalysis(),
         api.getFinancialKPIs({ days: effectiveDays }),
         api.getExpiringProducts({ days: expiryDays, limit: 10 }),
+        api.getLowStockItems({ limit: 50 }),
         api.getOverstockItems(),
         api.getProfitByCategory({ days: effectiveDays }),
       ])
@@ -166,6 +182,7 @@ export default function DashboardPage() {
       setRevenueAnalysis(revenueData)
       setFinancialKPIs(financialData)
       setExpiringProducts(expiringData)
+      setLowStockItems(lowStockData)
       setOverstockItems(overstockData)
       setProfitByCategory(profitCategoryData)
     } catch (error) {
@@ -302,7 +319,7 @@ export default function DashboardPage() {
                   className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
-              {startDate && endDate && (
+              {startDate && endDate && ( 
                 <span className="text-sm text-gray-600 dark:text-gray-400">
                   ({calculateDaysFromDateRange()} days)
                 </span>
@@ -410,7 +427,7 @@ export default function DashboardPage() {
           />
           <KPICard
             title="Overstock Items"
-            value={`${overstockItems?.length || 0}`}
+            value={`${overstockItems?.length || 0}`} 
             icon={FiPackage}
             iconColor="text-yellow-600 dark:text-yellow-400"
             bgColor="bg-yellow-100 dark:bg-yellow-900/20"
@@ -661,6 +678,82 @@ export default function DashboardPage() {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+
+            {/* Low Stock Items Table */}
+      <div className="card p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Low Stock Items
+          </h3>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {lowStockItems.length} items need attention
+          </span>
+        </div>
+        <div className="overflow-x-auto max-h-96 overflow-y-auto custom-scrollbar">
+          <table className="w-full">
+            <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Current Stock</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Threshold</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Units Needed</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+              {lowStockItems.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                    All products are well stocked! 🎉
+                  </td>
+                </tr>
+              ) : (
+                lowStockItems.map((item) => (
+                  <tr key={item.product_id}>
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900 dark:text-gray-100">{item.product_name}</div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        {item.dosage_form} {item.strength && `• ${item.strength}`}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{item.sku}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`font-medium ${
+                          item.current_stock === 0
+                            ? 'text-red-600 dark:text-red-400'
+                            : 'text-gray-900 dark:text-gray-100'
+                        }`}
+                      >
+                        {item.current_stock}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{item.low_stock_threshold}</td>
+                    <td className="px-4 py-3">
+                      <span className="font-medium text-orange-600 dark:text-orange-400">
+                        {item.units_needed}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-1 text-xs rounded-full ${
+                          item.status === 'out_of_stock'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                            : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400'
+                        }`}
+                      >
+                        {item.status === 'out_of_stock' ? 'Out of Stock' : 'Low Stock'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
