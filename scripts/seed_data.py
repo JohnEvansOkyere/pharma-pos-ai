@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 
 # Add backend directory to path
 backend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'backend')
+os.chdir(backend_dir)
 sys.path.insert(0, backend_dir)
 
 from app.db.base import SessionLocal
