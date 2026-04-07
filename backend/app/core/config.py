@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Application
-    APP_NAME: str = "PHARMA-POS-AI"
+    APP_NAME: str = "GYSBIN PHARMACY ANNEX"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
 
     TIMEZONE: str = "Africa/Accra"
-    
+
     # Scheduler
     ENABLE_BACKGROUND_SCHEDULER: bool = True
     EXPIRY_CHECK_HOUR: int = 9

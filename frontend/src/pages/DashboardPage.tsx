@@ -563,7 +563,7 @@ export default function DashboardPage() {
               <div className="p-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
                 <p className="text-xs text-orange-700 dark:text-orange-400">Overstock Capital</p>
                 <p className="text-xl font-bold text-orange-900 dark:text-orange-100 mt-1">
-                  GH₵ {(kpis?.inventory_value * 0.15 || 0).toFixed(0)}
+                  GH₵ {((kpis?.inventory_value ?? 0) * 0.15).toFixed(0)}
                 </p>
               </div>
             </div>

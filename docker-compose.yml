@@ -39,7 +39,7 @@ services:
       APP_NAME: "Pharma POS AI"
       ENVIRONMENT: ${ENVIRONMENT:-production}
       DEBUG: ${DEBUG:-false}
-      BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173","http://frontend","http://localhost"]'
+      BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080","http://frontend","http://localhost"]'
       # Add timezone for APScheduler CronTrigger
       TIMEZONE: ${TIMEZONE:-Africa/Accra}
       TZ: Africa/Accra

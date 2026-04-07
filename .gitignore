@@ -95,9 +95,11 @@ installer-builds/
 *.tx
 !requirements.txt
 !README.md
+!AGENTS.md
+!docs/
+!docs/**
 deploy.sh
 
 # Database files (exclude from git)
 database/
 !database/.gitkeep
-
