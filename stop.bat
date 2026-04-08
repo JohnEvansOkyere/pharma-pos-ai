@@ -1,4 +1,5 @@
 @echo off
+setlocal
 title Pharma-POS-AI Shutdown
 color 0C
 
@@ -7,9 +8,8 @@ echo    STOPPING PHARMA-POS-AI...
 echo ========================================
 echo.
 
-cd /d "%~dp0"
-
-docker-compose down
+taskkill /FI "WINDOWTITLE eq Pharma POS Backend*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Pharma POS Frontend*" /T /F >nul 2>&1
 
 echo.
 echo ========================================

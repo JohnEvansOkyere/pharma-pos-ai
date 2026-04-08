@@ -12,6 +12,7 @@ import SalesPage from './pages/SalesPage'
 import SuppliersPage from './pages/SuppliersPage'
 import NotificationsPage from './pages/NotificationsPage'
 import SettingsPage from './pages/SettingsPage'
+import StockAdjustmentsPage from './pages/StockAdjustmentsPage'
 
 // Layout
 import MainLayout from './components/layout/MainLayout'
@@ -97,6 +98,11 @@ function App() {
           <Route path="products" element={<ProductsPage />} />
           <Route path="pos" element={<POSPage />} />
           <Route path="sales" element={<SalesPage />} />
+          <Route path="stock-adjustments" element={
+            <AdminOrManagerRoute>
+              <StockAdjustmentsPage />
+            </AdminOrManagerRoute>
+          } />
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="notifications" element={<NotificationsPage />} />
           <Route path="settings" element={

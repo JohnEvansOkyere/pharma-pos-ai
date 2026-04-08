@@ -98,6 +98,10 @@ def create_user(
     Raises:
         HTTPException: If username or email already exists, or if manager tries to create non-cashier
     """
+    normalized_username = user_data.username.strip()
+    normalized_email = user_data.email.strip().lower()
+    normalized_full_name = user_data.full_name.strip()
+
     # Managers can only create cashiers
     if current_user.role == UserRole.MANAGER:
         if user_data.role != UserRole.CASHIER:
@@ -107,14 +111,14 @@ def create_user(
             )
 
     # Check if username exists
-    if db.query(User).filter(User.username == user_data.username).first():
+    if db.query(User).filter(User.username == normalized_username).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered",
         )
 
     # Check if email exists
-    if db.query(User).filter(User.email == user_data.email).first():
+    if db.query(User).filter(User.email == normalized_email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
@@ -123,9 +127,9 @@ def create_user(
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     db_user = User(
-        username=user_data.username,
-        email=user_data.email,
-        full_name=user_data.full_name,
+        username=normalized_username,
+        email=normalized_email,
+        full_name=normalized_full_name,
         hashed_password=hashed_password,
         role=user_data.role,
         is_active=user_data.is_active if user_data.is_active is not None else True,
@@ -163,6 +167,9 @@ def update_user(
     Raises:
         HTTPException: If user not found or manager tries to update non-cashier
     """
+    normalized_email = user_data.email.strip().lower() if user_data.email is not None else None
+    normalized_full_name = user_data.full_name.strip() if user_data.full_name is not None else None
+
     db_user = db.query(User).filter(User.id == user_id).first()
     if not db_user:
         raise HTTPException(
@@ -184,10 +191,10 @@ def update_user(
             )
 
     # Update fields
-    if user_data.email is not None:
+    if normalized_email is not None:
         # Check if email is already taken by another user
         existing = db.query(User).filter(
-            User.email == user_data.email,
+            User.email == normalized_email,
             User.id != user_id
         ).first()
         if existing:
@@ -195,10 +202,10 @@ def update_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
-        db_user.email = user_data.email
+        db_user.email = normalized_email
 
-    if user_data.full_name is not None:
-        db_user.full_name = user_data.full_name
+    if normalized_full_name is not None:
+        db_user.full_name = normalized_full_name
 
     if user_data.role is not None:
         db_user.role = user_data.role

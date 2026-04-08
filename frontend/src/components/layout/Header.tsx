@@ -1,11 +1,26 @@
 import { useState, useEffect } from 'react'
-import { FiBell, FiMoon, FiSun, FiLogOut, FiUser } from 'react-icons/fi'
+import {
+  FiBell,
+  FiLogOut,
+  FiMenu,
+  FiMoon,
+  FiSun,
+  FiUser,
+} from 'react-icons/fi'
 import { useAuthStore } from '../../stores/authStore'
 import { useThemeStore } from '../../stores/themeStore'
 import { api } from '../../services/api'
 import { useNavigate } from 'react-router-dom'
 
-export default function Header() {
+interface HeaderProps {
+  isSidebarVisible: boolean
+  onToggleSidebar: () => void
+}
+
+export default function Header({
+  isSidebarVisible,
+  onToggleSidebar,
+}: HeaderProps) {
   const { user, logout } = useAuthStore()
   const { isDark, toggleTheme } = useThemeStore()
   const navigate = useNavigate()
@@ -35,7 +50,15 @@ export default function Header() {
 
   return (
     <header className="h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6">
-      <div className="flex items-center">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onToggleSidebar}
+          className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+          aria-label={isSidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+          title={isSidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
+        >
+          <FiMenu className="h-5 w-5" />
+        </button>
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
           Welcome, {user?.full_name || 'User'}
         </h2>

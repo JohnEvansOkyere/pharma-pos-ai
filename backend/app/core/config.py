@@ -2,10 +2,11 @@
 Application configuration module.
 Loads settings from environment variables and provides typed configuration.
 """
-from typing import List, Optional
-from pydantic_settings import BaseSettings
-from pydantic import validator
 import secrets
+from typing import List, Optional
+
+from pydantic import field_validator, model_validator
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -18,20 +19,33 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "production"
 
     # Database
-    DATABASE_URL: str = "sqlite:///./pharma_pos.db"
+    DATABASE_BACKEND: str = "postgresql"  # postgresql
+    DATABASE_URL: Optional[str] = None
+    SQLITE_DATABASE_PATH: str = "./pharma_pos.db"
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_DB: str = "pharma_pos"
+    POSTGRES_USER: str = "pharma_user"
+    POSTGRES_PASSWORD: str = ""
+    ALLOW_SQLITE_IN_PRODUCTION: bool = False
 
     # Security
-    SECRET_KEY: str = secrets.token_urlsafe(32)
+    SECRET_KEY: Optional[str] = None
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
-    @validator("BACKEND_CORS_ORIGINS", pre=True)
+    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @classmethod
     def assemble_cors_origins(cls, v):
         """Parse CORS origins from string or list."""
         if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                # Handle JSON-like env strings without requiring callers to
+                # switch formats between Docker and local installs.
+                v = v[1:-1].replace('"', "").replace("'", "")
             return [i.strip() for i in v.split(",")]
         return v
 
@@ -59,6 +73,30 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FILE: str = "./logs/app.log"
+
+    @model_validator(mode="after")
+    def finalize_settings(self):
+        """Build derived settings and enforce production-safe defaults."""
+        environment = self.ENVIRONMENT.lower()
+        backend = self.DATABASE_BACKEND.lower()
+
+        if backend != "postgresql":
+            raise ValueError(
+                "Unsupported DATABASE_BACKEND. This production build only supports PostgreSQL."
+            )
+
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = (
+                f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+                f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            )
+
+        if not self.SECRET_KEY:
+            if environment == "production":
+                raise ValueError("SECRET_KEY must be set in production.")
+            self.SECRET_KEY = secrets.token_urlsafe(32)
+
+        return self
 
     class Config:
         env_file = ".env"

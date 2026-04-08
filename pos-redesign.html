@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pharmacy POS</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --primary: #0D9488;
+      --primary-dark: #0F766E;
+      --bg-color: #F8FAFC;
+      --panel-bg: #FFFFFF;
+      --text-main: #0F172A;
+      --text-muted: #64748B;
+      --border-color: #E2E8F0;
+      
+      --success: #10B981;
+      --success-bg: #D1FAE5;
+      --warning: #F59E0B;
+      --warning-bg: #FEF3C7;
+      --error: #EF4444;
+      --error-bg: #FEE2E2;
+      --gray-bg: #F1F5F9;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+    }
+
+    /* Layout */
+    .left-panel {
+      width: 63%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 32px;
+      gap: 24px;
+    }
+
+    .right-panel {
+      width: 37%;
+      min-width: 400px;
+      height: 100vh;
+      background-color: var(--panel-bg);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      box-shadow: -4px 0 15px rgba(0,0,0,0.02);
+      position: sticky;
+      top: 0;
+    }
+
+    /* Left Panel - Search */
+    .search-container {
+      display: flex;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background-color: var(--bg-color);
+      padding-bottom: 8px;
+    }
+
+    .search-input-wrapper {
+      position: relative;
+      flex: 1;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      width: 20px;
+      height: 20px;
+    }
+
+    .search-input {
+      width: 100%;
+      height: 52px;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+      padding: 0 16px 0 48px;
+      font-size: 16px;
+      outline: none;
+      transition: all 0.2s;
+      background: white;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    .search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.2);
+    }
+
+    .search-shortcut {
+      position: absolute;
+      right: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: var(--gray-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .scan-btn {
+      height: 52px;
+      width: 52px;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+      background: white;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    .scan-btn:hover {
+      background: var(--gray-bg);
+    }
+
+    /* Left Panel - Grid */
+    .products-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 20px;
+    }
+
+    .product-card {
+      background: white;
+      border-radius: 16px;
+      padding: 20px;
+      border: 1px solid transparent;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .product-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 12px -2px rgba(0,0,0,0.08);
+      border-color: var(--border-color);
+    }
+
+    .product-card.out-of-stock {
+      opacity: 0.6;
+      filter: grayscale(0.5);
+    }
+
+    .badge {
+      padding: 4px 10px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 600;
+      align-self: flex-start;
+      margin-bottom: 4px;
+    }
+
+    .badge.in-stock { background: var(--success-bg); color: var(--primary-dark); }
+    .badge.low-stock { background: var(--warning-bg); color: #92400E; }
+    .badge.out-stock { background: var(--gray-bg); color: var(--text-muted); }
+
+    .product-info {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    .product-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-main);
+      margin-bottom: 4px;
+      line-height: 1.3;
+    }
+
+    .product-dosage {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .product-price {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--primary);
+      text-align: right;
+      margin: 8px 0;
+    }
+
+    .add-to-cart-btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      background: var(--bg-color);
+      color: var(--primary);
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+    }
+
+    .add-to-cart-btn:hover:not(:disabled) {
+      background: var(--primary);
+      color: white;
+    }
+
+    .product-card.out-of-stock .add-to-cart-btn {
+      background: var(--gray-bg);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    /* Right Panel - Header */
+    .cart-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: white;
+    }
+
+    .cart-title {
+      font-size: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .item-count-badge {
+      background: var(--primary);
+      color: white;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+
+    .clear-sale {
+      color: var(--error);
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .clear-sale:hover {
+      text-decoration: underline;
+    }
+
+    /* Right Panel - Cart Items */
+    .cart-items {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .empty-cart {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      text-align: center;
+      gap: 12px;
+    }
+
+    .cart-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #F1F5F9;
+    }
+
+    .cart-item-info {
+      flex: 1;
+    }
+
+    .cart-item-name {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 2px;
+    }
+
+    .cart-item-dosage {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .stepper {
+      display: flex;
+      align-items: center;
+      background: var(--gray-bg);
+      border-radius: 8px;
+      padding: 4px;
+      border: 1px solid var(--border-color);
+    }
+
+    .step-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: white;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      color: var(--text-main);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+
+    .step-btn:hover {
+      border-color: var(--border-color);
+    }
+
+    .step-qty {
+      width: 32px;
+      text-align: center;
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .cart-item-totals {
+      text-align: right;
+      min-width: 80px;
+    }
+
+    .cart-item-price {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .remove-btn {
+      color: var(--text-muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    
+    .remove-btn:hover {
+      color: var(--error);
+      background: var(--error-bg);
+    }
+
+    /* Right Panel - Checkout block */
+    .checkout-section {
+      border-top: 1px solid var(--border-color);
+      background: var(--bg-color);
+      padding: 24px;
+    }
+
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .summary-total {
+      display: flex;
+      justify-content: space-between;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-top: 12px;
+      margin-bottom: 24px;
+      border-top: 1px dashed var(--border-color);
+      padding-top: 16px;
+    }
+
+    /* Tabs */
+    .payment-tabs {
+      display: flex;
+      background: var(--gray-bg);
+      padding: 4px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      border: none;
+      background: transparent;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+      background: white;
+      color: var(--text-main);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    /* Forms */
+    .input-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .form-input {
+      padding: 12px;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    
+    .form-input:focus {
+      border-color: var(--primary);
+    }
+
+    #cash-fields {
+      display: none;
+      background: white;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      margin-bottom: 16px;
+    }
+
+    #cash-fields.active {
+      display: block;
+    }
+
+    .change-due {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 12px;
+      font-weight: 600;
+      color: var(--success);
+      font-size: 15px;
+    }
+
+    /* CTA */
+    .complete-btn {
+      width: 100%;
+      padding: 16px;
+      border-radius: 12px;
+      border: none;
+      background: var(--primary);
+      color: white;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      box-shadow: 0 4px 6px rgba(13, 148, 136, 0.2);
+    }
+
+    .complete-btn:hover:not(:disabled) {
+      background: var(--primary-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 10px rgba(13, 148, 136, 0.3);
+    }
+
+    .complete-btn:disabled {
+      background: #CBD5E1;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* Flash Animation */
+    @keyframes flash {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); background: var(--success-bg); border-color: var(--success); }
+      100% { transform: scale(1); }
+    }
+    .flash {
+      animation: flash 0.4s ease-out;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- LEFT PANEL -->
+  <div class="left-panel">
+    <div class="search-container">
+      <div class="search-input-wrapper">
+        <i data-lucide="search" class="search-icon"></i>
+        <input type="text" class="search-input" id="search-input" placeholder="Search medicines or scan barcode...">
+        <span class="search-shortcut">/</span>
+      </div>
+      <button class="scan-btn" title="Scan Barcode">
+        <i data-lucide="scan-line"></i>
+      </button>
+    </div>
+
+    <div class="products-grid" id="products-grid">
+      <!-- Injected by JS -->
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="cart-header">
+      <div class="cart-title">
+        Current Sale <span class="item-count-badge" id="item-count">0</span>
+      </div>
+      <a class="clear-sale" id="clear-btn">
+        <i data-lucide="trash-2" style="width:16px;height:16px"></i> Clear
+      </a>
+    </div>
+
+    <div class="cart-items" id="cart-container">
+      <div class="empty-cart" id="empty-cart">
+        <i data-lucide="shopping-cart" style="width:48px;height:48px;opacity:0.5"></i>
+        <p>No items in cart</p>
+      </div>
+    </div>
+
+    <div class="checkout-section">
+      <div class="summary-row">
+        <span>Subtotal</span>
+        <span id="subtotal">GH₵ 0.00</span>
+      </div>
+      <div class="summary-row">
+        <span>Tax (12.5%)</span>
+        <span id="tax">GH₵ 0.00</span>
+      </div>
+      <div class="summary-total">
+        <span>Total</span>
+        <span id="total">GH₵ 0.00</span>
+      </div>
+
+      <div class="input-row">
+        <div class="form-group">
+          <label>Customer Name (Optional)</label>
+          <input type="text" class="form-input" placeholder="Walk-in">
+        </div>
+        <div class="form-group">
+          <label>Phone Number (Optional)</label>
+          <input type="tel" class="form-input" placeholder="055 XXX XXXX">
+        </div>
+      </div>
+
+      <div class="payment-tabs">
+        <button class="tab-btn active" data-tab="cash">Cash</button>
+        <button class="tab-btn" data-tab="momo">MoMo</button>
+        <button class="tab-btn" data-tab="card">Card</button>
+      </div>
+
+      <div id="cash-fields" class="active">
+        <div class="form-group">
+          <label>Amount Paid (GH₵)</label>
+          <input type="number" id="amount-paid" class="form-input" placeholder="0.00" min="0" step="0.01">
+        </div>
+        <div class="change-due">
+          <span>Change Due</span>
+          <span id="change-text">GH₵ 0.00</span>
+        </div>
+      </div>
+
+      <button class="complete-btn" id="complete-btn" disabled>
+        Complete Sale — GH₵ 0.00
+      </button>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    // Dummy Data
+    const products = [
+      { id: '1', name: 'Amoxicillin Trihydrate', dosage: '500mg Capsules', price: 35.50, stock: 120, status: 'in-stock', statusLabel: 'In Stock' },
+      { id: '2', name: 'Paracetamol', dosage: '500mg Tablets (Blister)', price: 15.00, stock: 350, status: 'in-stock', statusLabel: 'In Stock' },
+      { id: '3', name: 'Coartem (Artemether/Lumefantrine)', dosage: '20mg/120mg Tablets', price: 45.00, stock: 12, status: 'low-stock', statusLabel: 'Low Stock' },
+      { id: '4', name: 'Ibuprofen', dosage: '400mg Tablets', price: 20.00, stock: 0, status: 'out-stock', statusLabel: 'Out of Stock' },
+      { id: '5', name: 'Vitamin C + Zinc', dosage: '1000mg Effervescent', price: 65.00, stock: 45, status: 'in-stock', statusLabel: 'In Stock' },
+      { id: '6', name: 'Omeprazole', dosage: '20mg Capsules', price: 28.50, stock: 5, status: 'low-stock', statusLabel: 'Low Stock' },
+      { id: '7', name: 'Cough Syrup (Guaifenesin)', dosage: '200ml Bottle', price: 42.00, stock: 0, status: 'out-stock', statusLabel: 'Out of Stock' },
+      { id: '8', name: 'Artesunate Suppositories', dosage: '50mg', price: 55.00, stock: 80, status: 'in-stock', statusLabel: 'In Stock' }
+    ];
+
+    let cart = [];
+    let currentPaymentMethod = 'cash';
+    let currentTotal = 0;
+
+    // Elements
+    const grid = document.getElementById('products-grid');
+    const cartContainer = document.getElementById('cart-container');
+    const emptyCartEl = document.getElementById('empty-cart');
+    const cartCountEl = document.getElementById('item-count');
+    const completeBtn = document.getElementById('complete-btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const subtotalEl = document.getElementById('subtotal');
+    const taxEl = document.getElementById('tax');
+    const totalEl = document.getElementById('total');
+    
+    // Form elements
+    const tabs = document.querySelectorAll('.tab-btn');
+    const cashFields = document.getElementById('cash-fields');
+    const amountPaidInput = document.getElementById('amount-paid');
+    const changeText = document.getElementById('change-text');
+    const searchInput = document.getElementById('search-input');
+
+    // Initialize
+    function renderProducts() {
+      grid.innerHTML = '';
+      products.forEach(p => {
+        const isOut = p.status === 'out-stock';
+        const card = document.createElement('div');
+        card.className = `product-card ${isOut ? 'out-of-stock' : ''}`;
+        card.id = `product-${p.id}`;
+        
+        card.innerHTML = `
+          <div class="badge ${p.status}">${p.statusLabel}</div>
+          <div class="product-info">
+            <div class="product-name">${p.name}</div>
+            <div class="product-dosage">${p.dosage}</div>
+          </div>
+          <div class="product-price">GH₵ ${p.price.toFixed(2)}</div>
+          <button class="add-to-cart-btn" onclick="addToCart('${p.id}')" ${isOut ? 'disabled' : ''}>
+            <i data-lucide="plus" style="width:16px;height:16px"></i> Add to Cart
+          </button>
+        `;
+        grid.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    function addToCart(id) {
+      const product = products.find(p => p.id === id);
+      if (!product || product.status === 'out-stock') return;
+
+      const existingItem = cart.find(item => item.id === id);
+      if (existingItem) {
+        existingItem.qty += 1;
+      } else {
+        cart.push({ ...product, qty: 1 });
+      }
+
+      // Flash animation on card
+      const card = document.getElementById(`product-${id}`);
+      if (card) {
+        card.classList.remove('flash');
+        void card.offsetWidth; // Trigger reflow to restart animation
+        card.classList.add('flash');
+      }
+
+      updateCart();
+    }
+
+    function updateQty(id, delta) {
+      const item = cart.find(i => i.id === id);
+      if (item) {
+        item.qty += delta;
+        if (item.qty <= 0) {
+          cart = cart.filter(i => i.id !== id);
+        }
+        updateCart();
+      }
+    }
+
+    function removeItem(id) {
+      cart = cart.filter(i => i.id !== id);
+      updateCart();
+    }
+
+    function clearSale() {
+      if(cart.length > 0 && confirm("Are you sure you want to clear the current sale?")) {
+        cart = [];
+        amountPaidInput.value = '';
+        updateCart();
+      }
+    }
+
+    function updateCart() {
+      // Render layout
+      if (cart.length === 0) {
+        cartContainer.innerHTML = '';
+        cartContainer.appendChild(emptyCartEl);
+        cartCountEl.textContent = '0';
+      } else {
+        cartContainer.innerHTML = '';
+        let count = 0;
+        let subtotal = 0;
+        
+        cart.forEach(item => {
+          count += item.qty;
+          const lineTotal = item.qty * item.price;
+          subtotal += lineTotal;
+          
+          const el = document.createElement('div');
+          el.className = 'cart-item';
+          el.innerHTML = `
+            <div class="cart-item-info">
+              <div class="cart-item-name">${item.name}</div>
+              <div class="cart-item-dosage">${item.dosage}</div>
+            </div>
+            
+            <div class="stepper">
+              <button class="step-btn" onclick="updateQty('${item.id}', -1)"><i data-lucide="minus" style="width:14px;height:14px"></i></button>
+              <div class="step-qty">${item.qty}</div>
+              <button class="step-btn" onclick="updateQty('${item.id}', 1)"><i data-lucide="plus" style="width:14px;height:14px"></i></button>
+            </div>
+
+            <div class="cart-item-totals">
+              <div class="cart-item-price">GH₵ ${lineTotal.toFixed(2)}</div>
+            </div>
+            
+            <button class="remove-btn" onclick="removeItem('${item.id}')">
+              <i data-lucide="x" style="width:18px;height:18px"></i>
+            </button>
+          `;
+          cartContainer.appendChild(el);
+        });
+        
+        cartCountEl.textContent = count;
+        
+        // Calculate totals
+        const taxRate = 0.125; // 12.5% NHIL/GETFund/VAT abstraction
+        const tax = subtotal * taxRate;
+        currentTotal = subtotal + tax;
+        
+        subtotalEl.textContent = `GH₵ ${subtotal.toFixed(2)}`;
+        taxEl.textContent = `GH₵ ${tax.toFixed(2)}`;
+        totalEl.textContent = `GH₵ ${currentTotal.toFixed(2)}`;
+        
+        completeBtn.textContent = `Complete Sale — GH₵ ${currentTotal.toFixed(2)}`;
+        completeBtn.disabled = false;
+        
+        calculateChange();
+      }
+      
+      if (cart.length === 0) {
+        subtotalEl.textContent = `GH₵ 0.00`;
+        taxEl.textContent = `GH₵ 0.00`;
+        totalEl.textContent = `GH₵ 0.00`;
+        completeBtn.textContent = `Complete Sale — GH₵ 0.00`;
+        completeBtn.disabled = true;
+        currentTotal = 0;
+        calculateChange();
+      }
+
+      lucide.createIcons();
+    }
+
+    function handleTabSwitch(e) {
+      tabs.forEach(t => t.classList.remove('active'));
+      e.target.classList.add('active');
+      currentPaymentMethod = e.target.dataset.tab;
+      
+      if (currentPaymentMethod === 'cash') {
+        cashFields.classList.add('active');
+      } else {
+        cashFields.classList.remove('active');
+      }
+      calculateChange();
+    }
+
+    function calculateChange() {
+      if (currentPaymentMethod !== 'cash' || cart.length === 0) {
+        changeText.textContent = `GH₵ 0.00`;
+        changeText.style.color = "var(--text-muted)";
+        return;
+      }
+      
+      const paid = parseFloat(amountPaidInput.value) || 0;
+      const change = paid - currentTotal;
+      
+      if (change >= 0 && paid > 0) {
+        changeText.textContent = `GH₵ ${change.toFixed(2)}`;
+        changeText.style.color = "var(--success)";
+      } else if (paid > 0) {
+        changeText.textContent = `Insufficient`;
+        changeText.style.color = "var(--error)";
+      } else {
+        changeText.textContent = `GH₵ 0.00`;
+        changeText.style.color = "var(--text-muted)";
+      }
+    }
+
+    // Event Listeners
+    tabs.forEach(tab => tab.addEventListener('click', handleTabSwitch));
+    amountPaidInput.addEventListener('input', calculateChange);
+    clearBtn.addEventListener('click', clearSale);
+    
+    document.addEventListener('keydown', (e) => {
+      // Keyboard shortcut `/` to focus search
+      if (e.key === '/' && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput.focus();
+      }
+    });
+
+    searchInput.addEventListener('input', (e) => {
+      const term = e.target.value.toLowerCase();
+      const cards = grid.querySelectorAll('.product-card');
+      cards.forEach(card => {
+        const name = card.querySelector('.product-name').textContent.toLowerCase();
+        if (name.includes(term)) {
+          card.style.display = 'flex';
+        } else {
+          card.style.display = 'none';
+        }
+      });
+    });
+
+    // Boot
+    renderProducts();
+  </script>
+</body>
+</html>

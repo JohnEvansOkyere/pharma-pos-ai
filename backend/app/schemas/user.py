@@ -42,12 +42,6 @@ class User(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-class UserLogin(BaseModel):
-    """Schema for user login."""
-    username: str
-    password: str
-
-
 class Token(BaseModel):
     """Schema for JWT token response."""
     access_token: str

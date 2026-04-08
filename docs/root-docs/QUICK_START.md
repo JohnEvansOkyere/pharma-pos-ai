@@ -173,6 +173,7 @@ Before deploying to production:
 
 - **Full Deployment Guide**: [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md)
 - **Database Documentation**: [database/README.md](database/README.md)
+- **Database Documentation**: [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md)
 - **Files Summary**: [DOCKER_FILES_SUMMARY.md](DOCKER_FILES_SUMMARY.md)
 
 ## 🆘 Need Help?

@@ -1,9 +1,11 @@
 import { NavLink } from 'react-router-dom'
 import {
+  FiChevronLeft,
   FiHome,
   FiPackage,
   FiShoppingCart,
   FiDollarSign,
+  FiRefreshCw,
   FiUsers,
   FiBell,
   FiSettings,
@@ -15,20 +17,33 @@ const navigation = [
   { name: 'Products', href: '/products', icon: FiPackage },
   { name: 'POS', href: '/pos', icon: FiShoppingCart },
   { name: 'Sales', href: '/sales', icon: FiDollarSign },
+  { name: 'Stock Adjustments', href: '/stock-adjustments', icon: FiRefreshCw, adminOrManager: true },
   { name: 'Suppliers', href: '/suppliers', icon: FiUsers },
   { name: 'Notifications', href: '/notifications', icon: FiBell },
   { name: 'Settings', href: '/settings', icon: FiSettings, adminOrManager: true },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  onHide: () => void
+}
+
+export default function Sidebar({ onHide }: SidebarProps) {
   const { user } = useAuthStore()
   return (
     <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
       {/* Logo */}
-      <div className="h-16 flex items-center px-6 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="text-xl font-bold text-primary-600 dark:text-primary-400">
+      <div className="h-16 flex items-center justify-between gap-3 px-4 border-b border-gray-200 dark:border-gray-700">
+        <h1 className="min-w-0 truncate text-lg font-bold text-primary-600 dark:text-primary-400">
           GYSBIN PHARMACY-ANNEX
         </h1>
+        <button
+          onClick={onHide}
+          className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          aria-label="Hide sidebar"
+          title="Hide sidebar"
+        >
+          <FiChevronLeft className="h-5 w-5" />
+        </button>
       </div>
 
       {/* Navigation */}

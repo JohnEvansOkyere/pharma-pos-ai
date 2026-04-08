@@ -41,10 +41,34 @@ class ProductBatch(ProductBatchBase):
     """Schema for product batch response."""
     id: int
     product_id: int
+    received_date: Optional[date] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ReceiveStock(BaseModel):
+    """Schema for receiving stock for an existing product."""
+    batch_number: str = Field(..., max_length=100)
+    quantity: int = Field(..., gt=0)
+    expiry_date: date
+    cost_price: float = Field(..., gt=0)
+    selling_price: Optional[float] = Field(None, gt=0)
+    wholesale_price: Optional[float] = Field(None, gt=0)
+    mrp: Optional[float] = Field(None, gt=0)
+    manufacture_date: Optional[date] = None
+    location: Optional[str] = Field(None, max_length=100)
+    reason: Optional[str] = Field(None, max_length=200)
+
+
+class StockReceiptResult(BaseModel):
+    """Response for stock receipt workflow."""
+    product: "Product"
+    batch: ProductBatch
+    previous_stock: int
+    new_stock: int
+    price_updated: bool
 
 
 # Product Schemas
@@ -172,3 +196,14 @@ class ProductSearch(BaseModel):
     nearest_expiry: Optional[date] = None  # Earliest expiry date from batches
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProductSearchPage(BaseModel):
+    """Paginated product catalog response."""
+    items: List[ProductSearch]
+    total: int
+    skip: int
+    limit: int
+
+
+StockReceiptResult.model_rebuild()

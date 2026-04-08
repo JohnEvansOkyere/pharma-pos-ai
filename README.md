@@ -1,8 +1,8 @@
 # PHARMA-POS-AI 🏥💊
 
-**Offline-Capable Pharmaceutical Point-of-Sale System with AI Insights**
+**Local-first Pharmaceutical Point-of-Sale System**
 
-A modern, production-grade POS system built specifically for pharmacies, featuring complete offline functionality, real-time inventory management, AI-powered insights, and comprehensive reporting.
+A pharmaceutical POS system built for pharmacy installations, with local deployment support, inventory visibility, expiry tracking, and business reporting.
 
 ---
 
@@ -17,7 +17,7 @@ A modern, production-grade POS system built specifically for pharmacies, featuri
 - ✅ **Notifications** - Automated alerts for expiry and low stock
 
 ### Advanced Features
-- 🤖 **AI Insights** - Rule-based analytics for:
+- 🤖 **Operational Insights** - Rule-based analytics for:
   - Dead stock detection
   - Reorder quantity suggestions
   - Sales pattern analysis
@@ -25,9 +25,10 @@ A modern, production-grade POS system built specifically for pharmacies, featuri
 - 📊 **Dashboard Analytics** - KPIs, charts, and trends
 - 📱 **Responsive UI** - Works on desktop, tablet, and mobile
 - 🌙 **Dark Mode** - Eye-friendly interface
-- 📴 **Offline Support** - Service Workers for offline caching
+- 📴 **Local Deployment Support** - Designed to run with a local backend and local PostgreSQL
 - 🔐 **Security** - JWT authentication with role-based permissions
 - 🔔 **Background Scheduler** - Automated daily checks
+- 🩺 **Local Diagnostics** - Backup status and installation health visible in `Settings`
 
 ---
 
@@ -35,7 +36,7 @@ A modern, production-grade POS system built specifically for pharmacies, featuri
 
 ### Backend Stack
 - **FastAPI** - Modern Python web framework
-- **PostgreSQL / SQLite** - Flexible database options
+- **PostgreSQL** - Local production database for pharmacy installs
 - **SQLAlchemy** - ORM for database operations
 - **Alembic** - Database migrations
 - **APScheduler** - Background task scheduling
@@ -106,7 +107,7 @@ pharma-pos-ai/
 ### Prerequisites
 - **Python 3.9+**
 - **Node.js 18+**
-- **PostgreSQL 13+** (or SQLite for development)
+- **PostgreSQL 13+** for production/local pharmacy installs
 
 ### 1. Clone Repository
 ```bash
@@ -129,17 +130,20 @@ pip install -r requirements.txt
 
 # Create .env file
 cp ../.env.example .env
-# Edit .env with your configuration
+# Edit .env with your local PostgreSQL configuration
 
 # Initialize database
 cd ..
 bash scripts/init_db.sh
 
+# Optional development seed:
+SEED_DATABASE=true bash scripts/init_db.sh
+
 # Or manually:
 cd backend
-alembic revision --autogenerate -m "Initial migration"
 alembic upgrade head
-python ../scripts/seed_data.py
+cd ..
+python scripts/seed_data.py
 
 # Run backend
 python -m app.main
@@ -170,10 +174,25 @@ Frontend will run at: **http://localhost:3000**
 
 ### 4. Login
 
-Default credentials:
+Development seed credentials:
 - **Admin**: `admin` / `admin123`
 - **Manager**: `manager` / `manager123`
 - **Cashier**: `cashier` / `cashier123`
+
+These credentials are for development seed data only. They must not be used in client release builds.
+
+---
+
+## 📚 Documentation
+
+Primary documentation:
+
+- [Documentation Index](/home/grejoy/Projects/pharma-pos-ai/docs/README.md)
+- [Developer Guide](/home/grejoy/Projects/pharma-pos-ai/docs/DEVELOPER_GUIDE.md)
+- [Client User Guide](/home/grejoy/Projects/pharma-pos-ai/docs/CLIENT_USER_GUIDE.md)
+- [Windows Local Deployment Runbook](/home/grejoy/Projects/pharma-pos-ai/docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)
+- [Backup And Restore Guide](/home/grejoy/Projects/pharma-pos-ai/docs/BACKUP_RESTORE_GUIDE.md)
+- [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
 
 ---
 
@@ -186,14 +205,13 @@ Default credentials:
 4. Adjust quantities if needed
 5. Enter customer info (optional)
 6. Select payment method
-7. Enter amount paid
-8. Click "Complete Sale"
-9. Invoice is generated automatically
+7. Click "Complete Sale"
+8. Invoice is generated automatically
 
 ### Inventory Management
 1. Go to **Products** page
 2. View all products with stock levels
-3. Add new products with batches
+3. Add new products and optionally receive opening stock
 4. Track expiry dates
 5. Receive low stock alerts
 
@@ -213,8 +231,12 @@ Default credentials:
 #### Backend (.env)
 ```env
 # Database
-DATABASE_URL=postgresql://user:password@localhost:5432/pharma_pos
-# Or for SQLite: sqlite:///./pharma_pos.db
+DATABASE_BACKEND=postgresql
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=pharma_pos
+POSTGRES_USER=pharma_user
+POSTGRES_PASSWORD=your-strong-password
 
 # Security
 SECRET_KEY=your-secret-key-here
@@ -331,7 +353,6 @@ Once the backend is running, visit:
 
 #### Authentication
 - `POST /api/auth/login` - User login
-- `POST /api/auth/register` - User registration
 - `GET /api/auth/me` - Get current user
 
 #### Products
@@ -344,6 +365,10 @@ Once the backend is running, visit:
 - `POST /api/sales` - Create sale
 - `GET /api/sales` - List sales
 - `GET /api/sales/summary/today` - Today's summary
+
+#### Stock Adjustments
+- `GET /api/stock-adjustments` - List stock adjustments
+- `POST /api/stock-adjustments` - Record damage, expiry write-off, returns, and corrections
 
 #### Dashboard
 - `GET /api/dashboard/kpis` - Dashboard KPIs
@@ -366,6 +391,9 @@ Once the backend is running, visit:
 5. **Use environment variables** for sensitive data
 6. **Regular database backups**
 7. **Update dependencies** regularly
+
+Backup and restore guide:
+- [docs/BACKUP_RESTORE_GUIDE.md](/home/grejoy/Projects/pharma-pos-ai/docs/BACKUP_RESTORE_GUIDE.md)
 
 ---
 

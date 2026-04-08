@@ -41,13 +41,16 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response) => response,
       (error: AxiosError) => {
-        if (error.response?.status === 401) {
+        const requestUrl = error.config?.url || ''
+        const isLoginRequest = requestUrl.includes('/auth/login')
+
+        if (error.response?.status === 401 && !isLoginRequest) {
           // Unauthorized - clear token and redirect to login
           localStorage.removeItem('auth_token')
           localStorage.removeItem('user')
           window.location.href = '/login'
           toast.error('Session expired. Please login again.')
-        } else if (error.response?.status === 403) {
+        } else if (error.response?.status === 403 && !isLoginRequest) {
           toast.error('You do not have permission to perform this action.')
         } else if (error.response && error.response.status >= 500) {
           toast.error('Server error. Please try again later.')
@@ -72,11 +75,6 @@ class ApiClient {
     return response.data
   }
 
-  async register(userData: any) {
-    const response = await this.client.post('/auth/register', userData)
-    return response.data
-  }
-
   async getCurrentUser() {
     const response = await this.client.get('/auth/me')
     return response.data
@@ -85,6 +83,11 @@ class ApiClient {
   // Product endpoints
   async getProducts(params?: any) {
     const response = await this.client.get('/products', { params })
+    return response.data
+  }
+
+  async getProductsCatalog(params?: any) {
+    const response = await this.client.get('/products/catalog', { params })
     return response.data
   }
 
@@ -121,6 +124,27 @@ class ApiClient {
 
   async createProductBatch(productId: number, batchData: any) {
     const response = await this.client.post(`/products/${productId}/batches`, batchData)
+    return response.data
+  }
+
+  async updateProductBatch(productId: number, batchId: number, batchData: any) {
+    const response = await this.client.put(`/products/${productId}/batches/${batchId}`, batchData)
+    return response.data
+  }
+
+  async receiveProductStock(productId: number, receiptData: any) {
+    const response = await this.client.post(`/products/${productId}/receive-stock`, receiptData)
+    return response.data
+  }
+
+  // Stock adjustment endpoints
+  async getStockAdjustments(params?: any) {
+    const response = await this.client.get('/stock-adjustments', { params })
+    return response.data
+  }
+
+  async createStockAdjustment(adjustmentData: any) {
+    const response = await this.client.post('/stock-adjustments', adjustmentData)
     return response.data
   }
 
@@ -301,6 +325,22 @@ class ApiClient {
 
   async deleteUser(userId: number) {
     await this.client.delete(`/users/${userId}`)
+  }
+
+  // Local system operations
+  async getBackupStatus() {
+    const response = await this.client.get('/system/backup-status')
+    return response.data
+  }
+
+  async triggerBackupNow() {
+    const response = await this.client.post('/system/backup-now')
+    return response.data
+  }
+
+  async getSystemDiagnostics() {
+    const response = await this.client.get('/system/diagnostics')
+    return response.data
   }
 }
 

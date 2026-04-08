@@ -15,6 +15,7 @@ class AdjustmentType(str, Enum):
     SUBTRACTION = "subtraction"
     CORRECTION = "correction"
     DAMAGE = "damage"
+    EXPIRED = "expired"
     RETURN = "return"
 
 
@@ -25,6 +26,7 @@ class StockAdjustment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
+    batch_id = Column(Integer, ForeignKey("product_batches.id"))
     adjustment_type = Column(SQLEnum(AdjustmentType), nullable=False)
     quantity = Column(Integer, nullable=False)
     reason = Column(Text)

@@ -65,7 +65,7 @@ This document lists all Docker-related files created for the Pharma POS AI appli
 - Adds sample products with batches
 - Includes notifications
 
-#### `database/README.md`
+#### `docs/DB_SCHEMA.md`
 - Database documentation
 - Schema overview
 - Common queries

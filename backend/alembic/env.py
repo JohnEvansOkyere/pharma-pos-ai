@@ -57,6 +57,33 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    from sqlalchemy import text, create_engine, event
+    
+    db_url = config.get_main_option("sqlalchemy.url")
+    
+    # Extract database name and create a template connection URL
+    # For PostgreSQL URLs like: postgresql://user:pass@host:port/dbname
+    if db_url.startswith("postgresql://"):
+        try:
+            # Create engine to connect to default postgres database
+            parts = db_url.split("/")
+            temp_url = "/".join(parts[:-1]) + "/postgres"
+            db_name = parts[-1]
+            
+            temp_engine = create_engine(temp_url, isolation_level="AUTOCOMMIT")
+            with temp_engine.connect() as conn:
+                try:
+                    conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+                    print(f"✅ Created database {db_name}")
+                except Exception as e:
+                    if "already exists" in str(e):
+                        print(f"Database already exists")
+                    else:
+                        print(f"Could not create database: {e}")
+            temp_engine.dispose()
+        except Exception as e:
+            print(f"Database creation attempt: {e}")
+    
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

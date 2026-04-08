@@ -1,6 +1,8 @@
 """
 Sales/POS API endpoints.
 """
+from decimal import Decimal, ROUND_HALF_UP
+from uuid import uuid4
 from typing import List, Optional
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -9,8 +11,9 @@ from sqlalchemy import func
 
 from app.db.base import get_db
 from app.models.sale import Sale, SaleItem
-from app.models.product import Product
+from app.models.product import Product, ProductBatch
 from app.models.user import User
+from app.services.inventory_service import InventoryService
 from app.schemas.sale import (
     Sale as SaleSchema,
     SaleCreate,
@@ -22,24 +25,48 @@ from app.api.dependencies import get_current_active_user
 router = APIRouter(prefix="/sales", tags=["Sales"])
 
 
-def generate_invoice_number(db: Session) -> str:
+def _round_money(value: Decimal) -> float:
+    """Round currency values consistently for stored sale rows."""
+    return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _allocate_product_batches(db: Session, product: Product, required_quantity: int) -> List[ProductBatch]:
     """
-    Generate a unique invoice number.
+    Allocate sale quantity from available batches using FEFO.
 
-    Args:
-        db: Database session
-
-    Returns:
-        Invoice number in format INV-YYYYMMDD-XXXX
+    Returns a list containing the same ProductBatch object repeated in the
+    order it should be consumed. The caller is responsible for decrementing
+    quantities.
     """
-    today = datetime.now().strftime("%Y%m%d")
-    prefix = f"INV-{today}-"
+    available_batches = InventoryService.sellable_batches_query(db, product.id).with_for_update().order_by(
+        ProductBatch.expiry_date.asc(),
+        ProductBatch.received_date.asc(),
+        ProductBatch.id.asc(),
+    ).all()
 
-    # Get count of sales today
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    count = db.query(Sale).filter(Sale.created_at >= today_start).count()
+    allocated_batches: List[ProductBatch] = []
+    remaining_quantity = required_quantity
 
-    return f"{prefix}{count + 1:04d}"
+    for batch in available_batches:
+        if remaining_quantity <= 0:
+            break
+
+        take_quantity = min(batch.quantity, remaining_quantity)
+        if take_quantity > 0:
+            allocated_batches.extend([batch] * take_quantity)
+            remaining_quantity -= take_quantity
+
+    if remaining_quantity > 0:
+        available_quantity = required_quantity - remaining_quantity
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Insufficient sellable stock for product {product.name}. "
+                f"Available in valid batches: {available_quantity}"
+            ),
+        )
+
+    return allocated_batches
 
 
 @router.post("", response_model=SaleWithItems, status_code=status.HTTP_201_CREATED)
@@ -62,87 +89,140 @@ def create_sale(
     Raises:
         HTTPException: If product not found or insufficient stock
     """
-    # Calculate totals
-    subtotal = 0.0
-    sale_items_data = []
+    try:
+        # Calculate totals
+        subtotal = Decimal("0.00")
+        sale_items_data = []
 
-    for item in sale_data.items:
-        # Verify product exists and has sufficient stock
-        product = db.query(Product).filter(Product.id == item.product_id).first()
-        if not product:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Product with ID {item.product_id} not found"
-            )
+        for item in sale_data.items:
+            # Lock the product row first to keep stock checks and updates
+            # consistent across concurrent tills.
+            product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+            if not product:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Product with ID {item.product_id} not found"
+                )
 
-        if product.total_stock < item.quantity:
+            if not product.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Product {product.name} is inactive and cannot be sold"
+                )
+
+            InventoryService.recalculate_product_stock(db, product)
+            if product.total_stock < item.quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Insufficient stock for product {product.name}. Available: {product.total_stock}"
+                )
+
+            allocated_batches = _allocate_product_batches(db, product, item.quantity)
+            unit_price = Decimal(str(item.unit_price))
+            line_discount = Decimal(str(item.discount_amount))
+            quantity_remaining = item.quantity
+            discount_remaining = line_discount
+
+            # Group repeated batch allocations back into per-batch sale lines.
+            batch_quantities: List[tuple[ProductBatch, int]] = []
+            for batch in allocated_batches:
+                if batch_quantities and batch_quantities[-1][0].id == batch.id:
+                    existing_batch, existing_quantity = batch_quantities[-1]
+                    batch_quantities[-1] = (existing_batch, existing_quantity + 1)
+                else:
+                    batch_quantities.append((batch, 1))
+
+            for batch, batch_quantity in batch_quantities:
+                batch_quantity_decimal = Decimal(batch_quantity)
+                batch_discount = Decimal("0.00")
+                if line_discount > 0:
+                    if quantity_remaining == batch_quantity:
+                        batch_discount = discount_remaining
+                    else:
+                        batch_discount = (
+                            line_discount * batch_quantity_decimal / Decimal(item.quantity)
+                        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                        if batch_discount > discount_remaining:
+                            batch_discount = discount_remaining
+
+                batch_total = (unit_price * batch_quantity_decimal) - batch_discount
+                subtotal += batch_total
+
+                sale_items_data.append({
+                    "product_id": item.product_id,
+                    "product_name": product.name,
+                    "dosage_form": product.dosage_form.value if product.dosage_form else None,
+                    "strength": product.strength,
+                    "batch_number": batch.batch_number,
+                    "expiry_date": batch.expiry_date,
+                    "quantity": batch_quantity,
+                    "unit_price": float(unit_price),
+                    "discount_amount": _round_money(batch_discount),
+                    "total_price": _round_money(batch_total),
+                    "allocated_batch": batch,
+                    "product": product,
+                })
+
+                quantity_remaining -= batch_quantity
+                discount_remaining -= batch_discount
+
+        # Calculate final total
+        total_amount_decimal = (
+            subtotal
+            - Decimal(str(sale_data.discount_amount))
+            + Decimal(str(sale_data.tax_amount))
+        )
+        total_amount = _round_money(total_amount_decimal)
+
+        # Validate payment
+        if sale_data.amount_paid < total_amount:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient stock for product {product.name}. Available: {product.total_stock}"
+                detail=f"Insufficient payment. Total: {total_amount}, Paid: {sale_data.amount_paid}"
             )
 
-        # Calculate item total
-        item_total = (item.unit_price * item.quantity) - item.discount_amount
-        subtotal += item_total
+        change_amount = sale_data.amount_paid - total_amount
 
-        sale_items_data.append({
-            "product_id": item.product_id,
-            "product_name": product.name,
-            "dosage_form": product.dosage_form.value if product.dosage_form else None,
-            "strength": product.strength,
-            "quantity": item.quantity,
-            "unit_price": item.unit_price,
-            "discount_amount": item.discount_amount,
-            "total_price": item_total,
-        })
-
-    # Calculate final total
-    total_amount = subtotal - sale_data.discount_amount + sale_data.tax_amount
-
-    # Validate payment
-    if sale_data.amount_paid < total_amount:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Insufficient payment. Total: {total_amount}, Paid: {sale_data.amount_paid}"
+        # Use the database-assigned sale id to derive a transaction-safe invoice.
+        db_sale = Sale(
+            invoice_number=f"PENDING-{uuid4().hex}",
+            user_id=current_user.id,
+            subtotal=_round_money(subtotal),
+            discount_amount=sale_data.discount_amount,
+            tax_amount=sale_data.tax_amount,
+            total_amount=total_amount,
+            payment_method=sale_data.payment_method,
+            amount_paid=sale_data.amount_paid,
+            change_amount=change_amount,
+            customer_name=sale_data.customer_name,
+            customer_phone=sale_data.customer_phone,
+            notes=sale_data.notes,
         )
 
-    change_amount = sale_data.amount_paid - total_amount
+        db.add(db_sale)
+        db.flush()  # Get sale ID from the database
+        db_sale.invoice_number = f"INV-{datetime.now().strftime('%Y%m%d')}-{db_sale.id:06d}"
 
-    # Generate invoice number
-    invoice_number = generate_invoice_number(db)
+        # Create sale items and update stock
+        touched_products = {}
+        for item_data in sale_items_data:
+            allocated_batch = item_data.pop("allocated_batch")
+            product = item_data.pop("product")
+            sale_item = SaleItem(sale_id=db_sale.id, **item_data)
+            db.add(sale_item)
 
-    # Create sale
-    db_sale = Sale(
-        invoice_number=invoice_number,
-        user_id=current_user.id,
-        subtotal=subtotal,
-        discount_amount=sale_data.discount_amount,
-        tax_amount=sale_data.tax_amount,
-        total_amount=total_amount,
-        payment_method=sale_data.payment_method,
-        amount_paid=sale_data.amount_paid,
-        change_amount=change_amount,
-        customer_name=sale_data.customer_name,
-        customer_phone=sale_data.customer_phone,
-        notes=sale_data.notes,
-    )
+            allocated_batch.quantity -= item_data["quantity"]
+            touched_products[product.id] = product
 
-    db.add(db_sale)
-    db.flush()  # Get sale ID
+        for product in touched_products.values():
+            InventoryService.recalculate_product_stock(db, product)
 
-    # Create sale items and update stock
-    for item_data in sale_items_data:
-        sale_item = SaleItem(sale_id=db_sale.id, **item_data)
-        db.add(sale_item)
-
-        # Reduce product stock
-        product = db.query(Product).filter(Product.id == item_data["product_id"]).first()
-        product.total_stock -= item_data["quantity"]
-
-    db.commit()
-    db.refresh(db_sale)
-
-    return db_sale
+        db.commit()
+        db.refresh(db_sale)
+        return db_sale
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.get("", response_model=List[SaleWithItems])

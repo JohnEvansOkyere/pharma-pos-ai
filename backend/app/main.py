@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Offline-capable Pharmaceutical POS System with AI insights",
+    description="Local-first pharmaceutical POS system for pharmacy installations",
     lifespan=lifespan,
 )
 
@@ -80,6 +80,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8001,
+        port=8000,
         reload=settings.DEBUG,
     )
