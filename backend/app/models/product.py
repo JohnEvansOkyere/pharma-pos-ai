@@ -2,7 +2,7 @@
 Product and ProductBatch models for inventory management.
 Enhanced for professional pharmaceutical POS system.
 """
-from sqlalchemy import Column, Integer, String, Text, Float, Boolean, DateTime, Date, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, Enum as SQLEnum, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum
@@ -65,10 +65,10 @@ class Product(Base):
     requires_id = Column(Boolean, default=False)  # Requires customer ID
 
     # Pricing (GH₵ - Ghana Cedis)
-    cost_price = Column(Float, nullable=False)  # Purchase/cost price
-    selling_price = Column(Float, nullable=False)  # Retail price
-    wholesale_price = Column(Float)  # Bulk pricing
-    mrp = Column(Float)  # Maximum retail price
+    cost_price = Column(Numeric(12, 2), nullable=False)  # Purchase/cost price
+    selling_price = Column(Numeric(12, 2), nullable=False)  # Retail price
+    wholesale_price = Column(Numeric(12, 2))  # Bulk pricing
+    mrp = Column(Numeric(12, 2))  # Maximum retail price
 
     # Inventory
     total_stock = Column(Integer, default=0, nullable=False)
@@ -106,7 +106,7 @@ class ProductBatch(Base):
     quantity = Column(Integer, nullable=False)
     manufacture_date = Column(Date)
     expiry_date = Column(Date, nullable=False)
-    cost_price = Column(Float, nullable=False)
+    cost_price = Column(Numeric(12, 2), nullable=False)
 
     # Batch-specific info
     location = Column(String(100))  # Storage location (e.g., "Shelf A3")

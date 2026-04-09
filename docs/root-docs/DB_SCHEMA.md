@@ -15,7 +15,7 @@ The main database initialization script that creates:
 
 ### 2. seed.sql
 Sample data for testing and development:
-- 4 test users (admin, manager, 2 cashiers)
+- no release default users should be assumed
 - 12 product categories
 - 5 suppliers
 - 15 sample products
@@ -276,13 +276,13 @@ ORDER BY idx_scan DESC;
 
 ## Security
 
-### Default Credentials
+### Deployment Credentials
 
-**⚠️ IMPORTANT:** Change these credentials after first deployment!
+**⚠️ IMPORTANT:** Provision site-specific credentials during deployment.
 
 - **Database User**: pharma_user
-- **Database Password**: changeme123 (set in .env)
-- **Default Admin**: username `admin`, password `password123`
+- **Database Password**: set in `.env`
+- **Admin User**: create with `scripts/provision_admin.py`
 
 ### Best Practices
 

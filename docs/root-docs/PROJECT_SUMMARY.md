@@ -1,8 +1,8 @@
 # PHARMA-POS-AI - Project Summary
 
-## 🎉 Project Complete!
+## Project Status
 
-A **complete, production-ready** Pharmaceutical Point-of-Sale System has been successfully built with full offline capabilities, AI insights, and modern architecture.
+This repository contains a local pharmaceutical point-of-sale system that requires site-specific commissioning, hardening, and operational validation before customer rollout.
 
 ---
 
@@ -18,7 +18,7 @@ A **complete, production-ready** Pharmaceutical Point-of-Sale System has been su
 - Category & Supplier Management
 - Notification System
 - Dashboard Analytics
-- AI Insights Engine
+- Operational insights endpoints
 - Background Scheduler
 
 ✅ **Database Layer**
@@ -29,7 +29,7 @@ A **complete, production-ready** Pharmaceutical Point-of-Sale System has been su
 
 ✅ **Services & Business Logic**
 - Notification service with webhook support
-- AI insights (dead stock, reorder suggestions, profit analysis)
+- Rule-based operational insights (dead stock, reorder suggestions, profit analysis)
 - Background scheduler for automated checks
 - Rule-based analytics
 
@@ -39,7 +39,7 @@ A **complete, production-ready** Pharmaceutical Point-of-Sale System has been su
 - Tailwind CSS for styling
 - Responsive design (mobile, tablet, desktop)
 - Dark mode support
-- PWA with offline caching
+- PWA shell with a required local backend
 
 ✅ **Pages & Components**
 - Login/Authentication
@@ -378,7 +378,7 @@ Potential additions:
 - [x] Sales tracking
 - [x] Dashboard with analytics
 - [x] Notification system
-- [x] AI insights
+- [x] Operational insights
 - [x] Background scheduler
 - [x] Frontend application
 - [x] UI/UX design

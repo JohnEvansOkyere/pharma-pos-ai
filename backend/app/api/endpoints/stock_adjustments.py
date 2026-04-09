@@ -12,6 +12,7 @@ from app.db.base import get_db
 from app.models.product import Product, ProductBatch
 from app.models.stock_adjustment import AdjustmentType, StockAdjustment
 from app.models.user import User
+from app.services.audit_service import AuditService
 from app.schemas.stock_adjustment import (
     StockAdjustment as StockAdjustmentSchema,
     StockAdjustmentCreate,
@@ -172,6 +173,20 @@ def create_stock_adjustment(
         db.add(db_adjustment)
         db.commit()
         db.refresh(db_adjustment)
+        AuditService.log(
+            db,
+            action="create_stock_adjustment",
+            user_id=current_user.id,
+            entity_type="stock_adjustment",
+            entity_id=db_adjustment.id,
+            description=f"Recorded {adjustment_type.value} adjustment for product {product.name}",
+            extra_data={
+                "product_id": product.id,
+                "batch_id": batch.id if batch else None,
+                "quantity": adjustment_quantity,
+            },
+        )
+        db.commit()
         return db_adjustment
     except Exception:
         db.rollback()

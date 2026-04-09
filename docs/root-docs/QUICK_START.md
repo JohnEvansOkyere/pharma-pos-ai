@@ -1,6 +1,6 @@
-# 🚀 Quick Start Guide - Pharma POS AI
+# Quick Start Guide - Pharma POS AI
 
-Get your Pharma POS AI application running in minutes!
+Get your local Pharma POS AI deployment running with site-specific credentials and configuration.
 
 ## 📋 Prerequisites
 
@@ -44,25 +44,20 @@ docker-compose up -d --build
 - **Backend API**: http://localhost:8000/docs
 - **Database**: localhost:5432
 
-## 🔑 Default Login Credentials
+## Admin Provisioning
 
-| Role | Username | Password |
-|------|----------|----------|
-| Admin | admin | password123 | 
-| Manager | manager1 | password123 |
-| Cashier | cashier1 | password123 |
+Create the first administrator after deployment. Do not hand over shared default user accounts.
 
-⚠️ **Change these immediately after first login!**
+```bash
+python scripts/provision_admin.py
+```
  
 ## 📊 Database Information
 
 The database is automatically initialized with:
-- ✅ Complete schema (users, products, sales, etc.)
-- ✅ 4 test users
-- ✅ 12 product categories
-- ✅ 5 suppliers
-- ✅ 15 sample products with batches
-- ✅ Sample notifications
+- Complete schema
+- No release default users
+- Site data loaded separately during commissioning
 
 ## 🔧 Common Commands
 
@@ -187,13 +182,12 @@ Before deploying to production:
 
 After deployment:
 
-1. ✅ Login with admin credentials
-2. ✅ Change all default passwords
-3. ✅ Add your categories and suppliers
-4. ✅ Import your products
-5. ✅ Create user accounts for your staff
-6. ✅ Configure system settings
-7. ✅ Start selling! 🎉
+1. Provision the first admin account.
+2. Add your categories and suppliers.
+3. Import your products and batches.
+4. Create user accounts for staff.
+5. Configure system settings.
+6. Run a backup/restore dry run before go-live.
 
 ---
 

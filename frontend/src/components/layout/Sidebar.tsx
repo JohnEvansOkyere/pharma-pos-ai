@@ -83,7 +83,7 @@ export default function Sidebar({ onHide }: SidebarProps) {
       {/* Footer */}
       <div className="p-4 border-t border-gray-200 dark:border-gray-700">
         <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-          v1.0.0 • Offline Ready
+          v1.0.0 • Local Backend Required
         </p>
       </div>
     </div>

@@ -1,7 +1,7 @@
 """
 Sales/POS API endpoints.
 """
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 from uuid import uuid4
 from typing import List, Optional
 from datetime import datetime, date
@@ -9,10 +9,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
+from app.core.money import round_money, to_decimal
 from app.db.base import get_db
 from app.models.sale import Sale, SaleItem
 from app.models.product import Product, ProductBatch
 from app.models.user import User
+from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
 from app.schemas.sale import (
     Sale as SaleSchema,
@@ -23,12 +25,6 @@ from app.schemas.sale import (
 from app.api.dependencies import get_current_active_user
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
-
-
-def _round_money(value: Decimal) -> float:
-    """Round currency values consistently for stored sale rows."""
-    return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
 
 def _allocate_product_batches(db: Session, product: Product, required_quantity: int) -> List[ProductBatch]:
     """
@@ -118,8 +114,8 @@ def create_sale(
                 )
 
             allocated_batches = _allocate_product_batches(db, product, item.quantity)
-            unit_price = Decimal(str(item.unit_price))
-            line_discount = Decimal(str(item.discount_amount))
+            unit_price = round_money(item.unit_price)
+            line_discount = round_money(item.discount_amount)
             quantity_remaining = item.quantity
             discount_remaining = line_discount
 
@@ -141,11 +137,11 @@ def create_sale(
                     else:
                         batch_discount = (
                             line_discount * batch_quantity_decimal / Decimal(item.quantity)
-                        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                        )
                         if batch_discount > discount_remaining:
                             batch_discount = discount_remaining
 
-                batch_total = (unit_price * batch_quantity_decimal) - batch_discount
+                batch_total = round_money((unit_price * batch_quantity_decimal) - batch_discount)
                 subtotal += batch_total
 
                 sale_items_data.append({
@@ -156,9 +152,9 @@ def create_sale(
                     "batch_number": batch.batch_number,
                     "expiry_date": batch.expiry_date,
                     "quantity": batch_quantity,
-                    "unit_price": float(unit_price),
-                    "discount_amount": _round_money(batch_discount),
-                    "total_price": _round_money(batch_total),
+                    "unit_price": round_money(unit_price),
+                    "discount_amount": round_money(batch_discount),
+                    "total_price": round_money(batch_total),
                     "allocated_batch": batch,
                     "product": product,
                 })
@@ -169,30 +165,31 @@ def create_sale(
         # Calculate final total
         total_amount_decimal = (
             subtotal
-            - Decimal(str(sale_data.discount_amount))
-            + Decimal(str(sale_data.tax_amount))
+            - round_money(sale_data.discount_amount)
+            + round_money(sale_data.tax_amount)
         )
-        total_amount = _round_money(total_amount_decimal)
+        total_amount = round_money(total_amount_decimal)
+        amount_paid = round_money(sale_data.amount_paid)
 
         # Validate payment
-        if sale_data.amount_paid < total_amount:
+        if amount_paid < total_amount:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Insufficient payment. Total: {total_amount}, Paid: {sale_data.amount_paid}"
+                detail=f"Insufficient payment. Total: {total_amount}, Paid: {amount_paid}"
             )
 
-        change_amount = sale_data.amount_paid - total_amount
+        change_amount = round_money(amount_paid - total_amount)
 
         # Use the database-assigned sale id to derive a transaction-safe invoice.
         db_sale = Sale(
             invoice_number=f"PENDING-{uuid4().hex}",
             user_id=current_user.id,
-            subtotal=_round_money(subtotal),
-            discount_amount=sale_data.discount_amount,
-            tax_amount=sale_data.tax_amount,
+            subtotal=round_money(subtotal),
+            discount_amount=round_money(sale_data.discount_amount),
+            tax_amount=round_money(sale_data.tax_amount),
             total_amount=total_amount,
             payment_method=sale_data.payment_method,
-            amount_paid=sale_data.amount_paid,
+            amount_paid=amount_paid,
             change_amount=change_amount,
             customer_name=sale_data.customer_name,
             customer_phone=sale_data.customer_phone,
@@ -219,6 +216,20 @@ def create_sale(
 
         db.commit()
         db.refresh(db_sale)
+        AuditService.log(
+            db,
+            action="create_sale",
+            user_id=current_user.id,
+            entity_type="sale",
+            entity_id=db_sale.id,
+            description=f"Completed sale {db_sale.invoice_number}",
+            extra_data={
+                "invoice_number": db_sale.invoice_number,
+                "total_amount": db_sale.total_amount,
+                "item_lines": len(sale_items_data),
+            },
+        )
+        db.commit()
         return db_sale
     except Exception:
         db.rollback()
@@ -277,30 +288,34 @@ def get_today_sales_summary(
     """
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Get today's sales
-    sales = db.query(Sale).filter(Sale.created_at >= today_start).all()
+    sales_stats = db.query(
+        func.count(Sale.id).label("total_sales"),
+        func.coalesce(func.sum(Sale.total_amount), 0).label("total_revenue"),
+    ).filter(Sale.created_at >= today_start).one()
 
-    total_revenue = sum(sale.total_amount for sale in sales)
-    total_items_sold = sum(
-        item.quantity
-        for sale in sales
-        for item in sale.items
-    )
+    total_items_sold = db.query(
+        func.coalesce(func.sum(SaleItem.quantity), 0)
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    ).filter(
+        Sale.created_at >= today_start
+    ).scalar() or 0
 
-    # Calculate profit (selling_price - cost_price) * quantity
-    total_profit = 0.0
-    for sale in sales:
-        for item in sale.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                profit_per_item = (item.unit_price - product.cost_price) * item.quantity
-                total_profit += profit_per_item
+    total_profit = db.query(
+        func.coalesce(func.sum((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity), 0)
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    ).join(
+        Product, Product.id == SaleItem.product_id
+    ).filter(
+        Sale.created_at >= today_start
+    ).scalar() or 0
 
     return {
-        "total_sales": len(sales),
-        "total_revenue": total_revenue,
-        "total_profit": total_profit,
-        "total_items_sold": total_items_sold,
+        "total_sales": int(sales_stats.total_sales or 0),
+        "total_revenue": float(to_decimal(sales_stats.total_revenue)),
+        "total_profit": float(to_decimal(total_profit)),
+        "total_items_sold": int(total_items_sold),
     }
 
 

@@ -15,7 +15,7 @@ set POSTGRES_HOST=localhost
 set POSTGRES_PORT=5432
 set POSTGRES_DB=pharma_pos
 set POSTGRES_USER=pharma_user
-set POSTGRES_PASSWORD=newpassword123
+set POSTGRES_PASSWORD=
 
 for /f "usebackq tokens=1,* delims==" %%A in ("backend\.env") do (
     if /I "%%A"=="POSTGRES_HOST" set POSTGRES_HOST=%%B
@@ -23,6 +23,12 @@ for /f "usebackq tokens=1,* delims==" %%A in ("backend\.env") do (
     if /I "%%A"=="POSTGRES_DB" set POSTGRES_DB=%%B
     if /I "%%A"=="POSTGRES_USER" set POSTGRES_USER=%%B
     if /I "%%A"=="POSTGRES_PASSWORD" set POSTGRES_PASSWORD=%%B
+)
+
+if "%POSTGRES_PASSWORD%"=="" (
+    echo POSTGRES_PASSWORD is not configured. Update backend\.env before running restore.
+    pause
+    exit /b 1
 )
 
 if "%~1"=="" (

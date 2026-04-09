@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.models.category import Category
 from app.models.user import User
+from app.services.audit_service import AuditService
 from app.schemas.category import Category as CategorySchema, CategoryCreate, CategoryUpdate
 from app.api.dependencies import get_current_active_user, require_manager
 
@@ -42,6 +43,15 @@ def create_category(
     db.add(db_category)
     db.commit()
     db.refresh(db_category)
+    AuditService.log(
+        db,
+        action="create_category",
+        user_id=current_user.id,
+        entity_type="category",
+        entity_id=db_category.id,
+        description=f"Created category {db_category.name}",
+    )
+    db.commit()
 
     return db_category
 
@@ -67,6 +77,16 @@ def update_category(
 
     db.commit()
     db.refresh(db_category)
+    AuditService.log(
+        db,
+        action="update_category",
+        user_id=current_user.id,
+        entity_type="category",
+        entity_id=db_category.id,
+        description=f"Updated category {db_category.name}",
+        extra_data={"updated_fields": sorted(update_data.keys())},
+    )
+    db.commit()
 
     return db_category
 
@@ -85,5 +105,16 @@ def delete_category(
             detail="Category not found"
         )
 
+    deleted_category_id = db_category.id
+    deleted_category_name = db_category.name
     db.delete(db_category)
+    db.commit()
+    AuditService.log(
+        db,
+        action="delete_category",
+        user_id=current_user.id,
+        entity_type="category",
+        entity_id=deleted_category_id,
+        description=f"Deleted category {deleted_category_name}",
+    )
     db.commit()

@@ -21,9 +21,7 @@
 │ 🔑 LOGIN CREDENTIALS                                                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-  👤 Admin:    Username: admin    | Password: admin123
-  👤 Manager:  Username: manager  | Password: manager123
-  👤 Cashier:  Username: cashier  | Password: cashier123
+  👤 Use the site-specific credentials provisioned during installation
 
   ⚠️  CHANGE THESE IN PRODUCTION!
 
@@ -49,7 +47,7 @@
 └──────────────────────────────────────────────────────────────────────────────┘
 
   1. Open your browser: http://localhost:3000
-  2. Login with: admin / admin123
+  2. Login with the provisioned site administrator account
   3. Explore the dashboard
   4. Try the POS - process your first sale!
 
@@ -190,7 +188,7 @@
 │ 🎊 CONGRATULATIONS!                                                          │
 └──────────────────────────────────────────────────────────────────────────────┘
 
-  You now have a complete, production-ready Pharmaceutical POS System!
+  You now have a local pharmaceutical POS installation that must be commissioned per site.
 
   The application is:
     ✓ Fully functional
@@ -207,6 +205,6 @@
 ║                      🚀 READY TO USE! 🚀                                     ║
 ║                                                                              ║
 ║                  Access: http://localhost:3000                               ║
-║                  Login: admin / admin123                                     ║
+║                  Login: site-specific administrator account                  ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝

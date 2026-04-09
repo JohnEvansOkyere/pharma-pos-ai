@@ -41,6 +41,7 @@ Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "start.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "stop.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "backup.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "provision-admin.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "uninstall-app.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
@@ -49,6 +50,7 @@ Source: "README.txt"; DestDir: "{app}"; Flags: ignoreversion isreadme
 Name: "{group}\{#MyAppName}"; Filename: "{app}\start.bat"; IconFilename: "{app}\icon.ico"
 Name: "{group}\Stop {#MyAppName}"; Filename: "{app}\stop.bat"
 Name: "{group}\Backup Database"; Filename: "{app}\backup.bat"
+Name: "{group}\Provision Admin"; Filename: "{app}\provision-admin.bat"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\start.bat"; IconFilename: "{app}\icon.ico"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\start.bat"; Tasks: quicklaunchicon
@@ -77,10 +79,10 @@ begin
     MsgBox('Installation complete!' + #13#10#13#10 + 
            'Access the system at: http://localhost:8080' + #13#10 +
            'API Docs: http://localhost:8000/docs' + #13#10#13#10 +
-           'Default Login:' + #13#10 +
-           'Username: admin' + #13#10 +
-           'Password: admin123' + #13#10#13#10 +
-           'IMPORTANT: Change the default password after first login!', 
+           'Next steps:' + #13#10 +
+           '1. Run Provision Admin from the start menu' + #13#10 +
+           '2. Create the site-specific administrator account' + #13#10 +
+           '3. Launch the application after provisioning is complete',
            mbInformation, MB_OK);
   end;
 end;

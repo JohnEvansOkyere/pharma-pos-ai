@@ -134,7 +134,7 @@ pharma-pos-ai/
 ### Backend (FastAPI)
 - Port: 8000
 - Depends on: database
-- Environment: production-ready
+- Environment: intended for site-specific commissioning
 - Health checks enabled
 - API documentation at /docs
 
@@ -192,13 +192,10 @@ Key variables to configure in `.env`:
    - Backend: http://localhost:8000
    - API Docs: http://localhost:8000/docs
 
-## Default Credentials
+## Admin Provisioning
 
-⚠️ **CHANGE THESE IMMEDIATELY IN PRODUCTION!**
-
-- **Admin**: `admin` / `password123`
-- **Manager**: `manager1` / `password123`
-- **Cashier**: `cashier1` / `password123`
+Create the first administrator after deployment with `python scripts/provision_admin.py`.
+Do not ship default user credentials in customer environments.
 
 ## Health Checks
 

@@ -34,7 +34,7 @@ POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=pharma_pos
 POSTGRES_USER=pharma_user
-POSTGRES_PASSWORD=newpassword123
+POSTGRES_PASSWORD=<set-a-strong-site-specific-password>
 ```
 
 The application builds the final connection string from those values.
@@ -85,7 +85,7 @@ sudo -u postgres psql
 Then run:
 
 ```sql
-CREATE USER pharma_user WITH PASSWORD 'newpassword123';
+CREATE USER pharma_user WITH PASSWORD '<set-a-strong-site-specific-password>';
 CREATE DATABASE pharma_pos OWNER pharma_user;
 GRANT ALL PRIVILEGES ON DATABASE pharma_pos TO pharma_user;
 \q
@@ -100,7 +100,7 @@ Open:
 Log in as the `postgres` superuser, then run:
 
 ```sql
-CREATE USER pharma_user WITH PASSWORD 'newpassword123';
+CREATE USER pharma_user WITH PASSWORD '<set-a-strong-site-specific-password>';
 CREATE DATABASE pharma_pos OWNER pharma_user;
 GRANT ALL PRIVILEGES ON DATABASE pharma_pos TO pharma_user;
 ```
@@ -115,9 +115,7 @@ psql -h localhost -p 5432 -U pharma_user -d pharma_pos
 
 If prompted, enter:
 
-```text
-newpassword123
-```
+Enter the same site-specific password you configured for `pharma_user`.
 
 If it connects, PostgreSQL is ready.
 
@@ -181,7 +179,7 @@ DATABASE_BACKEND=postgresql
 If `DATABASE_URL` is empty, the app builds this:
 
 ```text
-postgresql://pharma_user:newpassword123@localhost:5432/pharma_pos
+postgresql://pharma_user:<site-specific-password>@localhost:5432/pharma_pos
 ```
 
 ## 9. Common Problems

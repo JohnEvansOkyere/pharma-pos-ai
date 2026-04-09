@@ -2,7 +2,7 @@
 Sales transaction models - Enhanced for professional pharmaceutical POS.
 Currency: GH₵ (Ghana Cedis)
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Enum as SQLEnum, Date
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Text, Boolean, Enum as SQLEnum, Date, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum
@@ -39,17 +39,17 @@ class Sale(Base):
     status = Column(SQLEnum(SaleStatus), default=SaleStatus.COMPLETED, nullable=False)
 
     # Pricing (GH₵ - Ghana Cedis)
-    subtotal = Column(Float, nullable=False)
-    discount_amount = Column(Float, default=0.0, nullable=False)
+    subtotal = Column(Numeric(12, 2), nullable=False)
+    discount_amount = Column(Numeric(12, 2), default=0.0, nullable=False)
     discount_percentage = Column(Float, default=0.0)  # Percentage discount applied
-    tax_amount = Column(Float, default=0.0, nullable=False)
+    tax_amount = Column(Numeric(12, 2), default=0.0, nullable=False)
     tax_rate = Column(Float, default=0.0)  # Tax rate percentage
-    total_amount = Column(Float, nullable=False)
+    total_amount = Column(Numeric(12, 2), nullable=False)
 
     # Payment
     payment_method = Column(SQLEnum(PaymentMethod), default=PaymentMethod.CASH, nullable=False)
-    amount_paid = Column(Float, nullable=False)
-    change_amount = Column(Float, default=0.0, nullable=False)
+    amount_paid = Column(Numeric(12, 2), nullable=False)
+    change_amount = Column(Numeric(12, 2), default=0.0, nullable=False)
 
     # Mobile Money specific
     momo_reference = Column(String(100))  # MOMO transaction reference
@@ -69,7 +69,7 @@ class Sale(Base):
     # Insurance (for future enhancement)
     insurance_company = Column(String(100))
     insurance_claim_number = Column(String(100))
-    insurance_coverage = Column(Float, default=0.0)
+    insurance_coverage = Column(Numeric(12, 2), default=0.0)
 
     notes = Column(Text)
 
@@ -109,12 +109,12 @@ class SaleItem(Base):
 
     # Pricing
     quantity = Column(Integer, nullable=False)
-    unit_price = Column(Float, nullable=False)  # GH₵ per unit
-    discount_amount = Column(Float, default=0.0, nullable=False)
-    total_price = Column(Float, nullable=False)  # GH₵
+    unit_price = Column(Numeric(12, 2), nullable=False)  # GH₵ per unit
+    discount_amount = Column(Numeric(12, 2), default=0.0, nullable=False)
+    total_price = Column(Numeric(12, 2), nullable=False)  # GH₵
 
     # Tax (if applicable per item)
-    tax_amount = Column(Float, default=0.0)
+    tax_amount = Column(Numeric(12, 2), default=0.0)
 
     # Relationships
     sale = relationship("Sale", back_populates="items")

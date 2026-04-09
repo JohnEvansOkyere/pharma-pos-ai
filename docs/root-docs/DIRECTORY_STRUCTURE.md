@@ -52,18 +52,18 @@ pharma-pos-ai/
 │   │   │   │   └── auth.py            # Auth dependencies
 │   │   │   │
 │   │   │   └── endpoints/             # API endpoint handlers
-│   │   │       ├── auth.py            # Login, register, /me
+│   │   │       ├── auth.py            # Login and session endpoints
 │   │   │       ├── products.py        # Product CRUD, search, batches
 │   │   │       ├── categories.py      # Category management
 │   │   │       ├── suppliers.py       # Supplier management
 │   │   │       ├── sales.py           # POS & sales
 │   │   │       ├── notifications.py   # Notification management
 │   │   │       ├── dashboard.py       # Dashboard KPIs & analytics
-│   │   │       └── insights.py        # AI insights endpoints
+│   │   │       └── insights.py        # Operational insights endpoints
 │   │   │
 │   │   └── services/                  # Business logic services
 │   │       ├── notification_service.py # Notification creation & webhooks
-│   │       ├── ai_insights.py         # AI analytics & predictions
+│   │       ├── ai_insights.py         # Rule-based operational analytics
 │   │       └── scheduler.py           # Background task scheduler
 │   │
 │   ├── alembic/                       # Database migrations

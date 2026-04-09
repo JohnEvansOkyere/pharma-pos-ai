@@ -172,14 +172,15 @@ npm run dev
 
 Frontend will run at: **http://localhost:3000**
 
-### 4. Login
+### 4. Admin Provisioning
 
-Development seed credentials:
-- **Admin**: `admin` / `admin123`
-- **Manager**: `manager` / `manager123`
-- **Cashier**: `cashier` / `cashier123`
+For client installations, create the first administrator with:
 
-These credentials are for development seed data only. They must not be used in client release builds.
+```bash
+python scripts/provision_admin.py
+```
+
+Development seed credentials should only exist in intentionally seeded demo environments.
 
 ---
 
@@ -375,7 +376,7 @@ Once the backend is running, visit:
 - `GET /api/dashboard/sales-trend` - Sales trend data
 - `GET /api/dashboard/fast-moving-products` - Top products
 
-#### AI Insights
+#### Operational Insights
 - `GET /api/insights/dead-stock` - Dead stock items
 - `GET /api/insights/reorder-suggestion/{id}` - Reorder suggestions
 - `GET /api/insights/profit-margin-analysis` - Profit analysis
@@ -385,7 +386,7 @@ Once the backend is running, visit:
 ## 🔐 Security Best Practices
 
 1. **Change default SECRET_KEY** in production
-2. **Use strong passwords** for default users
+2. **Provision site-specific admin users** and use strong passwords
 3. **Enable HTTPS** in production
 4. **Configure CORS** properly
 5. **Use environment variables** for sensitive data
@@ -399,7 +400,7 @@ Backup and restore guide:
 
 ## 🤝 Contributing
 
-This is a complete, production-ready system. For enhancements:
+This is a local pharmacy system that must be commissioned per site. For enhancements:
 
 1. Fork the repository
 2. Create feature branch (`git checkout -b feature/AmazingFeature`)

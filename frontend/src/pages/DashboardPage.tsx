@@ -104,17 +104,7 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     setIsLoading(true)
     try {
-      const [
-        kpisData,
-        trendData,
-        fastMovingData,
-        slowMovingData,
-        revenueData,
-        financialData,
-        expiringData,
-        lowStockData,
-        profitCategoryData,
-      ] = await Promise.all([
+      const results = await Promise.allSettled([
         api.getDashboardKPIs(),
         api.getSalesTrend({ days: analysisPeriod }),
         api.getFastMovingProducts({ limit: 10, days: analysisPeriod }),
@@ -126,15 +116,32 @@ export default function DashboardPage() {
         api.getProfitByCategory({ days: analysisPeriod }),
       ])
 
-      setKpis(kpisData)
-      setSalesTrend(trendData)
-      setFastMoving(fastMovingData)
-      setSlowMoving(slowMovingData)
-      setRevenueAnalysis(revenueData)
-      setFinancialKPIs(financialData)
-      setExpiringProducts(expiringData)
-      setLowStockItems(lowStockData)
-      setProfitByCategory(profitCategoryData)
+      const [
+        kpisResult,
+        trendResult,
+        fastMovingResult,
+        slowMovingResult,
+        revenueResult,
+        financialResult,
+        expiringResult,
+        lowStockResult,
+        profitCategoryResult,
+      ] = results
+
+      if (kpisResult.status === 'fulfilled') setKpis(kpisResult.value)
+      if (trendResult.status === 'fulfilled') setSalesTrend(trendResult.value)
+      if (fastMovingResult.status === 'fulfilled') setFastMoving(fastMovingResult.value)
+      if (slowMovingResult.status === 'fulfilled') setSlowMoving(slowMovingResult.value)
+      if (revenueResult.status === 'fulfilled') setRevenueAnalysis(revenueResult.value)
+      if (financialResult.status === 'fulfilled') setFinancialKPIs(financialResult.value)
+      if (expiringResult.status === 'fulfilled') setExpiringProducts(expiringResult.value)
+      if (lowStockResult.status === 'fulfilled') setLowStockItems(lowStockResult.value)
+      if (profitCategoryResult.status === 'fulfilled') setProfitByCategory(profitCategoryResult.value)
+
+      const failedSections = results.filter((result) => result.status === 'rejected')
+      if (failedSections.length > 0) {
+        console.error('Some dashboard sections failed to load:', failedSections)
+      }
     } catch (error) {
       console.error('Failed to load dashboard data:', error)
     } finally {

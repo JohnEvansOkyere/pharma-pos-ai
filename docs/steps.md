@@ -1,5 +1,5 @@
 🔹 Step 1: Create the user
-CREATE USER pharma_user WITH PASSWORD 'newpassword123';
+CREATE USER pharma_user WITH PASSWORD '<set-a-strong-site-specific-password>';
 🔹 Step 2: Create the database
 CREATE DATABASE pharma_pos;
 🔹 Step 3: Give access

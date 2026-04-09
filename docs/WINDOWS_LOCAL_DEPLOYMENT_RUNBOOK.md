@@ -38,6 +38,10 @@ Still required for a stronger production installer:
 - reliable backend service registration
 - cleaner release packaging without demo/default material
 
+Current first-run admin tool:
+- [provision-admin.bat](/home/grejoy/Projects/pharma-pos-ai/provision-admin.bat)
+- [scripts/provision_admin.py](/home/grejoy/Projects/pharma-pos-ai/scripts/provision_admin.py)
+
 ## Pre-Install Checklist
 
 Before installation, confirm:
@@ -131,6 +135,16 @@ Run migrations from the installed root.
 If sample data is needed only for demonstration, seed intentionally.
 
 Do not ship demo users in a client release unless the client explicitly requested a demo environment.
+
+### 5A. Provision The First Admin
+
+Run:
+
+```bat
+provision-admin.bat
+```
+
+Create the pharmacy-specific administrator account before handing the system to the client.
 
 ### 6. Configure Application Startup
 

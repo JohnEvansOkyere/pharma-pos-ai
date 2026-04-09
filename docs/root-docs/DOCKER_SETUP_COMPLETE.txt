@@ -12,7 +12,7 @@
    - Status: Healthy ✓
    - Port: 5432
    - Schema: Fully initialized with proper ENUM types
-   - Seed Data: Loaded (4 users, 12 categories, 5 suppliers, 18 products)
+   - Seed Data: Site-specific and optional
 
 2. BACKEND API (FastAPI)
    - Container: pharma-pos-backend
@@ -29,16 +29,12 @@
    - URL: http://localhost
    - Build: Optimized production build with nginx
 
-🔐 TEST CREDENTIALS
-===================
-Username: admin
-Password: password123
-Role: ADMIN
+🔐 ADMIN PROVISIONING
+====================
+Provision the first administrator after deployment using:
+  python scripts/provision_admin.py
 
-Other test users:
-- manager1 / password123 (MANAGER)
-- cashier1 / password123 (CASHIER)
-- cashier2 / password123 (CASHIER)
+Do not ship shared default users or passwords to customer environments.
 
 📋 QUICK COMMANDS
 =================
@@ -84,7 +80,7 @@ Access database:
    - Disabled strict unused variable checking in tsconfig.json
    - Fixed optional chaining issues in api.ts
 
-5. Regenerated password hashes for test users to match current bcrypt version
+5. Removed reliance on shared bootstrap credentials for release installs
 
 🌐 ACCESS POINTS
 ===============
@@ -104,14 +100,14 @@ Database:
   Port: 5432
   Database: pharma_pos
   User: pharma_user
-  Password: changeme123
+  Password: configured per site in backend\.env
 
 ⚠️  IMPORTANT NOTES
 ==================
 
-1. The .env file contains default passwords. Change these in production!
-2. Generate a strong SECRET_KEY: openssl rand -hex 32
-3. Update database passwords for production deployment
+1. Generate a strong SECRET_KEY: openssl rand -hex 32
+2. Set a strong site-specific database password
+3. Provision the first admin before handover
 4. The current setup uses port 80 for frontend - make sure it's available
 5. All data persists in Docker volumes even after container restart
 6. To completely reset: docker-compose down -v (WARNING: deletes all data!)
@@ -122,14 +118,14 @@ Database:
 ✓ Docker images built successfully
 ✓ All containers created and running
 ✓ Database schema initialized
-✓ Seed data loaded
+✓ Site commissioning workflow ready
 ✓ Authentication tested and working
 ✓ Frontend serving correctly
 ✓ Backend API responding
 ✓ Health checks passing
 
-Your Pharma POS AI application is now fully containerized and ready to use!
+Your Pharma POS AI application is now containerized and ready for site-specific commissioning.
 
 =====================================
 Generated: 2025-11-27
-Status: PRODUCTION READY ✓
+Status: COMMISSIONING REQUIRED

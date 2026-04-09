@@ -83,22 +83,20 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Demo Credentials */}
           <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
-              Demo Credentials:
+              Local Install
             </p>
             <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-              <p>Admin: admin / admin123</p>
-              <p>Manager: manager / manager123</p>
-              <p>Cashier: cashier / cashier123</p>
+              <p>Use the pharmacy-specific credentials provisioned during setup.</p>
+              <p>Contact your administrator if this workstation has not been commissioned yet.</p>
             </div>
           </div>
         </div>
 
         {/* Footer */}
         <p className="text-center text-white text-sm mt-6">
-          Offline-capable • Secure • Fast
+          Local deployment • Secure • Fast
         </p>
       </div>
     </div>

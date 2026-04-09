@@ -5,8 +5,25 @@
 import axios, { AxiosInstance, AxiosError } from 'axios'
 import toast from 'react-hot-toast'
 
-// Use nginx proxy (/api) in production, or direct API URL in development
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api'
+function resolveApiBaseUrl() {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+
+  if (typeof window === 'undefined') {
+    return '/api'
+  }
+
+  const { hostname, port, protocol } = window.location
+
+  if (port === '3000' || port === '5173') {
+    return '/api'
+  }
+
+  return `${protocol}//${hostname}:8000/api`
+}
+
+const API_BASE_URL = resolveApiBaseUrl()
 
 class ApiClient {
   private client: AxiosInstance

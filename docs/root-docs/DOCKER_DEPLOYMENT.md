@@ -91,12 +91,7 @@ docker-compose logs -f
 - **API Documentation**: http://localhost:8000/docs
 - **PostgreSQL**: localhost:5432
 
-**Default Login Credentials:**
-- **Admin**: username: `admin`, password: `password123`
-- **Manager**: username: `manager1`, password: `password123`
-- **Cashier**: username: `cashier1`, password: `password123`
-
-> **⚠️ IMPORTANT:** Change these passwords immediately after first login!
+Provision the first administrator after deployment using the site-specific admin provisioning workflow. Do not ship or rely on shared default credentials.
 
 ---
 
@@ -108,7 +103,7 @@ docker-compose logs -f
 # Database
 POSTGRES_DB=pharma_pos
 POSTGRES_USER=pharma_user
-POSTGRES_PASSWORD=newpassword123
+POSTGRES_PASSWORD=<set-a-strong-site-specific-password>
 
 # Backend
 SECRET_KEY=YOUR_SECRET_KEY_MINIMUM_32_CHARACTERS
@@ -148,11 +143,8 @@ The database is automatically initialized with:
 - `activity_logs` - Audit trail
 
 ### Seed Data Included:
-- 4 test users (admin, manager, 2 cashiers)
-- 12 product categories
-- 5 suppliers
-- 15 sample products with batches
-- Sample notifications
+- schema objects only unless you intentionally load site data
+- no release default users should be shipped to customer environments
 
 ### Database Views:
 - `low_stock_products` - Products below threshold

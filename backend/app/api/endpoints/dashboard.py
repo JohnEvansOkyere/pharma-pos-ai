@@ -16,6 +16,14 @@ from app.api.dependencies import get_current_active_user
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
+def _sum_or_zero(expression):
+    return func.coalesce(func.sum(expression), 0.0)
+
+
+def _count_or_zero(expression):
+    return func.coalesce(func.count(expression), 0)
+
+
 @router.get("/kpis")
 def get_dashboard_kpis(
     db: Session = Depends(get_db),
@@ -29,22 +37,24 @@ def get_dashboard_kpis(
     """
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Total sales today
-    today_sales = db.query(Sale).filter(Sale.created_at >= today_start).all()
-    total_sales_today = sum(sale.total_amount for sale in today_sales)
+    sales_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("total_sales_today"),
+        _count_or_zero(Sale.id).label("total_sales_count"),
+    ).filter(Sale.created_at >= today_start).one()
 
-    # Profit today
-    total_profit_today = 0.0
-    for sale in today_sales:
-        for item in sale.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                profit = (item.unit_price - product.cost_price) * item.quantity
-                total_profit_today += profit
+    total_profit_today = db.query(
+        _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity)
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    ).join(
+        Product, Product.id == SaleItem.product_id
+    ).filter(
+        Sale.created_at >= today_start
+    ).scalar() or 0.0
 
-    # Inventory value
-    products = db.query(Product).filter(Product.is_active == True).all()
-    inventory_value = sum(p.cost_price * p.total_stock for p in products)
+    inventory_value = db.query(
+        _sum_or_zero(Product.cost_price * Product.total_stock)
+    ).filter(Product.is_active == True).scalar() or 0.0
 
     # Items near expiry (next 30 days)
     expiry_threshold = date.today() + timedelta(days=30)
@@ -63,17 +73,14 @@ def get_dashboard_kpis(
     # Total products
     total_products = db.query(Product).filter(Product.is_active == True).count()
 
-    # Total sales count
-    total_sales_count = len(today_sales)
-
     return {
-        "total_sales_today": total_sales_today,
-        "profit_today": total_profit_today,
-        "inventory_value": inventory_value,
+        "total_sales_today": float(sales_stats.total_sales_today or 0.0),
+        "profit_today": float(total_profit_today),
+        "inventory_value": float(inventory_value),
         "items_near_expiry": near_expiry_count,
         "low_stock_items": low_stock_count,
         "total_products": total_products,
-        "total_sales_count": total_sales_count,
+        "total_sales_count": int(sales_stats.total_sales_count or 0),
     }
 
 
@@ -149,39 +156,42 @@ def get_slow_moving_products(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    # Get all active products
-    all_products = db.query(Product).filter(Product.is_active == True).all()
-
-    # Get sales data
-    sales_data = db.query(
+    sales_subquery = db.query(
         SaleItem.product_id,
-        func.sum(SaleItem.quantity).label("total_sold")
+        func.coalesce(func.sum(SaleItem.quantity), 0).label("total_sold")
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).filter(
         Sale.created_at >= start_date
     ).group_by(
         SaleItem.product_id
-    ).all()
+    ).subquery()
 
-    sales_dict = {item.product_id: item.total_sold for item in sales_data}
+    products = db.query(
+        Product.id,
+        Product.name,
+        Product.sku,
+        Product.total_stock,
+        func.coalesce(sales_subquery.c.total_sold, 0).label("total_sold"),
+    ).outerjoin(
+        sales_subquery, sales_subquery.c.product_id == Product.id
+    ).filter(
+        Product.is_active == True
+    ).order_by(
+        func.coalesce(sales_subquery.c.total_sold, 0).asc(),
+        Product.name.asc(),
+    ).limit(limit).all()
 
-    # Find products with low sales
-    slow_movers = []
-    for product in all_products:
-        total_sold = sales_dict.get(product.id, 0)
-        slow_movers.append({
+    return [
+        {
             "product_id": product.id,
             "product_name": product.name,
             "sku": product.sku,
-            "total_sold": total_sold,
+            "total_sold": int(product.total_sold or 0),
             "current_stock": product.total_stock,
-        })
-
-    # Sort by lowest sales
-    slow_movers.sort(key=lambda x: x["total_sold"])
-
-    return slow_movers[:limit]
+        }
+        for product in products
+    ]
 
 
 @router.get("/low-stock-items")
@@ -436,8 +446,9 @@ def get_profit_by_category(
     results = db.query(
         Category.id,
         Category.name,
-        func.sum(SaleItem.total_price).label("total_revenue"),
-        func.sum(SaleItem.quantity).label("total_quantity")
+        _sum_or_zero(SaleItem.total_price).label("total_revenue"),
+        _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity).label("total_profit"),
+        func.coalesce(func.sum(SaleItem.quantity), 0).label("total_quantity"),
     ).join(
         Product, Product.category_id == Category.id
     ).join(
@@ -450,37 +461,25 @@ def get_profit_by_category(
         Category.id, Category.name
     ).all()
 
-    category_profits = []
-    for r in results:
-        # Calculate profit for this category
-        category_profit = 0.0
-        category_sales = db.query(SaleItem).join(
-            Product, Product.id == SaleItem.product_id
-        ).join(
-            Sale, Sale.id == SaleItem.sale_id
-        ).filter(
-            Product.category_id == r.id,
-            Sale.created_at >= start_date
-        ).all()
-
-        for item in category_sales:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                profit = (item.unit_price - product.cost_price) * item.quantity
-                category_profit += profit
-
-        profit_margin = (category_profit / float(r.total_revenue) * 100) if r.total_revenue > 0 else 0
-
-        category_profits.append({
-            "category_id": r.id,
-            "category_name": r.name,
-            "total_revenue": float(r.total_revenue),
-            "total_profit": category_profit,
-            "profit_margin": profit_margin,
-            "items_sold": r.total_quantity,
-        })
-
-    return sorted(category_profits, key=lambda x: x["total_profit"], reverse=True)
+    return sorted(
+        [
+            {
+                "category_id": r.id,
+                "category_name": r.name,
+                "total_revenue": float(r.total_revenue or 0.0),
+                "total_profit": float(r.total_profit or 0.0),
+                "profit_margin": (
+                    float(r.total_profit or 0.0) / float(r.total_revenue) * 100
+                    if r.total_revenue and float(r.total_revenue) > 0
+                    else 0.0
+                ),
+                "items_sold": int(r.total_quantity or 0),
+            }
+            for r in results
+        ],
+        key=lambda x: x["total_profit"],
+        reverse=True,
+    )
 
 
 @router.get("/revenue-analysis")
@@ -504,28 +503,34 @@ def get_revenue_analysis(
     week_start = today_start - timedelta(days=today_start.weekday())
     month_start = today_start.replace(day=1)
 
-    # Daily revenue
-    daily_sales = db.query(Sale).filter(Sale.created_at >= today_start).all()
-    daily_revenue = sum(sale.total_amount for sale in daily_sales)
+    daily_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("revenue"),
+        _count_or_zero(Sale.id).label("transactions"),
+    ).filter(Sale.created_at >= today_start).one()
 
-    # Weekly revenue
-    weekly_sales = db.query(Sale).filter(Sale.created_at >= week_start).all()
-    weekly_revenue = sum(sale.total_amount for sale in weekly_sales)
+    weekly_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("revenue"),
+        _count_or_zero(Sale.id).label("transactions"),
+    ).filter(Sale.created_at >= week_start).one()
 
-    # Monthly revenue
-    monthly_sales = db.query(Sale).filter(Sale.created_at >= month_start).all()
-    monthly_revenue = sum(sale.total_amount for sale in monthly_sales)
+    monthly_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("revenue"),
+        _count_or_zero(Sale.id).label("transactions"),
+    ).filter(Sale.created_at >= month_start).one()
 
-    # Average basket value
-    avg_basket = daily_revenue / len(daily_sales) if daily_sales else 0.0
+    avg_basket = (
+        float(daily_stats.revenue or 0.0) / int(daily_stats.transactions)
+        if daily_stats.transactions
+        else 0.0
+    )
 
     return {
-        "daily_revenue": daily_revenue,
-        "daily_transactions": len(daily_sales),
-        "weekly_revenue": weekly_revenue,
-        "weekly_transactions": len(weekly_sales),
-        "monthly_revenue": monthly_revenue,
-        "monthly_transactions": len(monthly_sales),
+        "daily_revenue": float(daily_stats.revenue or 0.0),
+        "daily_transactions": int(daily_stats.transactions or 0),
+        "weekly_revenue": float(weekly_stats.revenue or 0.0),
+        "weekly_transactions": int(weekly_stats.transactions or 0),
+        "monthly_revenue": float(monthly_stats.revenue or 0.0),
+        "monthly_transactions": int(monthly_stats.transactions or 0),
         "average_basket_value": avg_basket,
     }
 
@@ -549,41 +554,50 @@ def get_financial_kpis(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    # Get all sales in period
-    sales = db.query(Sale).filter(Sale.created_at >= start_date).all()
+    sales_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("total_revenue"),
+        _count_or_zero(Sale.id).label("total_transactions"),
+    ).filter(Sale.created_at >= start_date).one()
 
-    total_revenue = sum(sale.total_amount for sale in sales)
+    total_revenue = float(sales_stats.total_revenue or 0.0)
 
-    # Calculate gross profit
-    gross_profit = 0.0
-    for sale in sales:
-        for item in sale.items:
-            product = db.query(Product).filter(Product.id == item.product_id).first()
-            if product:
-                profit = (item.unit_price - product.cost_price) * item.quantity
-                gross_profit += profit
+    gross_profit = db.query(
+        _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity)
+    ).join(
+        Sale, Sale.id == SaleItem.sale_id
+    ).join(
+        Product, Product.id == SaleItem.product_id
+    ).filter(
+        Sale.created_at >= start_date
+    ).scalar() or 0.0
 
     # Net profit (simplified - just subtracting estimated overhead)
     overhead_rate = 0.15  # 15% overhead estimate
-    net_profit = gross_profit * (1 - overhead_rate)
+    net_profit = float(gross_profit) * (1 - overhead_rate)
 
     # Average basket value
-    avg_basket = total_revenue / len(sales) if sales else 0.0
+    avg_basket = (
+        total_revenue / int(sales_stats.total_transactions)
+        if sales_stats.total_transactions
+        else 0.0
+    )
 
     # Credit sales (sales with payment method = credit)
-    credit_sales = db.query(Sale).filter(
+    credit_stats = db.query(
+        _sum_or_zero(Sale.total_amount).label("outstanding_credit"),
+        _count_or_zero(Sale.id).label("credit_sales_count"),
+    ).filter(
         Sale.created_at >= start_date,
         Sale.payment_method == "credit"
-    ).all()
-    outstanding_credit = sum(sale.total_amount for sale in credit_sales)
+    ).one()
 
     return {
         "total_revenue": total_revenue,
-        "gross_profit": gross_profit,
+        "gross_profit": float(gross_profit),
         "net_profit": net_profit,
-        "profit_margin": (gross_profit / total_revenue * 100) if total_revenue > 0 else 0,
+        "profit_margin": (float(gross_profit) / total_revenue * 100) if total_revenue > 0 else 0,
         "average_basket_value": avg_basket,
-        "total_transactions": len(sales),
-        "outstanding_credit": outstanding_credit,
-        "credit_sales_count": len(credit_sales),
-    }  
+        "total_transactions": int(sales_stats.total_transactions or 0),
+        "outstanding_credit": float(credit_stats.outstanding_credit or 0.0),
+        "credit_sales_count": int(credit_stats.credit_sales_count or 0),
+    }

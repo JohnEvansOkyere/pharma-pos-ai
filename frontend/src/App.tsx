@@ -1,18 +1,18 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { useAuthStore } from './stores/authStore'
 
 // Pages
-import LoginPage from './pages/LoginPage'
-import DashboardPage from './pages/DashboardPage'
-import ProductsPage from './pages/ProductsPage'
-import POSPage from './pages/POSPage'
-import SalesPage from './pages/SalesPage'
-import SuppliersPage from './pages/SuppliersPage'
-import NotificationsPage from './pages/NotificationsPage'
-import SettingsPage from './pages/SettingsPage'
-import StockAdjustmentsPage from './pages/StockAdjustmentsPage'
+const LoginPage = lazy(() => import('./pages/LoginPage'))
+const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const ProductsPage = lazy(() => import('./pages/ProductsPage'))
+const POSPage = lazy(() => import('./pages/POSPage'))
+const SalesPage = lazy(() => import('./pages/SalesPage'))
+const SuppliersPage = lazy(() => import('./pages/SuppliersPage'))
+const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const StockAdjustmentsPage = lazy(() => import('./pages/StockAdjustmentsPage'))
 
 // Layout
 import MainLayout from './components/layout/MainLayout'
@@ -77,43 +77,44 @@ function App() {
           },
         }}
       />
+      <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading...</div>}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
 
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <MainLayout />
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="/pos" replace />} />
+            <Route path="dashboard" element={
+              <AdminRoute>
+                <DashboardPage />
+              </AdminRoute>
+            } />
+            <Route path="products" element={<ProductsPage />} />
+            <Route path="pos" element={<POSPage />} />
+            <Route path="sales" element={<SalesPage />} />
+            <Route path="stock-adjustments" element={
+              <AdminOrManagerRoute>
+                <StockAdjustmentsPage />
+              </AdminOrManagerRoute>
+            } />
+            <Route path="suppliers" element={<SuppliersPage />} />
+            <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="settings" element={
+              <AdminOrManagerRoute>
+                <SettingsPage />
+              </AdminOrManagerRoute>
+            } />
+          </Route>
 
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute>
-              <MainLayout />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Navigate to="/pos" replace />} />
-          <Route path="dashboard" element={
-            <AdminRoute>
-              <DashboardPage />
-            </AdminRoute>
-          } />
-          <Route path="products" element={<ProductsPage />} />
-          <Route path="pos" element={<POSPage />} />
-          <Route path="sales" element={<SalesPage />} />
-          <Route path="stock-adjustments" element={
-            <AdminOrManagerRoute>
-              <StockAdjustmentsPage />
-            </AdminOrManagerRoute>
-          } />
-          <Route path="suppliers" element={<SuppliersPage />} />
-          <Route path="notifications" element={<NotificationsPage />} />
-          <Route path="settings" element={
-            <AdminOrManagerRoute>
-              <SettingsPage />
-            </AdminOrManagerRoute>
-          } />
-        </Route>
-
-        <Route path="*" element={<Navigate to="/pos" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/pos" replace />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

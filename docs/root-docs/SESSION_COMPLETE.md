@@ -298,7 +298,7 @@ For help:
 
 ## 🎊 Congratulations!
 
-You now have a **complete, production-ready Pharmaceutical POS System** running!
+You now have a local pharmaceutical POS system running for development or site commissioning.
 
 **What you can do now:**
 - ✅ Process sales transactions
@@ -307,10 +307,10 @@ You now have a **complete, production-ready Pharmaceutical POS System** running!
 - ✅ View analytics and reports
 - ✅ Manage suppliers
 - ✅ Get automated notifications
-- ✅ Access AI insights
-- ✅ Use offline (PWA)
+- ✅ Access operational insights
+- ✅ Run with a local backend
 
-**System Status:** 🟢 **FULLY OPERATIONAL**
+**System Status:** Development or commissioning environment
 
 Enjoy using PHARMA-POS-AI! 🚀💊
 

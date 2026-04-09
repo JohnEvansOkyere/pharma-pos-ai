@@ -1,7 +1,7 @@
 {
   "name": "pharma-pos-ai-frontend",
   "version": "1.0.0",
-  "description": "PHARMA-POS-AI Frontend - Offline-capable Pharmaceutical POS System",
+  "description": "PHARMA-POS-AI Frontend - Local pharmaceutical POS system",
   "type": "module",
   "scripts": {
     "dev": "vite",

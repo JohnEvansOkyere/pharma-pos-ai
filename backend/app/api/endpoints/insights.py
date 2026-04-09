@@ -1,5 +1,5 @@
 """
-AI Insights API endpoints.
+Operational insights API endpoints.
 """
 from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, Query
@@ -10,7 +10,7 @@ from app.models.user import User
 from app.services.ai_insights import AIInsightsService
 from app.api.dependencies import get_current_active_user
 
-router = APIRouter(prefix="/insights", tags=["AI Insights"])
+router = APIRouter(prefix="/insights", tags=["Operational Insights"])
 
 
 @router.get("/dead-stock")
@@ -41,7 +41,7 @@ def get_reorder_suggestion(
     current_user: User = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
-    Get AI-powered reorder quantity suggestion for a product.
+    Get a rule-based reorder quantity suggestion for a product.
 
     Args:
         product_id: Product ID

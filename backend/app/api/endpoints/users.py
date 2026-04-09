@@ -10,6 +10,7 @@ from app.models.user import User, UserRole
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 from app.api.dependencies import get_current_active_user
 from app.core.security import get_password_hash
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -138,6 +139,16 @@ def create_user(
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    AuditService.log(
+        db,
+        action="create_user",
+        user_id=current_user.id,
+        entity_type="user",
+        entity_id=db_user.id,
+        description=f"Created user {db_user.username}",
+        extra_data={"role": db_user.role.value, "is_active": db_user.is_active},
+    )
+    db.commit()
 
     return db_user
 
@@ -167,6 +178,7 @@ def update_user(
     Raises:
         HTTPException: If user not found or manager tries to update non-cashier
     """
+    normalized_username = user_data.username.strip() if user_data.username is not None else None
     normalized_email = user_data.email.strip().lower() if user_data.email is not None else None
     normalized_full_name = user_data.full_name.strip() if user_data.full_name is not None else None
 
@@ -191,6 +203,18 @@ def update_user(
             )
 
     # Update fields
+    if normalized_username is not None:
+        existing = db.query(User).filter(
+            User.username == normalized_username,
+            User.id != user_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+        db_user.username = normalized_username
+
     if normalized_email is not None:
         # Check if email is already taken by another user
         existing = db.query(User).filter(
@@ -218,6 +242,22 @@ def update_user(
 
     db.commit()
     db.refresh(db_user)
+    AuditService.log(
+        db,
+        action="update_user",
+        user_id=current_user.id,
+        entity_type="user",
+        entity_id=db_user.id,
+        description=f"Updated user {db_user.username}",
+        extra_data={
+            "username_updated": normalized_username is not None,
+            "email_updated": normalized_email is not None,
+            "role": db_user.role.value,
+            "is_active": db_user.is_active,
+            "password_updated": user_data.password is not None,
+        },
+    )
+    db.commit()
 
     return db_user
 
@@ -263,5 +303,18 @@ def delete_user(
                 detail="Managers can only delete cashier users"
             )
 
+    deleted_user_id = db_user.id
+    deleted_username = db_user.username
+    deleted_role = db_user.role.value
     db.delete(db_user)
+    db.commit()
+    AuditService.log(
+        db,
+        action="delete_user",
+        user_id=current_user.id,
+        entity_type="user",
+        entity_id=deleted_user_id,
+        description=f"Deleted user {deleted_username}",
+        extra_data={"role": deleted_role},
+    )
     db.commit()

@@ -13,7 +13,7 @@ export default defineConfig({
       manifest: {
         name: 'PHARMA-POS-AI',
         short_name: 'PharmaPOS',
-        description: 'Offline-capable Pharmaceutical POS System',
+        description: 'Local pharmaceutical POS system with a required local backend',
         theme_color: '#4F46E5',
         background_color: '#FFFFFF',
         display: 'standalone',

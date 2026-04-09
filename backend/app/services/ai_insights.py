@@ -1,5 +1,5 @@
 """
-AI Insights service for rule-based analytics and predictions.
+Rule-based operational insights service.
 """
 from typing import Dict, List, Any
 from datetime import datetime, timedelta
@@ -12,7 +12,7 @@ from app.core.config import settings
 
 
 class AIInsightsService:
-    """Service for AI-powered insights (rule-based)."""
+    """Service for rule-based operational insights."""
 
     @staticmethod
     def detect_dead_stock(db: Session, days: int = None) -> List[Dict[str, Any]]:

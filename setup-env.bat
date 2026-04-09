@@ -11,9 +11,11 @@ if not exist "backend" (
 )
 
 set "PHARMACY_NAME=Pharma POS AI"
-set "POSTGRES_PASSWORD_VALUE=changeme123"
+set "POSTGRES_PASSWORD_VALUE="
 
-if not "%PHARMA_SETUP_NONINTERACTIVE%"=="1" (
+if "%PHARMA_SETUP_NONINTERACTIVE%"=="1" (
+    for /f %%I in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "[guid]::NewGuid().ToString(''N'') + [guid]::NewGuid().ToString(''N'')"') do set "POSTGRES_PASSWORD_VALUE=%%I"
+) else (
     set /p PHARMACY_NAME=Enter pharmacy name [Pharma POS AI]:
     if "%PHARMACY_NAME%"=="" set "PHARMACY_NAME=Pharma POS AI"
 

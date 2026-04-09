@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.models.supplier import Supplier
 from app.models.user import User
+from app.services.audit_service import AuditService
 from app.schemas.supplier import Supplier as SupplierSchema, SupplierCreate, SupplierUpdate
 from app.api.dependencies import get_current_active_user, require_manager
 
@@ -60,6 +61,15 @@ def create_supplier(
     db.add(db_supplier)
     db.commit()
     db.refresh(db_supplier)
+    AuditService.log(
+        db,
+        action="create_supplier",
+        user_id=current_user.id,
+        entity_type="supplier",
+        entity_id=db_supplier.id,
+        description=f"Created supplier {db_supplier.name}",
+    )
+    db.commit()
 
     return db_supplier
 
@@ -85,6 +95,16 @@ def update_supplier(
 
     db.commit()
     db.refresh(db_supplier)
+    AuditService.log(
+        db,
+        action="update_supplier",
+        user_id=current_user.id,
+        entity_type="supplier",
+        entity_id=db_supplier.id,
+        description=f"Updated supplier {db_supplier.name}",
+        extra_data={"updated_fields": sorted(update_data.keys())},
+    )
+    db.commit()
 
     return db_supplier
 
@@ -103,5 +123,16 @@ def delete_supplier(
             detail="Supplier not found"
         )
 
+    deleted_supplier_id = db_supplier.id
+    deleted_supplier_name = db_supplier.name
     db.delete(db_supplier)
+    db.commit()
+    AuditService.log(
+        db,
+        action="delete_supplier",
+        user_id=current_user.id,
+        entity_type="supplier",
+        entity_id=deleted_supplier_id,
+        description=f"Deleted supplier {deleted_supplier_name}",
+    )
     db.commit()

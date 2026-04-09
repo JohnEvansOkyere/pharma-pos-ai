@@ -8,15 +8,14 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-pharma_pos}
       POSTGRES_USER: ${POSTGRES_USER:-pharma_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_INITDB_ARGS: "-E UTF8"
       TZ: Africa/Accra
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
     ports:
-      - "5432:5432"
+      - "5435:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pharma_user} -d ${POSTGRES_DB:-pharma_pos}"]
       interval: 10s
@@ -37,8 +36,8 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-pharma_pos}
       POSTGRES_USER: ${POSTGRES_USER:-pharma_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme123}
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-this-in-production-min-32-chars}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
       APP_NAME: "Pharma POS AI"
@@ -83,20 +82,21 @@ services:
       retries: 3
     networks:
       - pharma-network
-  # pgAdmin (Database UI)
+  # Optional admin tooling
   pgadmin:
     image: dpage/pgadmin4
     container_name: pharma-pos-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
     ports:
       - "8081:80"
     depends_on:
       - db
     networks: 
       - pharma-network
+    profiles: ["admin-tools"]
     volumes:
     - pgadmin_data:/var/lib/pgadmin
     
