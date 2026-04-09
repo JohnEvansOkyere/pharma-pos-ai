@@ -12,6 +12,7 @@ A pharmaceutical POS system built for pharmacy installations, with local deploym
 - ✅ **Inventory Management** - Track products, batches, categories, and expiry dates
 - ✅ **Point of Sale (POS)** - Fast, intuitive sales interface with barcode support
 - ✅ **Sales Tracking** - Complete transaction history and daily summaries
+- ✅ **Operational Controls** - Sale void/refund controls with auditability and end-of-day closeout totals
 - ✅ **Supplier Management** - Manage vendors and purchase orders
 - ✅ **User Management** - Role-based access (Admin, Manager, Cashier)
 - ✅ **Notifications** - Automated alerts for expiry and low stock
@@ -29,6 +30,7 @@ A pharmaceutical POS system built for pharmacy installations, with local deploym
 - 🔐 **Security** - JWT authentication with role-based permissions
 - 🔔 **Background Scheduler** - Automated daily checks
 - 🩺 **Local Diagnostics** - Backup status and installation health visible in `Settings`
+- 💾 **Backup Awareness** - Backup status, manual backup trigger, and technician-facing restore workflow
 
 ---
 
@@ -182,6 +184,15 @@ python scripts/provision_admin.py
 
 Development seed credentials should only exist in intentionally seeded demo environments.
 
+### 5. Apply Migrations
+
+Before validating an updated installation, apply the current Alembic migrations:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
 ---
 
 ## 📚 Documentation
@@ -194,6 +205,7 @@ Primary documentation:
 - [Windows Local Deployment Runbook](/home/grejoy/Projects/pharma-pos-ai/docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)
 - [Backup And Restore Guide](/home/grejoy/Projects/pharma-pos-ai/docs/BACKUP_RESTORE_GUIDE.md)
 - [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
+- [Missing Operational Controls Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/MISSING_OPERATIONAL_CONTROLS_CHECKLIST.md)
 
 ---
 
@@ -222,6 +234,11 @@ Primary documentation:
 - Track fast/slow-moving products
 - View sales trends (charts)
 - Check staff performance
+
+### Operational Controls
+- Managers/admins can void or refund completed sales through a controlled workflow
+- Daily closeout totals are available for operational review
+- Backup health and diagnostics are visible in `Settings`
 
 ---
 

@@ -27,6 +27,12 @@ class SaleStatus(str, Enum):
     REFUNDED = "refunded"
 
 
+class SalePricingMode(str, Enum):
+    """Pricing mode used to price a sale."""
+    RETAIL = "retail"
+    WHOLESALE = "wholesale"
+
+
 class Sale(Base):
     """Sales transaction header - Enhanced with professional features."""
 
@@ -37,6 +43,7 @@ class Sale(Base):
 
     # Status
     status = Column(SQLEnum(SaleStatus), default=SaleStatus.COMPLETED, nullable=False)
+    pricing_mode = Column(SQLEnum(SalePricingMode), default=SalePricingMode.RETAIL, nullable=False)
 
     # Pricing (GH₵ - Ghana Cedis)
     subtotal = Column(Numeric(12, 2), nullable=False)

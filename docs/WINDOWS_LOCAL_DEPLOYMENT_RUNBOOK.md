@@ -182,6 +182,8 @@ Test:
 - product creation works
 - stock receipt works
 - sale completes
+- sale void or refund is verified with a test invoice
+- closeout summary is reviewed
 - manual backup succeeds
 - backup file appears in backup folder
 - `Settings` shows database connected and recent backup status
@@ -194,6 +196,8 @@ Before leaving the pharmacy:
 - [ ] cashier login verified
 - [ ] POS sale verified
 - [ ] product add/receive workflow verified
+- [ ] sale reversal workflow verified
+- [ ] closeout totals reviewed
 - [ ] backup location shown to client
 - [ ] backup procedure explained
 - [ ] support contact recorded

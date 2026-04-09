@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.api.endpoints.sales import create_sale, get_today_sales_summary
 from app.models.activity_log import ActivityLog
+from app.models.sale import SalePricingMode
 from app.schemas.sale import SaleCreate, SaleItemCreate
 
 
@@ -62,6 +63,53 @@ def test_create_sale_rounds_and_stores_decimal_money(
     assert sale.items[0].unit_price == Decimal("1.23")
     assert sale.items[0].total_price == Decimal("2.45")
     assert audit_entry is not None
+
+
+def test_create_sale_uses_wholesale_prices_when_sale_mode_is_wholesale(
+    db_session,
+    cashier_user,
+    category,
+    product_factory,
+    batch_factory,
+):
+    product = product_factory(category.id, name="Wholesale Amox", sku="WH-AMOX-250")
+    product.cost_price = Decimal("70.00")
+    product.selling_price = Decimal("80.00")
+    product.wholesale_price = Decimal("75.00")
+    db_session.commit()
+    db_session.refresh(product)
+
+    batch_factory(
+        product.id,
+        batch_number="WH-AMOX-B1",
+        quantity=10,
+        expiry_offset_days=365,
+    )
+
+    sale = create_sale(
+        SaleCreate(
+            pricing_mode=SalePricingMode.WHOLESALE,
+            items=[
+                SaleItemCreate(
+                    product_id=product.id,
+                    quantity=2,
+                    unit_price=999.99,
+                    discount_amount=0.00,
+                )
+            ],
+            discount_amount=0.00,
+            tax_amount=0.00,
+            amount_paid=150.00,
+        ),
+        db=db_session,
+        current_user=cashier_user,
+    )
+
+    db_session.refresh(sale)
+
+    assert sale.pricing_mode == SalePricingMode.WHOLESALE
+    assert sale.items[0].unit_price == Decimal("75.00")
+    assert sale.total_amount == Decimal("150.00")
 
 
 def test_today_sales_summary_uses_aggregate_money_totals(

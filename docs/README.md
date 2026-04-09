@@ -22,6 +22,8 @@ Use this for:
 - architecture orientation
 - critical workflow expectations
 - release discipline
+- current hardening status
+- operational-control roadmap
 
 ### For Pharmacy Operators
 
@@ -33,6 +35,8 @@ Use this for:
 - POS workflow
 - product and stock workflows
 - backup awareness
+- sale reversal rules
+- closeout expectations
 
 ### For Installers And Support Technicians
 
@@ -62,6 +66,15 @@ Use this for:
 - deciding whether a build is dependable enough to ship
 - checking operational readiness
 - tracking remaining blockers
+
+### For Operational Gaps
+
+- [Missing Operational Controls Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/MISSING_OPERATIONAL_CONTROLS_CHECKLIST.md)
+
+Use this for:
+- identifying what still separates the system from a stronger pharmacy rollout
+- prioritizing operational safeguards
+- planning hardening work after audit findings
 
 ## Existing Planning And Audit Docs
 

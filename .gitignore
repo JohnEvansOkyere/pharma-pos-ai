@@ -103,3 +103,7 @@ deploy.sh
 # Database files (exclude from git)
 database/
 !database/.gitkeep
+
+# Local backup artifacts
+backups/
+*.dump

@@ -18,6 +18,9 @@ The system is used to:
 - receive stock in batches
 - review sales history
 - monitor stock and expiry status
+- review backup and system health from `Settings`
+- perform manager-approved sale refund or void workflows
+- review end-of-day closeout totals
 
 ## User Roles
 
@@ -28,6 +31,9 @@ Can:
 - view all modules
 - manage products and stock
 - configure operations
+- review diagnostics and backup status
+- approve refunds and voids
+- review end-of-day closeout totals
 
 ### Manager
 
@@ -36,6 +42,9 @@ Can:
 - use POS
 - view sales and notifications
 - manage cashier accounts where permitted
+- run backups and review diagnostics
+- void or refund sales with a reason
+- review end-of-day closeout totals
 
 ### Cashier
 
@@ -131,6 +140,25 @@ Use the `Sales` page to:
 - search past transactions
 - confirm what was sold
 
+Managers and admins should also use sales history when:
+- checking invoice details
+- investigating a transaction
+- preparing to void or refund a completed sale
+
+## Sale Void And Refund Control
+
+Only managers or admins should reverse a completed sale.
+
+Rules:
+- a reason is required
+- the reversal is audited
+- stock is restored through the controlled workflow
+- staff should not try to correct a bad sale by hiding it with manual stock edits
+
+Recommended use:
+- `Void` for an operator mistake caught the same day
+- `Refund` when goods are returned and the transaction is being reversed for the customer
+
 ## Backups
 
 Pharmacy staff should not need technical database knowledge.
@@ -145,20 +173,36 @@ If your installation includes a backup shortcut or button:
 - use `Back Up Now` before major updates
 - report any backup failure immediately
 
+## Diagnostics And Backup Status
+
+Use the `Settings` page to review:
+- database connection status
+- backup health
+- most recent backup time
+- local diagnostics
+
+Escalate immediately if:
+- the latest backup is missing
+- the backup is stale
+- the database connection is shown as failed
+
 ## End Of Day Routine
 
 Recommended daily close routine:
 
-1. confirm all sales are completed
-2. confirm any unusual stock issue is reported
-3. verify the system remains powered for scheduled backup, if that is your local policy
-4. lock or sign out of the system
+1. confirm all expected sales are present
+2. review any refunded or voided sales
+3. confirm any unusual stock issue is reported
+4. check backup health in `Settings`
+5. verify the system remains powered for scheduled backup, if that is your local policy
+6. lock or sign out of the system
 
 ## When To Call Support
 
 Call support or the system administrator if:
 - the system does not start
 - backup reports failure
+- refunded or voided sales do not restore stock correctly
 - products disappear unexpectedly
 - totals look incorrect
 - you cannot log in with a known active account

@@ -191,3 +191,12 @@ Still recommended next:
 - installer-driven Task Scheduler setup by default
 - restore workflow surfaced more clearly for technicians
 - explicit backup warning banners when backups are stale
+
+## Related Operational Controls
+
+Backups are only one part of dependable pharmacy operation.
+Also review:
+
+- [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
+- [Missing Operational Controls Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/MISSING_OPERATIONAL_CONTROLS_CHECKLIST.md)
+- [Client User Guide](/home/grejoy/Projects/pharma-pos-ai/docs/CLIENT_USER_GUIDE.md)

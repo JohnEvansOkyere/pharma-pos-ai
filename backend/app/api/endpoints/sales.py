@@ -11,20 +11,35 @@ from sqlalchemy import func
 
 from app.core.money import round_money, to_decimal
 from app.db.base import get_db
-from app.models.sale import Sale, SaleItem
+from app.models.sale import Sale, SaleItem, SalePricingMode, SaleStatus, PaymentMethod
 from app.models.product import Product, ProductBatch
+from app.models.stock_adjustment import StockAdjustment, AdjustmentType
 from app.models.user import User
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
 from app.schemas.sale import (
     Sale as SaleSchema,
+    SaleActionRequest,
     SaleCreate,
+    EndOfDayCloseout,
     SaleWithItems,
     SaleSummary,
 )
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import get_current_active_user, require_manager
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
+
+
+def _resolve_sale_unit_price(product: Product, pricing_mode: SalePricingMode) -> Decimal:
+    if pricing_mode == SalePricingMode.WHOLESALE:
+        if product.wholesale_price is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Product {product.name} has no wholesale price configured",
+            )
+        return round_money(product.wholesale_price)
+
+    return round_money(product.selling_price)
 
 def _allocate_product_batches(db: Session, product: Product, required_quantity: int) -> List[ProductBatch]:
     """
@@ -63,6 +78,110 @@ def _allocate_product_batches(db: Session, product: Product, required_quantity: 
         )
 
     return allocated_batches
+
+
+def _restore_sale_item_stock(
+    db: Session,
+    sale_item: SaleItem,
+    *,
+    performed_by: int,
+    reason: str,
+) -> None:
+    product = db.query(Product).filter(Product.id == sale_item.product_id).with_for_update().first()
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot reverse sale because product {sale_item.product_id} no longer exists",
+        )
+
+    batch = None
+    if sale_item.batch_number:
+        batch = db.query(ProductBatch).filter(
+            ProductBatch.product_id == sale_item.product_id,
+            ProductBatch.batch_number == sale_item.batch_number,
+            ProductBatch.expiry_date == sale_item.expiry_date,
+        ).with_for_update().first()
+
+    if batch is None:
+        batch = ProductBatch(
+            product_id=sale_item.product_id,
+            batch_number=sale_item.batch_number or f"RESTORED-SALE-{sale_item.sale_id}-{sale_item.id}",
+            quantity=0,
+            expiry_date=sale_item.expiry_date or (date.today() + timedelta(days=3650)),
+            cost_price=product.cost_price,
+            location="Restored from sale reversal",
+        )
+        db.add(batch)
+        db.flush()
+
+    batch.quantity += sale_item.quantity
+    InventoryService.recalculate_product_stock(db, product)
+    db.add(
+        StockAdjustment(
+            product_id=product.id,
+            batch_id=batch.id,
+            adjustment_type=AdjustmentType.RETURN,
+            quantity=sale_item.quantity,
+            reason=reason,
+            performed_by=performed_by,
+        )
+    )
+
+
+def _reverse_sale(
+    db: Session,
+    *,
+    sale_id: int,
+    action_reason: str,
+    current_user: User,
+    target_status: SaleStatus,
+) -> Sale:
+    sale = db.query(Sale).filter(Sale.id == sale_id).with_for_update().first()
+    if not sale:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sale not found",
+        )
+
+    if sale.status != SaleStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only completed sales can be reversed",
+        )
+
+    reason = action_reason.strip()
+    if not reason:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reason is required",
+        )
+
+    for sale_item in sale.items:
+        _restore_sale_item_stock(
+            db,
+            sale_item,
+            performed_by=current_user.id,
+            reason=f"{target_status.value}: {reason}",
+        )
+
+    sale.status = target_status
+    db.commit()
+    db.refresh(sale)
+    AuditService.log(
+        db,
+        action=f"{target_status.value}_sale",
+        user_id=current_user.id,
+        entity_type="sale",
+        entity_id=sale.id,
+        description=f"{target_status.value.title()} sale {sale.invoice_number}",
+        extra_data={
+            "invoice_number": sale.invoice_number,
+            "reason": reason,
+            "restored_items": sum(item.quantity for item in sale.items),
+        },
+    )
+    db.commit()
+    return sale
 
 
 @router.post("", response_model=SaleWithItems, status_code=status.HTTP_201_CREATED)
@@ -114,7 +233,7 @@ def create_sale(
                 )
 
             allocated_batches = _allocate_product_batches(db, product, item.quantity)
-            unit_price = round_money(item.unit_price)
+            unit_price = _resolve_sale_unit_price(product, sale_data.pricing_mode)
             line_discount = round_money(item.discount_amount)
             quantity_remaining = item.quantity
             discount_remaining = line_discount
@@ -184,6 +303,7 @@ def create_sale(
         db_sale = Sale(
             invoice_number=f"PENDING-{uuid4().hex}",
             user_id=current_user.id,
+            pricing_mode=sale_data.pricing_mode,
             subtotal=round_money(subtotal),
             discount_amount=round_money(sale_data.discount_amount),
             tax_amount=round_money(sale_data.tax_amount),
@@ -227,6 +347,7 @@ def create_sale(
                 "invoice_number": db_sale.invoice_number,
                 "total_amount": db_sale.total_amount,
                 "item_lines": len(sale_items_data),
+                "pricing_mode": db_sale.pricing_mode.value,
             },
         )
         db.commit()
@@ -317,6 +438,92 @@ def get_today_sales_summary(
         "total_profit": float(to_decimal(total_profit)),
         "total_items_sold": int(total_items_sold),
     }
+
+
+@router.get("/summary/closeout", response_model=EndOfDayCloseout)
+def get_end_of_day_closeout(
+    business_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager),
+):
+    closeout_date = business_date or date.today()
+
+    status_rows = db.query(
+        Sale.status,
+        func.count(Sale.id).label("count"),
+        func.coalesce(func.sum(Sale.total_amount), 0).label("amount"),
+    ).filter(
+        func.date(Sale.created_at) == closeout_date
+    ).group_by(
+        Sale.status
+    ).all()
+
+    status_totals = {
+        row.status: {"count": int(row.count or 0), "amount": float(to_decimal(row.amount))}
+        for row in status_rows
+    }
+
+    payment_rows = db.query(
+        Sale.payment_method,
+        func.coalesce(func.sum(Sale.total_amount), 0).label("amount"),
+    ).filter(
+        func.date(Sale.created_at) == closeout_date,
+        Sale.status == SaleStatus.COMPLETED,
+    ).group_by(
+        Sale.payment_method
+    ).all()
+
+    payment_totals = {
+        row.payment_method: float(to_decimal(row.amount))
+        for row in payment_rows
+    }
+
+    return {
+        "business_date": closeout_date,
+        "completed_sales_count": status_totals.get(SaleStatus.COMPLETED, {}).get("count", 0),
+        "refunded_sales_count": status_totals.get(SaleStatus.REFUNDED, {}).get("count", 0),
+        "cancelled_sales_count": status_totals.get(SaleStatus.CANCELLED, {}).get("count", 0),
+        "completed_revenue": status_totals.get(SaleStatus.COMPLETED, {}).get("amount", 0.0),
+        "refunded_revenue": status_totals.get(SaleStatus.REFUNDED, {}).get("amount", 0.0),
+        "cancelled_revenue": status_totals.get(SaleStatus.CANCELLED, {}).get("amount", 0.0),
+        "cash_revenue": payment_totals.get(PaymentMethod.CASH, 0.0),
+        "momo_revenue": payment_totals.get(PaymentMethod.MOMO, 0.0),
+        "card_revenue": payment_totals.get(PaymentMethod.CARD, 0.0),
+        "bank_transfer_revenue": payment_totals.get(PaymentMethod.BANK_TRANSFER, 0.0),
+        "credit_revenue": payment_totals.get(PaymentMethod.CREDIT, 0.0),
+    }
+
+
+@router.post("/{sale_id}/void", response_model=SaleWithItems)
+def void_sale(
+    sale_id: int,
+    payload: SaleActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager),
+):
+    return _reverse_sale(
+        db,
+        sale_id=sale_id,
+        action_reason=payload.reason,
+        current_user=current_user,
+        target_status=SaleStatus.CANCELLED,
+    )
+
+
+@router.post("/{sale_id}/refund", response_model=SaleWithItems)
+def refund_sale(
+    sale_id: int,
+    payload: SaleActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager),
+):
+    return _reverse_sale(
+        db,
+        sale_id=sale_id,
+        action_reason=payload.reason,
+        current_user=current_user,
+        target_status=SaleStatus.REFUNDED,
+    )
 
 
 @router.get("/{sale_id}", response_model=SaleWithItems)

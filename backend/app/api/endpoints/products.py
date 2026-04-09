@@ -77,10 +77,12 @@ def _validate_product_prices(
     *,
     cost_price: Optional[float],
     selling_price: Optional[float],
+    wholesale_price: Optional[float],
     mrp: Optional[float],
 ) -> None:
     cost_price_decimal = to_decimal(cost_price, allow_none=True)
     selling_price_decimal = to_decimal(selling_price, allow_none=True)
+    wholesale_price_decimal = to_decimal(wholesale_price, allow_none=True)
     mrp_decimal = to_decimal(mrp, allow_none=True)
 
     if (
@@ -101,6 +103,26 @@ def _validate_product_prices(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Selling price cannot be greater than MRP",
+        )
+
+    if (
+        wholesale_price_decimal is not None
+        and cost_price_decimal is not None
+        and wholesale_price_decimal < cost_price_decimal
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Wholesale price cannot be lower than cost price",
+        )
+
+    if (
+        wholesale_price_decimal is not None
+        and selling_price_decimal is not None
+        and wholesale_price_decimal > selling_price_decimal
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Wholesale price cannot be greater than selling price",
         )
 
 
@@ -368,6 +390,7 @@ def create_product(
     _validate_product_prices(
         cost_price=payload.get("cost_price"),
         selling_price=payload.get("selling_price"),
+        wholesale_price=payload.get("wholesale_price"),
         mrp=payload.get("mrp"),
     )
 
@@ -464,6 +487,7 @@ def update_product(
     _validate_product_prices(
         cost_price=update_data.get("cost_price", db_product.cost_price),
         selling_price=update_data.get("selling_price", db_product.selling_price),
+        wholesale_price=update_data.get("wholesale_price", db_product.wholesale_price),
         mrp=update_data.get("mrp", db_product.mrp),
     )
 
@@ -745,6 +769,7 @@ def receive_stock(
         _validate_product_prices(
             cost_price=receipt_cost_price,
             selling_price=receipt_selling_price or product.selling_price,
+            wholesale_price=receipt_wholesale_price if receipt_wholesale_price is not None else product.wholesale_price,
             mrp=receipt_mrp if receipt_mrp is not None else product.mrp,
         )
 

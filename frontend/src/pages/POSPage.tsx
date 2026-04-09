@@ -17,6 +17,7 @@ import {
 
 import { api } from '../services/api'
 import { useCartStore } from '../stores/cartStore'
+import type { PricingMode } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
 
 interface Product {
@@ -28,6 +29,7 @@ interface Product {
   dosage_form: string
   strength?: string
   selling_price: number
+  wholesale_price?: number | null
   total_stock: number
   manufacturer?: string
   nearest_expiry?: string
@@ -128,6 +130,8 @@ export default function POSPage() {
   const { user } = useAuthStore()
   const {
     items,
+    pricingMode,
+    setPricingMode,
     addItem,
     updateQuantity,
     removeItem,
@@ -262,11 +266,29 @@ export default function POSPage() {
           name: product.name,
           sku: product.sku,
           selling_price: product.selling_price,
+          wholesale_price: product.wholesale_price,
           total_stock: product.total_stock,
         },
         1
       )
       toast.success(`${product.name} added to cart`)
+    } catch (error: any) {
+      toast.error(error.message)
+    }
+  }
+
+  const handlePricingModeChange = (nextMode: PricingMode) => {
+    if (nextMode === pricingMode) {
+      return
+    }
+
+    try {
+      setPricingMode(nextMode)
+      toast.success(
+        nextMode === 'wholesale'
+          ? 'Wholesale pricing enabled for this sale'
+          : 'Retail pricing enabled for this sale'
+      )
     } catch (error: any) {
       toast.error(error.message)
     }
@@ -308,6 +330,7 @@ export default function POSPage() {
 
     try {
       const sale = await api.createSale({
+        pricing_mode: pricingMode,
         items: items.map((item) => ({
           product_id: item.product_id,
           quantity: item.quantity,
@@ -410,6 +433,33 @@ export default function POSPage() {
                   {formatCurrency(subtotal)}
                 </p>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center justify-end">
+            <div className="flex h-[42px] w-full max-w-[280px] rounded-lg border border-gray-200 bg-gray-100 p-1 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                type="button"
+                onClick={() => handlePricingModeChange('retail')}
+                className={`flex-1 rounded-md text-sm font-medium transition-colors ${
+                  pricingMode === 'retail'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+              >
+                Retail
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePricingModeChange('wholesale')}
+                className={`flex-1 rounded-md text-sm font-medium transition-colors ${
+                  pricingMode === 'wholesale'
+                    ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+                    : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+                }`}
+              >
+                Wholesale
+              </button>
             </div>
           </div>
         </div>
@@ -532,8 +582,19 @@ export default function POSPage() {
 
                         <div className="min-w-[126px] text-right">
                           <p className="text-base font-semibold text-primary-600 dark:text-primary-400">
-                            {formatCurrency(product.selling_price)}
+                            {formatCurrency(
+                              pricingMode === 'wholesale' &&
+                                product.wholesale_price != null
+                                ? product.wholesale_price
+                                : product.selling_price
+                            )}
                           </p>
+                          {pricingMode === 'wholesale' &&
+                            product.wholesale_price == null && (
+                              <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+                                No wholesale price
+                              </p>
+                            )}
                           <p
                             className={`mt-1 text-xs ${
                               isOutOfStock
@@ -707,6 +768,10 @@ export default function POSPage() {
                     <div className="flex items-center justify-between text-2xl font-bold">
                       <span>Total</span>
                       <span>{formatCurrency(subtotal)}</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-sm text-gray-300">
+                      <span>Pricing</span>
+                      <span className="capitalize">{pricingMode}</span>
                     </div>
                     <div className="mt-3 flex items-center justify-between text-sm text-gray-300">
                       <span>Payment</span>

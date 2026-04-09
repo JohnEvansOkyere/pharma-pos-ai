@@ -4,7 +4,7 @@ Pydantic schemas for Sale and SaleItem models.
 from typing import Optional, List
 from datetime import datetime, date
 from pydantic import BaseModel, Field, ConfigDict
-from app.models.sale import PaymentMethod, SaleStatus
+from app.models.sale import PaymentMethod, SalePricingMode, SaleStatus
 
 
 # Sale Item Schemas
@@ -49,6 +49,7 @@ class SaleBase(BaseModel):
     """Base sale schema."""
     payment_method: PaymentMethod = PaymentMethod.CASH
     status: SaleStatus = SaleStatus.COMPLETED
+    pricing_mode: SalePricingMode = SalePricingMode.RETAIL
 
     # Customer information
     customer_name: Optional[str] = Field(None, max_length=100)
@@ -114,3 +115,24 @@ class SaleSummary(BaseModel):
     total_revenue: float
     total_profit: float
     total_items_sold: int
+
+
+class SaleActionRequest(BaseModel):
+    """Manager-controlled sale reversal request."""
+    reason: str = Field(..., min_length=3, max_length=300)
+
+
+class EndOfDayCloseout(BaseModel):
+    """Operational closeout summary for a business day."""
+    business_date: date
+    completed_sales_count: int
+    refunded_sales_count: int
+    cancelled_sales_count: int
+    completed_revenue: float
+    refunded_revenue: float
+    cancelled_revenue: float
+    cash_revenue: float
+    momo_revenue: float
+    card_revenue: float
+    bank_transfer_revenue: float
+    credit_revenue: float

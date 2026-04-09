@@ -208,6 +208,21 @@ class ApiClient {
     return response.data
   }
 
+  async getEndOfDayCloseout(params?: any) {
+    const response = await this.client.get('/sales/summary/closeout', { params })
+    return response.data
+  }
+
+  async voidSale(id: number, reason: string) {
+    const response = await this.client.post(`/sales/${id}/void`, { reason })
+    return response.data
+  }
+
+  async refundSale(id: number, reason: string) {
+    const response = await this.client.post(`/sales/${id}/refund`, { reason })
+    return response.data
+  }
+
   // Dashboard endpoints
   async getDashboardKPIs() {
     const response = await this.client.get('/dashboard/kpis')

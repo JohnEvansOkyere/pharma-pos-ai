@@ -11,16 +11,18 @@ This checklist is intentionally strict. A client machine should not go live unti
 Current status: **not yet ready for unsupervised commercial rollout**
 
 Reason:
-- backups exist but are not yet fully productized
-- critical workflows still rely on manual validation
+- backups and diagnostics exist, but restore discipline and operational workflows still need broader rollout proof
+- critical workflows still rely on manual validation in some client scenarios
 - test coverage is still too thin for a safety-critical inventory and sales system
-- auditability is still incomplete
+- some operational controls are still incomplete
 
 ## Phase 1: Operational Blockers
 
 - [ ] Nightly database backups are automated on every client machine
 - [ ] Backup retention is configured and verified
 - [ ] Restore procedure has been tested on a real backup file
+- [ ] End-of-day closeout is reviewed in pilot operations
+- [ ] Sale void/refund control is verified in pilot operations
 - [ ] Local PostgreSQL service is configured to start automatically
 - [ ] Backend service is configured to start automatically
 - [ ] A support technician can verify system health in under 5 minutes
@@ -39,6 +41,8 @@ Release evidence:
 - [ ] Batch management flow has regression coverage
 - [ ] User creation and login flow has regression coverage
 - [ ] Product creation and pricing flow has regression coverage
+- [ ] Sale void/refund flow has regression coverage
+- [ ] Dashboard financial endpoint stability has regression coverage
 - [ ] Critical stock and sales write paths emit audit records
 - [ ] User management actions emit audit records
 - [ ] Product master-data changes emit audit records
@@ -76,10 +80,11 @@ Release evidence:
 ## Recommended Immediate Order
 
 1. automate backups and verify restore
-2. add regression tests for auth, products, stock receipt, and sales
-3. add audit logging for critical writes
-4. remove release-facing demo and dev artifacts
-5. verify install/startup/recovery on a fresh machine
+2. verify sale reversal and closeout on pilot data
+3. add regression tests for auth, products, stock receipt, and sales
+4. add audit logging for critical writes
+5. remove release-facing demo and dev artifacts
+6. verify install/startup/recovery on a fresh machine
 
 ## What Counts As Dependable
 

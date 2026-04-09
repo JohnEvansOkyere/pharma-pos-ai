@@ -188,6 +188,7 @@ class ProductSearch(BaseModel):
     dosage_form: DosageForm
     strength: Optional[str]
     selling_price: float
+    wholesale_price: Optional[float]
     cost_price: float
     total_stock: int
     low_stock_threshold: int

@@ -129,12 +129,25 @@ Current backend validations include:
 - batch date validation
 - pricing sanity checks for product creation and stock receipt
 - inactive user blocking
+- manager-controlled sale void and refund with audit trail
+- end-of-day closeout summary endpoint
+- backup status and local diagnostics endpoints
+
+Current hardening measures now include:
+
+- audit logging on products, batches, sales, stock adjustments, users, categories, and suppliers
+- fixed-scale money handling via [backend/app/core/money.py](/home/grejoy/Projects/pharma-pos-ai/backend/app/core/money.py)
+- numeric money columns in product, batch, sale, and sale item models
+- dashboard query hardening for large-data paths
+- support tooling for backup status and diagnostics
 
 Still needed for stronger production readiness:
 
-- broader audit logging on critical writes
-- more regression coverage
-- recovery and health tooling
+- stock take workflow
+- shift reconciliation workflow
+- structured price history and approval trail
+- broader UI coverage for new operational controls
+- more regression coverage beyond the current critical path set
 
 ## Frontend Guardrails
 
@@ -156,6 +169,14 @@ cd /home/grejoy/Projects/pharma-pos-ai/frontend && npm run build
 
 If you touched auth, stock, products, or POS, verify the exact flow manually as well.
 
+Current backend regression coverage exists for:
+
+- auth and user role restrictions
+- inventory and batch workflows
+- sales financial integrity
+- dashboard financial endpoint stability
+- sale void/refund operational controls
+
 ## Release Discipline
 
 Before a release-facing build:
@@ -163,6 +184,9 @@ Before a release-facing build:
 - remove demo credentials from release-facing screens
 - do not ship `.env`, `.db`, or backup artifacts
 - verify backups and restore
+- apply pending Alembic migrations before validation
+- verify admin provisioning on the target install path
+- verify sale reversal and closeout controls on a test dataset
 - review [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
 
 ## Documentation Map
@@ -173,3 +197,4 @@ Use these documents alongside this guide:
 - [Windows Local Deployment Runbook](/home/grejoy/Projects/pharma-pos-ai/docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)
 - [Backup And Restore Guide](/home/grejoy/Projects/pharma-pos-ai/docs/BACKUP_RESTORE_GUIDE.md)
 - [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
+- [Missing Operational Controls Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/MISSING_OPERATIONAL_CONTROLS_CHECKLIST.md)
