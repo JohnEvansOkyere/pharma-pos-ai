@@ -134,6 +134,7 @@ require_trigger_backup = require_permission(UserPermission.TRIGGER_BACKUP)
 
 def require_organization_access(
     organization_id: int,
+    branch_id: Optional[int] = None,
     current_user: User = Depends(require_view_reports),
 ) -> User:
     """
@@ -150,6 +151,12 @@ def require_organization_access(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Organization access denied",
+        )
+
+    if current_user.branch_id is not None and branch_id is not None and current_user.branch_id != branch_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Branch access denied",
         )
 
     return current_user

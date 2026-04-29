@@ -702,6 +702,8 @@ Frontend route hiding is not authorization.
 
 Cloud report APIs must enforce tenant scope on the backend. A user assigned to
 an organization may only query that organization's cloud reporting data.
+If the user is assigned to a specific branch, cloud report APIs must limit that
+user to that branch even when a branch filter is omitted.
 Platform-level admin access is explicit and reserved for admin users without an
 organization assignment during the current transition period.
 
@@ -1660,15 +1662,16 @@ Implemented:
 - organization and optional branch filters
 - optional time-window filters for projected fact reports
 - backend-enforced organization access for cloud report queries
+- backend-enforced branch scoping for branch-assigned report users
 - regression tests for organization/branch isolation and health counts
-- regression tests for cross-organization denial and platform-admin access
+- regression tests for cross-organization denial, cross-branch denial, branch-limited reporting, and platform-admin access
 
 Current scope:
 
 - reporting endpoints query cloud projection tables only
 - no frontend cloud owner dashboard yet
 - no AI assistant tools yet
-- branch-level user scoping beyond organization membership still needs hardening before real hosted exposure
+- richer branch-role policy is still needed before real hosted exposure, including owner, multi-branch manager, auditor, and support technician semantics
 
 Next foundation:
 

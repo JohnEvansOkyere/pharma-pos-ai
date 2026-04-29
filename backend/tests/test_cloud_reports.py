@@ -40,7 +40,7 @@ def _tenant(db_session, *, name: str, branch_code: str):
     return organization, branch, device
 
 
-def _report_user(db_session, organization_id: int, *, username: str = "report-user"):
+def _report_user(db_session, organization_id: int, *, branch_id=None, username: str = "report-user"):
     user = User(
         username=username,
         email=f"{username}@example.com",
@@ -49,6 +49,7 @@ def _report_user(db_session, organization_id: int, *, username: str = "report-us
         role=UserRole.MANAGER,
         permissions=[UserPermission.VIEW_REPORTS.value],
         organization_id=organization_id,
+        branch_id=branch_id,
         is_active=True,
     )
     db_session.add(user)
@@ -211,6 +212,90 @@ def test_cloud_report_rejects_cross_organization_access(db_session):
 
     assert exc.value.status_code == 403
     assert "Organization access denied" in exc.value.detail
+
+
+def test_cloud_report_rejects_cross_branch_access(db_session):
+    org = Organization(name="Branch Tenant")
+    db_session.add(org)
+    db_session.flush()
+    branch_a = Branch(organization_id=org.id, name="Branch A", code="BA")
+    branch_b = Branch(organization_id=org.id, name="Branch B", code="BB")
+    db_session.add_all([branch_a, branch_b])
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch_a.id, username="branch-report-user")
+
+    with pytest.raises(HTTPException) as exc:
+        require_organization_access(organization_id=org.id, branch_id=branch_b.id, current_user=report_user)
+
+    assert exc.value.status_code == 403
+    assert "Branch access denied" in exc.value.detail
+
+
+def test_branch_scoped_report_user_only_sees_assigned_branch(db_session):
+    org = Organization(name="Scoped Tenant")
+    db_session.add(org)
+    db_session.flush()
+    branch_a = Branch(organization_id=org.id, name="Branch A", code="SA")
+    branch_b = Branch(organization_id=org.id, name="Branch B", code="SB")
+    db_session.add_all([branch_a, branch_b])
+    db_session.flush()
+    device_a = Device(
+        organization_id=org.id,
+        branch_id=branch_a.id,
+        device_uid="scoped-device-a",
+        name="Scoped Device A",
+        status=DeviceStatus.ACTIVE,
+    )
+    device_b = Device(
+        organization_id=org.id,
+        branch_id=branch_b.id,
+        device_uid="scoped-device-b",
+        name="Scoped Device B",
+        status=DeviceStatus.ACTIVE,
+    )
+    db_session.add_all([device_a, device_b])
+    db_session.commit()
+    event_a = _ingested(db_session, org, branch_a, device_a, event_id="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    event_b = _ingested(db_session, org, branch_b, device_b, event_id="ffffffff-ffff-ffff-ffff-fffffffffff1", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    db_session.add_all(
+        [
+            CloudSaleFact(
+                source_event_id=event_a.id,
+                organization_id=org.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                local_sale_id=1,
+                invoice_number="SA-1",
+                total_amount=Decimal("30.00"),
+                payment_method="cash",
+                item_count=3,
+                payload={},
+            ),
+            CloudSaleFact(
+                source_event_id=event_b.id,
+                organization_id=org.id,
+                branch_id=branch_b.id,
+                source_device_id=device_b.id,
+                local_sale_id=1,
+                invoice_number="SB-1",
+                total_amount=Decimal("80.00"),
+                payment_method="cash",
+                item_count=8,
+                payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch_a.id, username="scoped-report-user")
+
+    summary = get_cloud_sales_summary(organization_id=org.id, db=db_session, current_user=report_user)
+    branch_rows = get_cloud_branch_sales(organization_id=org.id, db=db_session, current_user=report_user)
+
+    assert summary.branch_id == branch_a.id
+    assert summary.sales_count == 1
+    assert summary.total_revenue == 30.0
+    assert len(branch_rows) == 1
+    assert branch_rows[0].branch_id == branch_a.id
 
 
 def test_cloud_report_allows_platform_admin_access(db_session):
