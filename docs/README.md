@@ -76,6 +76,17 @@ Use this for:
 - prioritizing operational safeguards
 - planning hardening work after audit findings
 
+### For Hybrid Cloud Production Architecture
+
+- [Hybrid Cloud Production Architecture Plan](/home/grejoy/Projects/pharma-pos-ai/docs/HYBRID_CLOUD_PRODUCTION_ARCHITECTURE_PLAN.md)
+
+Use this for:
+- multi-client and branch architecture decisions
+- local-first/cloud sync planning
+- ACID and database correctness rules
+- audit, backup, security, and AI boundaries
+- rollout sequencing for the scalable cloud product
+
 ## Existing Planning And Audit Docs
 
 These documents remain useful, but they are not the main entry points for day-to-day work:

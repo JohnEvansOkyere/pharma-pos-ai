@@ -8,8 +8,9 @@ from fastapi import HTTPException
 from app.api.endpoints.auth import login
 from app.api.endpoints.users import create_user, update_user
 from app.models.activity_log import ActivityLog
-from app.models.user import UserRole
+from app.models.user import UserPermission, UserRole
 from app.schemas.user import UserCreate, UserUpdate
+from app.api.dependencies.auth import require_adjust_stock, require_manage_products
 
 
 def test_login_trims_username_and_returns_bearer_token(db_session, admin_user):
@@ -59,3 +60,18 @@ def test_admin_can_update_username_and_audit_is_recorded(db_session, admin_user,
     assert updated.username == "cashier-renamed"
     assert audit_entry is not None
     assert audit_entry.extra_data["username_updated"] is True
+
+
+def test_role_default_permissions_allow_existing_managers(manager_user):
+    assert require_adjust_stock(current_user=manager_user) == manager_user
+
+
+def test_explicit_permissions_override_role_defaults(manager_user):
+    manager_user.permissions = [UserPermission.ADJUST_STOCK.value]
+
+    assert require_adjust_stock(current_user=manager_user) == manager_user
+    with pytest.raises(HTTPException) as exc:
+        require_manage_products(current_user=manager_user)
+
+    assert exc.value.status_code == 403
+    assert UserPermission.MANAGE_PRODUCTS.value in exc.value.detail

@@ -33,12 +33,21 @@ class SalePricingMode(str, Enum):
     WHOLESALE = "wholesale"
 
 
+class SaleReversalType(str, Enum):
+    """Types of manager-controlled sale reversals."""
+    VOID = "void"
+    REFUND = "refund"
+
+
 class Sale(Base):
     """Sales transaction header - Enhanced with professional features."""
 
     __tablename__ = "sales"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    source_device_id = Column(Integer, ForeignKey("devices.id"), nullable=True, index=True)
     invoice_number = Column(String(50), unique=True, nullable=False, index=True)
 
     # Status
@@ -89,6 +98,7 @@ class Sale(Base):
     user = relationship("User", back_populates="sales")
 
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
+    reversals = relationship("SaleReversal", back_populates="sale", cascade="all, delete-orphan")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -102,6 +112,8 @@ class SaleItem(Base):
     __tablename__ = "sale_items"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
 
@@ -129,3 +141,26 @@ class SaleItem(Base):
 
     def __repr__(self):
         return f"<SaleItem(id={self.id}, product='{self.product_name}', qty={self.quantity}, form='{self.dosage_form}')>"
+
+
+class SaleReversal(Base):
+    """First-class sale reversal/refund document."""
+
+    __tablename__ = "sale_reversals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False, index=True)
+    reversal_type = Column(SQLEnum(SaleReversalType), nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    total_amount = Column(Numeric(12, 2), nullable=False)
+    restored_quantity = Column(Integer, nullable=False, default=0)
+    performed_by = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    sale = relationship("Sale", back_populates="reversals")
+    user = relationship("User")
+
+    def __repr__(self):
+        return f"<SaleReversal(id={self.id}, sale_id={self.sale_id}, type='{self.reversal_type}')>"

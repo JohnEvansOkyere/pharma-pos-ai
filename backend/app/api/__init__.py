@@ -11,6 +11,7 @@ from app.api.endpoints import (
     suppliers,
     sales,
     stock_adjustments,
+    stock_takes,
     notifications,
     dashboard,
     insights,
@@ -28,6 +29,7 @@ api_router.include_router(categories.router)
 api_router.include_router(suppliers.router)
 api_router.include_router(sales.router)
 api_router.include_router(stock_adjustments.router)
+api_router.include_router(stock_takes.router)
 api_router.include_router(notifications.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(insights.router)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
 from app.db.base import get_db
-from app.models.user import User, UserRole
+from app.models.user import User, UserPermission, UserRole
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -99,6 +99,34 @@ def require_role(required_role: UserRole):
     return role_checker
 
 
+def require_permission(required_permission: UserPermission):
+    """
+    Dependency factory to require a granular permission.
+
+    Users with explicit permissions use that list. Existing users without an
+    explicit list fall back to role defaults.
+    """
+    def permission_checker(current_user: User = Depends(get_current_active_user)) -> User:
+        if required_permission.value not in current_user.effective_permissions:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission required: {required_permission.value}",
+            )
+        return current_user
+
+    return permission_checker
+
+
 # Convenience dependencies
 require_admin = require_role(UserRole.ADMIN)
 require_manager = require_role(UserRole.MANAGER)
+require_manage_products = require_permission(UserPermission.MANAGE_PRODUCTS)
+require_manage_suppliers = require_permission(UserPermission.MANAGE_SUPPLIERS)
+require_manage_categories = require_permission(UserPermission.MANAGE_CATEGORIES)
+require_manage_users = require_permission(UserPermission.MANAGE_USERS)
+require_view_reports = require_permission(UserPermission.VIEW_REPORTS)
+require_void_sale = require_permission(UserPermission.VOID_SALE)
+require_refund_sale = require_permission(UserPermission.REFUND_SALE)
+require_adjust_stock = require_permission(UserPermission.ADJUST_STOCK)
+require_perform_stock_take = require_permission(UserPermission.PERFORM_STOCK_TAKE)
+require_trigger_backup = require_permission(UserPermission.TRIGGER_BACKUP)

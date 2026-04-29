@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.models.user import User, UserRole
+from app.models.sync_event import SyncEventType
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import get_current_active_user, require_manage_users
 from app.core.security import get_password_hash
 from app.services.audit_service import AuditService
+from app.services.sync_outbox_service import SyncOutboxService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -60,7 +62,7 @@ def require_admin_or_manager(current_user: User = Depends(get_current_active_use
 @router.get("", response_model=List[UserSchema])
 def list_users(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(require_manage_users)
 ):
     """
     List all users (Admin or Manager).
@@ -80,7 +82,7 @@ def list_users(
 def create_user(
     user_data: UserCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(require_manage_users)
 ):
     """
     Create a new user (Admin or Manager).
@@ -133,12 +135,28 @@ def create_user(
         full_name=normalized_full_name,
         hashed_password=hashed_password,
         role=user_data.role,
+        permissions=[permission.value for permission in user_data.permissions] if user_data.permissions is not None else None,
         is_active=user_data.is_active if user_data.is_active is not None else True,
     )
 
     db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    db.flush()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.USER_CREATED,
+        aggregate_type="user",
+        aggregate_id=db_user.id,
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
+        payload={
+            "user_id": db_user.id,
+            "username": db_user.username,
+            "email": db_user.email,
+            "role": db_user.role.value,
+            "permissions": db_user.permissions,
+            "is_active": db_user.is_active,
+        },
+    )
     AuditService.log(
         db,
         action="create_user",
@@ -149,6 +167,7 @@ def create_user(
         extra_data={"role": db_user.role.value, "is_active": db_user.is_active},
     )
     db.commit()
+    db.refresh(db_user)
 
     return db_user
 
@@ -158,7 +177,7 @@ def update_user(
     user_id: int,
     user_data: UserUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(require_manage_users)
 ):
     """
     Update a user (Admin or Manager).
@@ -234,14 +253,31 @@ def update_user(
     if user_data.role is not None:
         db_user.role = user_data.role
 
+    if user_data.permissions is not None:
+        db_user.permissions = [permission.value for permission in user_data.permissions]
+
     if user_data.is_active is not None:
         db_user.is_active = user_data.is_active
 
     if user_data.password is not None:
         db_user.hashed_password = get_password_hash(user_data.password)
 
-    db.commit()
-    db.refresh(db_user)
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.USER_UPDATED,
+        aggregate_type="user",
+        aggregate_id=db_user.id,
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
+        payload={
+            "user_id": db_user.id,
+            "updated_fields": sorted(user_data.model_dump(exclude_unset=True).keys()),
+            "role": db_user.role.value,
+            "permissions": db_user.permissions,
+            "is_active": db_user.is_active,
+            "password_updated": user_data.password is not None,
+        },
+    )
     AuditService.log(
         db,
         action="update_user",
@@ -258,6 +294,7 @@ def update_user(
         },
     )
     db.commit()
+    db.refresh(db_user)
 
     return db_user
 
@@ -266,7 +303,7 @@ def update_user(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin_or_manager)
+    current_user: User = Depends(require_manage_users)
 ):
     """
     Delete a user (Admin or Manager).
@@ -306,8 +343,22 @@ def delete_user(
     deleted_user_id = db_user.id
     deleted_username = db_user.username
     deleted_role = db_user.role.value
+    deleted_organization_id = db_user.organization_id
+    deleted_branch_id = db_user.branch_id
     db.delete(db_user)
-    db.commit()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.USER_DELETED,
+        aggregate_type="user",
+        aggregate_id=deleted_user_id,
+        organization_id=deleted_organization_id,
+        branch_id=deleted_branch_id,
+        payload={
+            "user_id": deleted_user_id,
+            "username": deleted_username,
+            "role": deleted_role,
+        },
+    )
     AuditService.log(
         db,
         action="delete_user",

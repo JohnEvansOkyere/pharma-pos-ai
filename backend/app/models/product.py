@@ -40,6 +40,8 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     name = Column(String(200), nullable=False, index=True)
     generic_name = Column(String(200))
     sku = Column(String(50), unique=True, nullable=False, index=True)
@@ -100,6 +102,8 @@ class ProductBatch(Base):
     __tablename__ = "product_batches"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
 
     batch_number = Column(String(100), nullable=False, index=True)

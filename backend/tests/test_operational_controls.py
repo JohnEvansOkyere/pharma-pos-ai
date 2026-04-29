@@ -4,7 +4,8 @@ from decimal import Decimal
 
 from app.api.endpoints.sales import create_sale, get_end_of_day_closeout, refund_sale, void_sale
 from app.models.activity_log import ActivityLog
-from app.models.sale import SaleStatus
+from app.models.inventory_movement import InventoryMovement, InventoryMovementType
+from app.models.sale import SaleReversal, SaleReversalType, SaleStatus
 from app.models.stock_adjustment import StockAdjustment, AdjustmentType
 from app.schemas.sale import SaleActionRequest, SaleCreate, SaleItemCreate
 
@@ -64,12 +65,32 @@ def test_void_sale_restores_stock_and_marks_sale_cancelled(
         .order_by(StockAdjustment.id.desc())
         .first()
     )
+    reversal_movement = (
+        db_session.query(InventoryMovement)
+        .filter(
+            InventoryMovement.movement_type == InventoryMovementType.SALE_REVERSED,
+            InventoryMovement.source_document_type == "stock_adjustment",
+        )
+        .order_by(InventoryMovement.id.desc())
+        .first()
+    )
+    reversal_record = db_session.query(SaleReversal).filter(SaleReversal.sale_id == sale.id).one()
 
     assert voided_sale.status == SaleStatus.CANCELLED
     assert batch.quantity == 5
     assert product.total_stock == 5
     assert return_adjustment is not None
     assert return_adjustment.quantity == 2
+    assert reversal_movement is not None
+    assert reversal_movement.batch_id == batch.id
+    assert reversal_movement.quantity_delta == 2
+    assert reversal_movement.stock_after == 5
+    assert reversal_movement.source_document_id == return_adjustment.id
+    assert reversal_record.reversal_type == SaleReversalType.VOID
+    assert reversal_record.reason == "Operator entered wrong quantity"
+    assert reversal_record.restored_quantity == 2
+    assert reversal_record.total_amount == Decimal("8.00")
+    assert reversal_record.performed_by == admin_user.id
     assert audit_entry is not None
 
 
@@ -110,6 +131,7 @@ def test_end_of_day_closeout_includes_completed_and_refunded_sales(
         db=db_session,
         current_user=admin_user,
     )
+    reversal_record = db_session.query(SaleReversal).filter(SaleReversal.sale_id == sale.id).one()
 
     second_sale = create_sale(
         SaleCreate(
@@ -130,3 +152,7 @@ def test_end_of_day_closeout_includes_completed_and_refunded_sales(
     assert closeout["completed_revenue"] == 3.0
     assert closeout["refunded_revenue"] == 6.0
     assert closeout["cash_revenue"] == 3.0
+    assert reversal_record.reversal_type == SaleReversalType.REFUND
+    assert reversal_record.reason == "Customer returned sealed pack"
+    assert reversal_record.restored_quantity == 2
+    assert reversal_record.total_amount == Decimal("6.00")

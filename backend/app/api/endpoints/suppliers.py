@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.models.supplier import Supplier
+from app.models.sync_event import SyncEventType
 from app.models.user import User
 from app.services.audit_service import AuditService
+from app.services.sync_outbox_service import SyncOutboxService
 from app.schemas.supplier import Supplier as SupplierSchema, SupplierCreate, SupplierUpdate
-from app.api.dependencies import get_current_active_user, require_manager
+from app.api.dependencies import get_current_active_user, require_manage_suppliers
 
 router = APIRouter(prefix="/suppliers", tags=["Suppliers"])
 
@@ -47,7 +49,7 @@ def get_supplier(
 def create_supplier(
     supplier: SupplierCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_suppliers)
 ):
     """Create a new supplier."""
     # Check for duplicate name
@@ -59,8 +61,14 @@ def create_supplier(
 
     db_supplier = Supplier(**supplier.model_dump())
     db.add(db_supplier)
-    db.commit()
-    db.refresh(db_supplier)
+    db.flush()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.SUPPLIER_CREATED,
+        aggregate_type="supplier",
+        aggregate_id=db_supplier.id,
+        payload={"supplier_id": db_supplier.id, "name": db_supplier.name},
+    )
     AuditService.log(
         db,
         action="create_supplier",
@@ -70,6 +78,7 @@ def create_supplier(
         description=f"Created supplier {db_supplier.name}",
     )
     db.commit()
+    db.refresh(db_supplier)
 
     return db_supplier
 
@@ -79,7 +88,7 @@ def update_supplier(
     supplier_id: int,
     supplier_update: SupplierUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_suppliers)
 ):
     """Update a supplier."""
     db_supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
@@ -93,8 +102,17 @@ def update_supplier(
     for field, value in update_data.items():
         setattr(db_supplier, field, value)
 
-    db.commit()
-    db.refresh(db_supplier)
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.SUPPLIER_UPDATED,
+        aggregate_type="supplier",
+        aggregate_id=db_supplier.id,
+        payload={
+            "supplier_id": db_supplier.id,
+            "updated_fields": sorted(update_data.keys()),
+            "updates": update_data,
+        },
+    )
     AuditService.log(
         db,
         action="update_supplier",
@@ -105,6 +123,7 @@ def update_supplier(
         extra_data={"updated_fields": sorted(update_data.keys())},
     )
     db.commit()
+    db.refresh(db_supplier)
 
     return db_supplier
 
@@ -113,7 +132,7 @@ def update_supplier(
 def delete_supplier(
     supplier_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_suppliers)
 ):
     """Delete a supplier."""
     db_supplier = db.query(Supplier).filter(Supplier.id == supplier_id).first()
@@ -126,7 +145,13 @@ def delete_supplier(
     deleted_supplier_id = db_supplier.id
     deleted_supplier_name = db_supplier.name
     db.delete(db_supplier)
-    db.commit()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.SUPPLIER_DELETED,
+        aggregate_type="supplier",
+        aggregate_id=deleted_supplier_id,
+        payload={"supplier_id": deleted_supplier_id, "name": deleted_supplier_name},
+    )
     AuditService.log(
         db,
         action="delete_supplier",

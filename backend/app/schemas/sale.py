@@ -4,7 +4,7 @@ Pydantic schemas for Sale and SaleItem models.
 from typing import Optional, List
 from datetime import datetime, date
 from pydantic import BaseModel, Field, ConfigDict
-from app.models.sale import PaymentMethod, SalePricingMode, SaleStatus
+from app.models.sale import PaymentMethod, SalePricingMode, SaleReversalType, SaleStatus
 
 
 # Sale Item Schemas
@@ -105,6 +105,20 @@ class Sale(SaleBase):
 class SaleWithItems(Sale):
     """Schema for sale with items."""
     items: List[SaleItemWithProduct] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SaleReversal(BaseModel):
+    """Sale reversal/refund response schema."""
+    id: int
+    sale_id: int
+    reversal_type: SaleReversalType
+    reason: str
+    total_amount: float
+    restored_quantity: int
+    performed_by: int
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

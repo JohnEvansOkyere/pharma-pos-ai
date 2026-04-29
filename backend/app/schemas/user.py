@@ -1,11 +1,11 @@
 """
 Pydantic schemas for User model.
 """
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
-from app.models.user import UserRole
+from app.models.user import UserPermission, UserRole
 
 
 # Base schema with common fields
@@ -15,6 +15,7 @@ class UserBase(BaseModel):
     email: EmailStr
     full_name: str = Field(..., min_length=1, max_length=100)
     role: UserRole = UserRole.CASHIER
+    permissions: Optional[List[UserPermission]] = None
     is_active: bool = True
 
 
@@ -29,6 +30,7 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     full_name: Optional[str] = Field(None, min_length=1, max_length=100)
     role: Optional[UserRole] = None
+    permissions: Optional[List[UserPermission]] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, min_length=6)
 

@@ -10,7 +10,7 @@ import subprocess
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 
-from app.api.dependencies import require_manager
+from app.api.dependencies import require_trigger_backup
 from app.core.config import settings
 from app.db.base import engine
 from app.models.user import User
@@ -158,14 +158,14 @@ def _build_system_diagnostics() -> SystemDiagnostics:
 
 @router.get("/backup-status", response_model=BackupStatus)
 def get_backup_status(
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_trigger_backup),
 ):
     return _build_backup_status()
 
 
 @router.post("/backup-now", response_model=BackupTriggerResult)
 def trigger_backup(
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_trigger_backup),
 ):
     _run_backup()
     return BackupTriggerResult(
@@ -177,6 +177,6 @@ def trigger_backup(
 
 @router.get("/diagnostics", response_model=SystemDiagnostics)
 def get_system_diagnostics(
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_trigger_backup),
 ):
     return _build_system_diagnostics()

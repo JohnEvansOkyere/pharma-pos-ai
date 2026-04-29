@@ -14,6 +14,9 @@ class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    source_device_id = Column(Integer, ForeignKey("devices.id"), nullable=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     action = Column(String(100), nullable=False, index=True)  # e.g., "create_product", "update_sale"
     entity_type = Column(String(50))  # e.g., "product", "sale", "user"

@@ -5,9 +5,11 @@ from datetime import date, timedelta
 from app.api.endpoints.products import receive_stock, update_product_batch
 from app.api.endpoints.sales import create_sale
 from app.models.activity_log import ActivityLog
+from app.models.inventory_movement import InventoryMovement, InventoryMovementType
 from app.models.product import Product, ProductBatch
 from app.models.sale import PaymentMethod
 from app.models.stock_adjustment import StockAdjustment
+from app.models.sync_event import SyncEvent, SyncEventType
 from app.schemas.product import ProductBatchUpdate, ReceiveStock
 from app.schemas.sale import SaleCreate, SaleItemCreate
 
@@ -56,12 +58,26 @@ def test_receive_stock_creates_batch_adjustment_and_audit_log(db_session, manage
     refreshed_product = db_session.query(Product).filter(Product.id == product.id).one()
     saved_batch = db_session.query(ProductBatch).filter(ProductBatch.product_id == product.id).one()
     stock_adjustment = db_session.query(StockAdjustment).filter(StockAdjustment.product_id == product.id).one()
+    movement = db_session.query(InventoryMovement).filter(InventoryMovement.product_id == product.id).one()
+    sync_event = db_session.query(SyncEvent).filter(
+        SyncEvent.event_type == SyncEventType.STOCK_RECEIVED,
+        SyncEvent.aggregate_id == stock_adjustment.id,
+    ).one()
     audit_entry = db_session.query(ActivityLog).filter(ActivityLog.entity_id == saved_batch.id).one()
 
     assert result["new_stock"] == 25
     assert refreshed_product.total_stock == 25
     assert saved_batch.batch_number == "IBU-NEW-001"
     assert stock_adjustment.quantity == 25
+    assert movement.batch_id == saved_batch.id
+    assert movement.movement_type == InventoryMovementType.STOCK_RECEIVED
+    assert movement.quantity_delta == 25
+    assert movement.stock_after == 25
+    assert movement.source_document_type == "stock_adjustment"
+    assert movement.source_document_id == stock_adjustment.id
+    assert sync_event.payload["product_id"] == product.id
+    assert sync_event.payload["batch_id"] == saved_batch.id
+    assert sync_event.payload["quantity"] == 25
     assert audit_entry.action == "receive_stock"
 
 
@@ -103,6 +119,10 @@ def test_create_sale_depletes_batches_fefo_and_logs_audit(db_session, cashier_us
     refreshed_late_batch = db_session.query(ProductBatch).filter(ProductBatch.id == late_batch.id).one()
     refreshed_product = db_session.query(Product).filter(Product.id == product.id).one()
     audit_entry = db_session.query(ActivityLog).filter(ActivityLog.entity_type == "sale", ActivityLog.entity_id == sale.id).one()
+    movements = db_session.query(InventoryMovement).filter(
+        InventoryMovement.source_document_type == "sale",
+        InventoryMovement.source_document_id == sale.id,
+    ).order_by(InventoryMovement.id.asc()).all()
 
     assert len(sale.items) == 2
     assert sale.items[0].batch_number == "CET-EARLY"
@@ -112,4 +132,12 @@ def test_create_sale_depletes_batches_fefo_and_logs_audit(db_session, cashier_us
     assert refreshed_early_batch.quantity == 0
     assert refreshed_late_batch.quantity == 3
     assert refreshed_product.total_stock == 3
+    assert len(movements) == 2
+    assert movements[0].batch_id == early_batch.id
+    assert movements[0].movement_type == InventoryMovementType.SALE_DISPENSED
+    assert movements[0].quantity_delta == -2
+    assert movements[0].stock_after == 3
+    assert movements[1].batch_id == late_batch.id
+    assert movements[1].quantity_delta == -2
+    assert movements[1].stock_after == 3
     assert audit_entry.action == "create_sale"

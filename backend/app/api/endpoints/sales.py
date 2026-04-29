@@ -4,19 +4,30 @@ Sales/POS API endpoints.
 from decimal import Decimal
 from uuid import uuid4
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.core.money import round_money, to_decimal
 from app.db.base import get_db
-from app.models.sale import Sale, SaleItem, SalePricingMode, SaleStatus, PaymentMethod
+from app.models.sale import (
+    PaymentMethod,
+    Sale,
+    SaleItem,
+    SalePricingMode,
+    SaleReversal,
+    SaleReversalType,
+    SaleStatus,
+)
 from app.models.product import Product, ProductBatch
 from app.models.stock_adjustment import StockAdjustment, AdjustmentType
+from app.models.inventory_movement import InventoryMovementType
+from app.models.sync_event import SyncEventType
 from app.models.user import User
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
+from app.services.sync_outbox_service import SyncOutboxService
 from app.schemas.sale import (
     Sale as SaleSchema,
     SaleActionRequest,
@@ -25,7 +36,7 @@ from app.schemas.sale import (
     SaleWithItems,
     SaleSummary,
 )
-from app.api.dependencies import get_current_active_user, require_manager
+from app.api.dependencies import get_current_active_user, require_refund_sale, require_view_reports, require_void_sale
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
 
@@ -115,16 +126,28 @@ def _restore_sale_item_stock(
         db.flush()
 
     batch.quantity += sale_item.quantity
-    InventoryService.recalculate_product_stock(db, product)
-    db.add(
-        StockAdjustment(
-            product_id=product.id,
-            batch_id=batch.id,
-            adjustment_type=AdjustmentType.RETURN,
-            quantity=sale_item.quantity,
-            reason=reason,
-            performed_by=performed_by,
-        )
+    stock_after = InventoryService.recalculate_product_stock(db, product)
+    stock_adjustment = StockAdjustment(
+        product_id=product.id,
+        batch_id=batch.id,
+        adjustment_type=AdjustmentType.RETURN,
+        quantity=sale_item.quantity,
+        reason=reason,
+        performed_by=performed_by,
+    )
+    db.add(stock_adjustment)
+    db.flush()
+    InventoryService.record_movement(
+        db,
+        product_id=product.id,
+        batch_id=batch.id,
+        movement_type=InventoryMovementType.SALE_REVERSED,
+        quantity_delta=sale_item.quantity,
+        stock_after=stock_after,
+        source_document_type="stock_adjustment",
+        source_document_id=stock_adjustment.id,
+        reason=reason,
+        created_by=performed_by,
     )
 
 
@@ -136,52 +159,95 @@ def _reverse_sale(
     current_user: User,
     target_status: SaleStatus,
 ) -> Sale:
-    sale = db.query(Sale).filter(Sale.id == sale_id).with_for_update().first()
-    if not sale:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Sale not found",
-        )
+    try:
+        sale = db.query(Sale).filter(Sale.id == sale_id).with_for_update().first()
+        if not sale:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Sale not found",
+            )
 
-    if sale.status != SaleStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only completed sales can be reversed",
-        )
+        if sale.status != SaleStatus.COMPLETED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only completed sales can be reversed",
+            )
 
-    reason = action_reason.strip()
-    if not reason:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reason is required",
-        )
+        reason = action_reason.strip()
+        if not reason:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reason is required",
+            )
 
-    for sale_item in sale.items:
-        _restore_sale_item_stock(
-            db,
-            sale_item,
+        restored_quantity = sum(item.quantity for item in sale.items)
+        reversal_type = (
+            SaleReversalType.REFUND
+            if target_status == SaleStatus.REFUNDED
+            else SaleReversalType.VOID
+        )
+        reversal = SaleReversal(
+            sale_id=sale.id,
+            reversal_type=reversal_type,
+            reason=reason,
+            total_amount=round_money(sale.total_amount),
+            restored_quantity=restored_quantity,
             performed_by=current_user.id,
-            reason=f"{target_status.value}: {reason}",
         )
+        db.add(reversal)
+        db.flush()
 
-    sale.status = target_status
-    db.commit()
-    db.refresh(sale)
-    AuditService.log(
-        db,
-        action=f"{target_status.value}_sale",
-        user_id=current_user.id,
-        entity_type="sale",
-        entity_id=sale.id,
-        description=f"{target_status.value.title()} sale {sale.invoice_number}",
-        extra_data={
-            "invoice_number": sale.invoice_number,
-            "reason": reason,
-            "restored_items": sum(item.quantity for item in sale.items),
-        },
-    )
-    db.commit()
-    return sale
+        for sale_item in sale.items:
+            _restore_sale_item_stock(
+                db,
+                sale_item,
+                performed_by=current_user.id,
+                reason=f"{target_status.value}: {reason}",
+            )
+
+        sale.status = target_status
+        SyncOutboxService.record_event(
+            db,
+            event_type=SyncEventType.SALE_REVERSED,
+            aggregate_type="sale",
+            aggregate_id=sale.id,
+            organization_id=sale.organization_id,
+            branch_id=sale.branch_id,
+            source_device_id=sale.source_device_id,
+            payload={
+                "sale_id": sale.id,
+                "invoice_number": sale.invoice_number,
+                "status": target_status.value,
+                "reversal_id": reversal.id,
+                "reversal_type": reversal.reversal_type.value,
+                "reason": reason,
+                "total_amount": reversal.total_amount,
+                "restored_quantity": restored_quantity,
+                "performed_by": current_user.id,
+            },
+        )
+        AuditService.log(
+            db,
+            action=f"{target_status.value}_sale",
+            user_id=current_user.id,
+            entity_type="sale",
+            entity_id=sale.id,
+            description=f"{target_status.value.title()} sale {sale.invoice_number}",
+            extra_data={
+                "invoice_number": sale.invoice_number,
+                "reason": reason,
+                "reversal_id": reversal.id,
+                "reversal_type": reversal.reversal_type.value,
+                "restored_items": restored_quantity,
+                "total_amount": reversal.total_amount,
+            },
+        )
+        db.commit()
+        db.refresh(sale)
+        return sale
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("", response_model=SaleWithItems, status_code=status.HTTP_201_CREATED)
@@ -322,6 +388,7 @@ def create_sale(
 
         # Create sale items and update stock
         touched_products = {}
+        movement_records = []
         for item_data in sale_items_data:
             allocated_batch = item_data.pop("allocated_batch")
             product = item_data.pop("product")
@@ -330,12 +397,64 @@ def create_sale(
 
             allocated_batch.quantity -= item_data["quantity"]
             touched_products[product.id] = product
+            movement_records.append(
+                {
+                    "product": product,
+                    "batch_id": allocated_batch.id,
+                    "quantity": item_data["quantity"],
+                    "reason": f"Sale {db_sale.invoice_number}",
+                }
+            )
 
         for product in touched_products.values():
             InventoryService.recalculate_product_stock(db, product)
 
-        db.commit()
-        db.refresh(db_sale)
+        for record in movement_records:
+            product = record["product"]
+            InventoryService.record_movement(
+                db,
+                product_id=product.id,
+                batch_id=record["batch_id"],
+                movement_type=InventoryMovementType.SALE_DISPENSED,
+                quantity_delta=-record["quantity"],
+                stock_after=product.total_stock,
+                source_document_type="sale",
+                source_document_id=db_sale.id,
+                reason=record["reason"],
+                created_by=current_user.id,
+            )
+
+        SyncOutboxService.record_event(
+            db,
+            event_type=SyncEventType.SALE_CREATED,
+            aggregate_type="sale",
+            aggregate_id=db_sale.id,
+            organization_id=db_sale.organization_id,
+            branch_id=db_sale.branch_id,
+            source_device_id=db_sale.source_device_id,
+            payload={
+                "sale_id": db_sale.id,
+                "invoice_number": db_sale.invoice_number,
+                "pricing_mode": db_sale.pricing_mode.value,
+                "payment_method": db_sale.payment_method.value,
+                "subtotal": db_sale.subtotal,
+                "discount_amount": db_sale.discount_amount,
+                "tax_amount": db_sale.tax_amount,
+                "total_amount": db_sale.total_amount,
+                "user_id": current_user.id,
+                "items": [
+                    {
+                        "product_id": item["product_id"],
+                        "batch_number": item["batch_number"],
+                        "expiry_date": item["expiry_date"],
+                        "quantity": item["quantity"],
+                        "unit_price": item["unit_price"],
+                        "total_price": item["total_price"],
+                    }
+                    for item in sale_items_data
+                ],
+            },
+        )
         AuditService.log(
             db,
             action="create_sale",
@@ -351,6 +470,7 @@ def create_sale(
             },
         )
         db.commit()
+        db.refresh(db_sale)
         return db_sale
     except Exception:
         db.rollback()
@@ -444,7 +564,7 @@ def get_today_sales_summary(
 def get_end_of_day_closeout(
     business_date: Optional[date] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_view_reports),
 ):
     closeout_date = business_date or date.today()
 
@@ -499,7 +619,7 @@ def void_sale(
     sale_id: int,
     payload: SaleActionRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_void_sale),
 ):
     return _reverse_sale(
         db,
@@ -515,7 +635,7 @@ def refund_sale(
     sale_id: int,
     payload: SaleActionRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_refund_sale),
 ):
     return _reverse_sale(
         db,

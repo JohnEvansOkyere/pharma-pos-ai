@@ -11,9 +11,12 @@ from app.core.money import to_decimal, round_money
 from app.db.base import get_db
 from app.models.product import Product, ProductBatch
 from app.models.stock_adjustment import AdjustmentType, StockAdjustment
+from app.models.inventory_movement import InventoryMovementType
+from app.models.sync_event import SyncEventType
 from app.models.user import User
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
+from app.services.sync_outbox_service import SyncOutboxService
 from app.schemas.product import (
     Product as ProductSchema,
     ProductCreate,
@@ -27,7 +30,7 @@ from app.schemas.product import (
     ReceiveStock,
     StockReceiptResult,
 )
-from app.api.dependencies import get_current_active_user, require_manager
+from app.api.dependencies import get_current_active_user, require_manage_products
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -365,7 +368,7 @@ def get_product(
 def create_product(
     product: ProductCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_products)
 ):
     """
     Create a new product.
@@ -410,8 +413,25 @@ def create_product(
 
     db_product = Product(**payload)
     db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
+    db.flush()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.PRODUCT_CREATED,
+        aggregate_type="product",
+        aggregate_id=db_product.id,
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
+        payload={
+            "product_id": db_product.id,
+            "name": db_product.name,
+            "sku": db_product.sku,
+            "barcode": db_product.barcode,
+            "category_id": db_product.category_id,
+            "cost_price": db_product.cost_price,
+            "selling_price": db_product.selling_price,
+            "is_active": db_product.is_active,
+        },
+    )
     AuditService.log(
         db,
         action="create_product",
@@ -422,6 +442,7 @@ def create_product(
         extra_data={"sku": db_product.sku},
     )
     db.commit()
+    db.refresh(db_product)
 
     return db_product
 
@@ -431,7 +452,7 @@ def update_product(
     product_id: int,
     product_update: ProductUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_products)
 ):
     """
     Update a product.
@@ -494,8 +515,19 @@ def update_product(
     for field, value in update_data.items():
         setattr(db_product, field, value)
 
-    db.commit()
-    db.refresh(db_product)
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.PRODUCT_UPDATED,
+        aggregate_type="product",
+        aggregate_id=db_product.id,
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
+        payload={
+            "product_id": db_product.id,
+            "updated_fields": sorted(update_data.keys()),
+            "updates": update_data,
+        },
+    )
     AuditService.log(
         db,
         action="update_product",
@@ -506,6 +538,7 @@ def update_product(
         extra_data={"updated_fields": sorted(update_data.keys())},
     )
     db.commit()
+    db.refresh(db_product)
 
     return db_product
 
@@ -514,7 +547,7 @@ def update_product(
 def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_products)
 ):
     """
     Delete a product (soft delete by marking inactive).
@@ -536,7 +569,19 @@ def delete_product(
         )
 
     db_product.is_active = False
-    db.commit()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.PRODUCT_DEACTIVATED,
+        aggregate_type="product",
+        aggregate_id=db_product.id,
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
+        payload={
+            "product_id": db_product.id,
+            "sku": db_product.sku,
+            "name": db_product.name,
+        },
+    )
     AuditService.log(
         db,
         action="deactivate_product",
@@ -554,7 +599,7 @@ def add_product_batch(
     product_id: int,
     batch: ProductBatchCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_products)
 ):
     """
     Add a new batch for a product.
@@ -611,11 +656,38 @@ def add_product_batch(
         **batch_data
     )
     db.add(db_batch)
+    db.flush()
 
-    InventoryService.recalculate_product_stock(db, product)
+    stock_after = InventoryService.recalculate_product_stock(db, product)
+    InventoryService.record_movement(
+        db,
+        product_id=product.id,
+        batch_id=db_batch.id,
+        movement_type=InventoryMovementType.INITIAL_BATCH_STOCK,
+        quantity_delta=db_batch.quantity,
+        stock_after=stock_after,
+        source_document_type="product_batch",
+        source_document_id=db_batch.id,
+        reason="Initial batch stock",
+        created_by=current_user.id,
+    )
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.PRODUCT_BATCH_CREATED,
+        aggregate_type="product_batch",
+        aggregate_id=db_batch.id,
+        organization_id=db_batch.organization_id,
+        branch_id=db_batch.branch_id,
+        payload={
+            "product_id": product.id,
+            "batch_id": db_batch.id,
+            "batch_number": db_batch.batch_number,
+            "quantity": db_batch.quantity,
+            "expiry_date": db_batch.expiry_date,
+            "stock_after": stock_after,
+        },
+    )
 
-    db.commit()
-    db.refresh(db_batch)
     AuditService.log(
         db,
         action="create_product_batch",
@@ -626,6 +698,7 @@ def add_product_batch(
         extra_data={"product_id": product.id, "quantity": db_batch.quantity},
     )
     db.commit()
+    db.refresh(db_batch)
 
     return db_batch
 
@@ -636,7 +709,7 @@ def update_product_batch(
     batch_id: int,
     batch_update: ProductBatchUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_manage_products),
 ):
     """
     Update operational batch metadata such as location, expiry, quarantine
@@ -706,8 +779,20 @@ def update_product_batch(
             batch.quarantine_reason = None
 
         InventoryService.recalculate_product_stock(db, product)
-        db.commit()
-        db.refresh(batch)
+        SyncOutboxService.record_event(
+            db,
+            event_type=SyncEventType.PRODUCT_BATCH_UPDATED,
+            aggregate_type="product_batch",
+            aggregate_id=batch.id,
+            organization_id=batch.organization_id,
+            branch_id=batch.branch_id,
+            payload={
+                "product_id": product.id,
+                "batch_id": batch.id,
+                "updated_fields": sorted(update_data.keys()),
+                "updates": update_data,
+            },
+        )
         AuditService.log(
             db,
             action="update_product_batch",
@@ -718,6 +803,7 @@ def update_product_batch(
             extra_data={"updated_fields": sorted(update_data.keys())},
         )
         db.commit()
+        db.refresh(batch)
         return batch
     except Exception:
         db.rollback()
@@ -729,7 +815,7 @@ def receive_stock(
     product_id: int,
     receipt: ReceiveStock,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager),
+    current_user: User = Depends(require_manage_products),
 ):
     """
     Receive stock for an existing product in one transaction.
@@ -819,20 +905,47 @@ def receive_stock(
 
         new_stock = InventoryService.recalculate_product_stock(db, product)
 
-        db.add(
-            StockAdjustment(
-                product_id=product.id,
-                batch_id=batch.id,
-                adjustment_type=AdjustmentType.ADDITION,
-                quantity=receipt.quantity,
-                reason=(receipt.reason or "Stock receipt").strip(),
-                performed_by=current_user.id,
-            )
+        stock_adjustment = StockAdjustment(
+            product_id=product.id,
+            batch_id=batch.id,
+            adjustment_type=AdjustmentType.ADDITION,
+            quantity=receipt.quantity,
+            reason=(receipt.reason or "Stock receipt").strip(),
+            performed_by=current_user.id,
+        )
+        db.add(stock_adjustment)
+        db.flush()
+        InventoryService.record_movement(
+            db,
+            product_id=product.id,
+            batch_id=batch.id,
+            movement_type=InventoryMovementType.STOCK_RECEIVED,
+            quantity_delta=receipt.quantity,
+            stock_after=new_stock,
+            source_document_type="stock_adjustment",
+            source_document_id=stock_adjustment.id,
+            reason=stock_adjustment.reason,
+            created_by=current_user.id,
+        )
+        SyncOutboxService.record_event(
+            db,
+            event_type=SyncEventType.STOCK_RECEIVED,
+            aggregate_type="stock_adjustment",
+            aggregate_id=stock_adjustment.id,
+            organization_id=product.organization_id,
+            branch_id=product.branch_id,
+            payload={
+                "product_id": product.id,
+                "batch_id": batch.id,
+                "stock_adjustment_id": stock_adjustment.id,
+                "batch_number": batch.batch_number,
+                "quantity": receipt.quantity,
+                "previous_stock": previous_stock,
+                "new_stock": new_stock,
+                "price_updated": price_updated,
+            },
         )
 
-        db.commit()
-        db.refresh(product)
-        db.refresh(batch)
         AuditService.log(
             db,
             action="receive_stock",
@@ -843,6 +956,8 @@ def receive_stock(
             extra_data={"product_id": product.id, "quantity": receipt.quantity, "new_stock": new_stock},
         )
         db.commit()
+        db.refresh(product)
+        db.refresh(batch)
 
         return {
             "product": product,

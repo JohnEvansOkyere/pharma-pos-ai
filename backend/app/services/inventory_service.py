@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.inventory_movement import InventoryMovement, InventoryMovementType
 from app.models.product import Product, ProductBatch
 
 
@@ -41,3 +42,32 @@ class InventoryService:
         )
         product.total_stock = total_stock
         return total_stock
+
+    @staticmethod
+    def record_movement(
+        db: Session,
+        *,
+        product_id: int,
+        batch_id: Optional[int],
+        movement_type: InventoryMovementType,
+        quantity_delta: int,
+        stock_after: Optional[int],
+        source_document_type: str,
+        source_document_id: Optional[int],
+        reason: Optional[str],
+        created_by: Optional[int],
+    ) -> InventoryMovement:
+        """Append an inventory movement row for a committed stock change."""
+        movement = InventoryMovement(
+            product_id=product_id,
+            batch_id=batch_id,
+            movement_type=movement_type,
+            quantity_delta=quantity_delta,
+            stock_after=stock_after,
+            source_document_type=source_document_type,
+            source_document_id=source_document_id,
+            reason=reason,
+            created_by=created_by,
+        )
+        db.add(movement)
+        return movement

@@ -9,12 +9,16 @@ from fastapi import HTTPException
 
 from app.api.endpoints.auth import login
 from app.api.endpoints.products import add_product_batch, create_product
+from app.api.endpoints.stock_adjustments import create_stock_adjustment
+from app.models.inventory_movement import InventoryMovement, InventoryMovementType
 from app.api.endpoints.sales import create_sale, refund_sale
 from app.models.sale import SalePricingMode
+from app.models.sale import SaleReversal
 from app.models.user import User
 from app.models.user import UserRole
 from app.schemas.product import ProductBatchCreate, ProductCreate
 from app.schemas.sale import SaleActionRequest, SaleCreate, SaleItemCreate
+from app.schemas.stock_adjustment import StockAdjustmentCreate
 from app.core.security import get_password_hash
 
 
@@ -113,6 +117,76 @@ def test_add_product_batch_rejects_duplicate_batch_and_expiry(
     assert "same batch number and expiry date" in exc.value.detail.lower()
 
 
+def test_add_product_batch_records_initial_inventory_movement(
+    db_session,
+    manager_user,
+    category,
+    product_factory,
+):
+    product = product_factory(category.id, name="Initial Batch Movement Product", sku="INIT-MOVE-1")
+
+    batch = add_product_batch(
+        product.id,
+        ProductBatchCreate(
+            product_id=product.id,
+            batch_number="INIT-MOVE-B1",
+            quantity=12,
+            expiry_date=date.today() + timedelta(days=180),
+            cost_price=3.00,
+        ),
+        db=db_session,
+        current_user=manager_user,
+    )
+
+    movement = db_session.query(InventoryMovement).filter(
+        InventoryMovement.batch_id == batch.id,
+        InventoryMovement.movement_type == InventoryMovementType.INITIAL_BATCH_STOCK,
+    ).one()
+
+    assert movement.quantity_delta == 12
+    assert movement.stock_after == 12
+    assert movement.source_document_type == "product_batch"
+    assert movement.source_document_id == batch.id
+
+
+def test_stock_adjustment_records_inventory_movement(
+    db_session,
+    manager_user,
+    category,
+    product_factory,
+    batch_factory,
+):
+    product = product_factory(category.id, name="Adjustment Movement Product", sku="ADJ-MOVE-1")
+    batch = batch_factory(
+        product.id,
+        batch_number="ADJ-MOVE-B1",
+        quantity=10,
+        expiry_offset_days=180,
+    )
+
+    adjustment = create_stock_adjustment(
+        StockAdjustmentCreate(
+            product_id=product.id,
+            batch_id=batch.id,
+            adjustment_type="damage",
+            quantity=3,
+            reason="Damaged during handling",
+        ),
+        db=db_session,
+        current_user=manager_user,
+    )
+
+    movement = db_session.query(InventoryMovement).filter(
+        InventoryMovement.source_document_type == "stock_adjustment",
+        InventoryMovement.source_document_id == adjustment.id,
+    ).one()
+
+    assert movement.batch_id == batch.id
+    assert movement.movement_type == InventoryMovementType.DAMAGE_WRITE_OFF
+    assert movement.quantity_delta == -3
+    assert movement.stock_after == 7
+
+
 def test_create_sale_rejects_inactive_product(
     db_session,
     cashier_user,
@@ -196,6 +270,7 @@ def test_refund_sale_rejects_second_reversal(
 
     assert exc.value.status_code == 400
     assert "only completed sales" in exc.value.detail.lower()
+    assert db_session.query(SaleReversal).filter(SaleReversal.sale_id == sale.id).count() == 1
 
 
 def test_wholesale_sale_rejects_products_without_wholesale_price(

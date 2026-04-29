@@ -25,6 +25,9 @@ class StockAdjustment(Base):
     __tablename__ = "stock_adjustments"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    source_device_id = Column(Integer, ForeignKey("devices.id"), nullable=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     batch_id = Column(Integer, ForeignKey("product_batches.id"))
     adjustment_type = Column(SQLEnum(AdjustmentType), nullable=False)

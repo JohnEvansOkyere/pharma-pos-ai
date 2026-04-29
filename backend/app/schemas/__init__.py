@@ -13,10 +13,14 @@ from app.schemas.product import (
     ProductBatchCreate,
     ProductBatchUpdate,
 )
-from app.schemas.sale import Sale, SaleCreate, SaleWithItems, SaleItem, SaleSummary
+from app.schemas.sale import Sale, SaleCreate, SaleReversal, SaleWithItems, SaleItem, SaleSummary
 from app.schemas.notification import Notification, NotificationCreate, NotificationUpdate
 from app.schemas.stock_adjustment import StockAdjustment, StockAdjustmentCreate
 from app.schemas.system import BackupStatus, BackupTriggerResult, SystemDiagnostics
+from app.schemas.inventory_movement import InventoryMovement
+from app.schemas.stock_take import StockTake, StockTakeCreate, StockTakeComplete, StockTakeItem
+from app.schemas.tenancy import Branch, Device, Organization
+from app.schemas.sync_event import SyncEvent
 
 __all__ = [
     "User",
@@ -39,6 +43,7 @@ __all__ = [
     "Sale",
     "SaleCreate",
     "SaleWithItems",
+    "SaleReversal",
     "SaleItem",
     "SaleSummary",
     "Notification",
@@ -49,4 +54,13 @@ __all__ = [
     "BackupStatus",
     "BackupTriggerResult",
     "SystemDiagnostics",
+    "InventoryMovement",
+    "StockTake",
+    "StockTakeCreate",
+    "StockTakeComplete",
+    "StockTakeItem",
+    "Organization",
+    "Branch",
+    "Device",
+    "SyncEvent",
 ]

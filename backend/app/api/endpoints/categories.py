@@ -7,10 +7,12 @@ from sqlalchemy.orm import Session
 
 from app.db.base import get_db
 from app.models.category import Category
+from app.models.sync_event import SyncEventType
 from app.models.user import User
 from app.services.audit_service import AuditService
+from app.services.sync_outbox_service import SyncOutboxService
 from app.schemas.category import Category as CategorySchema, CategoryCreate, CategoryUpdate
-from app.api.dependencies import get_current_active_user, require_manager
+from app.api.dependencies import get_current_active_user, require_manage_categories
 
 router = APIRouter(prefix="/categories", tags=["Categories"])
 
@@ -29,7 +31,7 @@ def list_categories(
 def create_category(
     category: CategoryCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_categories)
 ):
     """Create a new category."""
     # Check for duplicate name
@@ -41,8 +43,14 @@ def create_category(
 
     db_category = Category(**category.model_dump())
     db.add(db_category)
-    db.commit()
-    db.refresh(db_category)
+    db.flush()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.CATEGORY_CREATED,
+        aggregate_type="category",
+        aggregate_id=db_category.id,
+        payload={"category_id": db_category.id, "name": db_category.name},
+    )
     AuditService.log(
         db,
         action="create_category",
@@ -52,6 +60,7 @@ def create_category(
         description=f"Created category {db_category.name}",
     )
     db.commit()
+    db.refresh(db_category)
 
     return db_category
 
@@ -61,7 +70,7 @@ def update_category(
     category_id: int,
     category_update: CategoryUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_categories)
 ):
     """Update a category."""
     db_category = db.query(Category).filter(Category.id == category_id).first()
@@ -75,8 +84,17 @@ def update_category(
     for field, value in update_data.items():
         setattr(db_category, field, value)
 
-    db.commit()
-    db.refresh(db_category)
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.CATEGORY_UPDATED,
+        aggregate_type="category",
+        aggregate_id=db_category.id,
+        payload={
+            "category_id": db_category.id,
+            "updated_fields": sorted(update_data.keys()),
+            "updates": update_data,
+        },
+    )
     AuditService.log(
         db,
         action="update_category",
@@ -87,6 +105,7 @@ def update_category(
         extra_data={"updated_fields": sorted(update_data.keys())},
     )
     db.commit()
+    db.refresh(db_category)
 
     return db_category
 
@@ -95,7 +114,7 @@ def update_category(
 def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_manager)
+    current_user: User = Depends(require_manage_categories)
 ):
     """Delete a category."""
     db_category = db.query(Category).filter(Category.id == category_id).first()
@@ -108,7 +127,13 @@ def delete_category(
     deleted_category_id = db_category.id
     deleted_category_name = db_category.name
     db.delete(db_category)
-    db.commit()
+    SyncOutboxService.record_event(
+        db,
+        event_type=SyncEventType.CATEGORY_DELETED,
+        aggregate_type="category",
+        aggregate_id=deleted_category_id,
+        payload={"category_id": deleted_category_id, "name": deleted_category_name},
+    )
     AuditService.log(
         db,
         action="delete_category",
