@@ -1642,7 +1642,29 @@ Next foundation:
 
 11. Cloud reporting endpoints
 
-Goal:
+Status: implemented for first owner-dashboard API contracts.
+
+Implemented:
+
+- `GET /cloud-reports/sales-summary`
+- `GET /cloud-reports/branch-sales`
+- `GET /cloud-reports/inventory-movements-summary`
+- `GET /cloud-reports/sync-health`
+- schemas for sales, branch sales, inventory movement, and sync health summaries
+- organization and optional branch filters
+- optional time-window filters for projected fact reports
+- regression tests for organization/branch isolation and health counts
+
+Current scope:
+
+- reporting endpoints query cloud projection tables only
+- no frontend cloud owner dashboard yet
+- no AI assistant tools yet
+- auth/tenant scoping for cloud users still needs hardening before real hosted exposure
+
+Next foundation:
+
+12. Cloud owner dashboard UI
 
 - query Supabase-backed projection tables by organization and branch
 - expose sales summaries, inventory movement summaries, sync health, and projection health

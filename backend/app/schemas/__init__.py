@@ -23,6 +23,12 @@ from app.schemas.tenancy import Branch, Device, Organization
 from app.schemas.sync_event import SyncEvent
 from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
 from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
+from app.schemas.cloud_reports import (
+    CloudBranchSalesSummary,
+    CloudInventoryMovementSummary,
+    CloudSalesSummary,
+    CloudSyncHealth,
+)
 
 __all__ = [
     "User",
@@ -69,4 +75,8 @@ __all__ = [
     "SyncIngestionResponse",
     "CloudProjectionRunResult",
     "CloudProjectionStatus",
+    "CloudSalesSummary",
+    "CloudBranchSalesSummary",
+    "CloudInventoryMovementSummary",
+    "CloudSyncHealth",
 ]
