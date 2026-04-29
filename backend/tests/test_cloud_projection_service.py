@@ -232,6 +232,136 @@ def test_project_product_batch_and_sale_updates_stock_snapshots(db_session):
     assert batch.expiry_date == date.today() + timedelta(days=20)
 
 
+def test_project_sale_reversal_restores_stock_snapshots_with_line_items(db_session):
+    organization, branch, device = _tenant_device(db_session)
+    seed_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="77777777-7777-7777-7777-777777777771",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_BATCH_CREATED,
+        aggregate_type="product_batch",
+        aggregate_id=4,
+        payload={
+            "product_id": 15,
+            "batch_id": 4,
+            "batch_number": "REV-BATCH",
+            "quantity": 7,
+            "expiry_date": (date.today() + timedelta(days=40)).isoformat(),
+            "cost_price": "2.50",
+            "stock_after": 7,
+        },
+    )
+    reversal_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="77777777-7777-7777-7777-777777777772",
+        sequence=2,
+        event_type=SyncEventType.SALE_REVERSED,
+        aggregate_type="sale",
+        aggregate_id=22,
+        payload={
+            "sale_id": 22,
+            "invoice_number": "INV-22",
+            "reason": "Returned before dispensing",
+            "restored_quantity": 5,
+            "items": [
+                {
+                    "product_id": 15,
+                    "batch_number": "REV-BATCH",
+                    "quantity": 5,
+                }
+            ],
+        },
+    )
+
+    result = CloudProjectionService.project_pending(db_session, limit=10)
+    product = db_session.query(CloudProductSnapshot).filter_by(local_product_id=15).one()
+    batch = db_session.query(CloudBatchSnapshot).filter_by(local_batch_id=4).one()
+    movement = db_session.query(CloudInventoryMovementFact).filter(
+        CloudInventoryMovementFact.source_event_id == reversal_event.id
+    ).one()
+
+    assert result["projected"] == 2
+    assert seed_event.projected_at is not None
+    assert reversal_event.projected_at is not None
+    assert product.total_stock == 12
+    assert batch.quantity == 12
+    assert movement.local_product_id == 15
+    assert movement.quantity_delta == 5
+
+
+def test_project_stock_take_completed_sets_counted_batch_quantities(db_session):
+    organization, branch, device = _tenant_device(db_session)
+    _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="88888888-8888-8888-8888-888888888881",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_BATCH_CREATED,
+        aggregate_type="product_batch",
+        aggregate_id=5,
+        payload={
+            "product_id": 16,
+            "batch_id": 5,
+            "batch_number": "TAKE-BATCH",
+            "quantity": 20,
+            "expiry_date": (date.today() + timedelta(days=90)).isoformat(),
+            "cost_price": "1.50",
+            "stock_after": 20,
+        },
+    )
+    stock_take_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="88888888-8888-8888-8888-888888888882",
+        sequence=2,
+        event_type=SyncEventType.STOCK_TAKE_COMPLETED,
+        aggregate_type="stock_take",
+        aggregate_id=3,
+        payload={
+            "stock_take_id": 3,
+            "reference": "ST-3",
+            "movement_count": 1,
+            "total_variance": -8,
+            "lines": [
+                {
+                    "product_id": 16,
+                    "batch_id": 5,
+                    "batch_number": "TAKE-BATCH",
+                    "expected_quantity": 20,
+                    "counted_quantity": 12,
+                    "variance_quantity": -8,
+                    "stock_after": 12,
+                    "reason": "Physical count",
+                }
+            ],
+        },
+    )
+
+    result = CloudProjectionService.project_pending(db_session, limit=10)
+    product = db_session.query(CloudProductSnapshot).filter_by(local_product_id=16).one()
+    batch = db_session.query(CloudBatchSnapshot).filter_by(local_batch_id=5).one()
+    movement = db_session.query(CloudInventoryMovementFact).filter(
+        CloudInventoryMovementFact.source_event_id == stock_take_event.id
+    ).one()
+
+    assert result["projected"] == 2
+    assert product.total_stock == 12
+    assert batch.quantity == 12
+    assert movement.local_product_id == 16
+    assert movement.local_batch_id == 5
+    assert movement.quantity_delta == -8
+
+
 def test_projection_status_counts_pending_projected_and_failed(db_session):
     organization, branch, device = _tenant_device(db_session)
     _ingested_event(

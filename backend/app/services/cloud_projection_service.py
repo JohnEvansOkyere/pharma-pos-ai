@@ -173,6 +173,18 @@ class CloudProjectionService:
             ]
 
         if event.event_type == SyncEventType.STOCK_TAKE_COMPLETED:
+            if payload.get("lines"):
+                return [
+                    {
+                        "product_id": line.get("product_id"),
+                        "batch_id": line.get("batch_id"),
+                        "quantity_delta": line.get("variance_quantity", 0),
+                        "stock_after": line.get("stock_after"),
+                        "reason": line.get("reason") or f"Stock take {payload.get('reference')}",
+                        "payload": line,
+                    }
+                    for line in payload.get("lines") or []
+                ]
             return [
                 {
                     "product_id": None,
@@ -185,6 +197,18 @@ class CloudProjectionService:
             ]
 
         if event.event_type == SyncEventType.SALE_REVERSED:
+            if payload.get("items"):
+                return [
+                    {
+                        "product_id": item.get("product_id"),
+                        "batch_id": item.get("batch_id"),
+                        "quantity_delta": item.get("quantity", 0),
+                        "stock_after": item.get("stock_after"),
+                        "reason": payload.get("reason"),
+                        "payload": item,
+                    }
+                    for item in payload.get("items") or []
+                ]
             return [
                 {
                     "product_id": None,
@@ -341,6 +365,60 @@ class CloudProjectionService:
             product.last_source_event_id = event.id
             product.updated_at = datetime.now(timezone.utc)
             return True
+
+        if event.event_type == SyncEventType.STOCK_TAKE_COMPLETED:
+            changed = False
+            for line in payload.get("lines") or []:
+                product_id = line.get("product_id")
+                batch_id = line.get("batch_id")
+                if product_id is None or batch_id is None:
+                    continue
+                batch = CloudProjectionService._get_batch_snapshot(db, event, local_product_id=int(product_id), local_batch_id=int(batch_id))
+                batch.batch_number = str(line.get("batch_number") or batch.batch_number or f"batch-{batch_id}")
+                batch.quantity = max(0, int(line.get("counted_quantity") or 0))
+                batch.last_source_event_id = event.id
+                batch.payload = {**payload, "line": line}
+                batch.updated_at = datetime.now(timezone.utc)
+
+                product = CloudProjectionService._get_product_snapshot(db, event, int(product_id))
+                if line.get("stock_after") is not None:
+                    product.total_stock = int(line.get("stock_after") or 0)
+                else:
+                    product.total_stock = CloudProjectionService._product_batch_total(db, event, int(product_id))
+                product.last_source_event_id = event.id
+                product.updated_at = datetime.now(timezone.utc)
+                changed = True
+            return changed
+
+        if event.event_type == SyncEventType.SALE_REVERSED:
+            changed = False
+            for item in payload.get("items") or []:
+                product_id = item.get("product_id")
+                quantity = int(item.get("quantity") or 0)
+                if product_id is None or quantity <= 0:
+                    continue
+                product = CloudProjectionService._get_product_snapshot(db, event, int(product_id))
+                product.total_stock += quantity
+                product.last_source_event_id = event.id
+                product.updated_at = datetime.now(timezone.utc)
+
+                batch = None
+                if item.get("batch_id") is not None:
+                    batch = CloudProjectionService._get_batch_snapshot(
+                        db,
+                        event,
+                        local_product_id=int(product_id),
+                        local_batch_id=int(item.get("batch_id")),
+                    )
+                elif item.get("batch_number"):
+                    batch = CloudProjectionService._find_batch_by_number(db, event, int(product_id), str(item.get("batch_number")))
+                if batch:
+                    batch.quantity += quantity
+                    batch.last_source_event_id = event.id
+                    batch.payload = {**payload, "item": item}
+                    batch.updated_at = datetime.now(timezone.utc)
+                changed = True
+            return changed
 
         return False
 

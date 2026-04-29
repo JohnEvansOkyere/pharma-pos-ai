@@ -182,6 +182,7 @@ def complete_stock_take(
 
         movement_count = 0
         total_variance = 0
+        completed_lines = []
 
         for item in stock_take.items:
             batch = db.query(ProductBatch).filter(ProductBatch.id == item.batch_id).with_for_update().first()
@@ -211,6 +212,18 @@ def complete_stock_take(
 
             batch.quantity = item.counted_quantity
             stock_after = InventoryService.recalculate_product_stock(db, product)
+            completed_lines.append(
+                {
+                    "product_id": product.id,
+                    "batch_id": batch.id,
+                    "batch_number": batch.batch_number,
+                    "expected_quantity": item.expected_quantity,
+                    "counted_quantity": item.counted_quantity,
+                    "variance_quantity": item.variance_quantity,
+                    "stock_after": stock_after,
+                    "reason": item.reason or f"Stock take {stock_take.reference}",
+                }
+            )
             adjustment = StockAdjustment(
                 product_id=product.id,
                 batch_id=batch.id,
@@ -256,6 +269,7 @@ def complete_stock_take(
                 "movement_count": movement_count,
                 "total_variance": total_variance,
                 "line_count": len(stock_take.items),
+                "lines": completed_lines,
                 "completed_by": current_user.id,
             },
         )

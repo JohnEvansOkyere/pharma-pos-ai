@@ -1775,14 +1775,35 @@ Implemented:
 Current scope:
 
 - snapshot accuracy depends on synced product/batch payloads and stock-impacting events
-- stock take completion still projects only aggregate variance until line-level stock take sync payloads are added
-- sale reversal stock restoration still projects only aggregate restored quantity until line-level reversal payloads are added
+- stock take completion now syncs counted line details for first-pass snapshot correction
+- sale reversal now syncs restored product/batch line details for first-pass snapshot restoration
 - branch labels still use IDs until branch registry UI/API hydration is added
 
 Next foundation:
 
 16. Stock snapshot completeness
 
+Status: implemented for first line-level correction payloads.
+
+Implemented:
+
 - enrich stock take completion sync payloads with counted line details
 - enrich sale reversal sync payloads with product/batch restoration details
+- project line-level stock-take completion into cloud inventory movement facts and stock snapshots
+- project line-level sale reversal into cloud inventory movement facts and stock snapshots
+- regression tests for sale reversal stock restoration and stock-take counted quantity projection
+
+Current scope:
+
+- stock-take and reversal snapshot correction depends on branches running the updated local backend so new line payloads are emitted
+- older aggregate-only events remain supported but cannot fully correct batch snapshots
+
+Next foundation:
+
+17. AI weekly manager report
+
+- generate a Sunday 7 PM weekly manager report
+- include just-ended week performance and coming-week action plan
+- save generated reports in the database for dashboard review
+- support manual generation for testing and manager review
 - add reconciliation checks between movement facts and stock snapshots

@@ -181,6 +181,16 @@ def _reverse_sale(
             )
 
         restored_quantity = sum(item.quantity for item in sale.items)
+        restored_items = [
+            {
+                "product_id": item.product_id,
+                "product_name": item.product_name,
+                "batch_number": item.batch_number,
+                "expiry_date": item.expiry_date,
+                "quantity": item.quantity,
+            }
+            for item in sale.items
+        ]
         reversal_type = (
             SaleReversalType.REFUND
             if target_status == SaleStatus.REFUNDED
@@ -223,6 +233,7 @@ def _reverse_sale(
                 "reason": reason,
                 "total_amount": reversal.total_amount,
                 "restored_quantity": restored_quantity,
+                "items": restored_items,
                 "performed_by": current_user.id,
             },
         )
