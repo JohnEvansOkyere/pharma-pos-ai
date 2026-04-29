@@ -6,9 +6,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_organization_access, require_view_reports
+from app.api.dependencies import require_admin, require_organization_access, require_view_reports
 from app.db.base import get_db
-from app.models.ai_report import AIWeeklyManagerReport
+from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDeliverySetting
 from app.models.user import User
 from app.schemas.ai_manager import (
     AIManagerChatRequest,
@@ -16,6 +16,8 @@ from app.schemas.ai_manager import (
     AIWeeklyManagerReportResponse,
     AIWeeklyReportDeliverRequest,
     AIWeeklyReportDeliveryResponse,
+    AIWeeklyReportDeliverySettingResponse,
+    AIWeeklyReportDeliverySettingUpsert,
     AIWeeklyReportGenerateRequest,
 )
 from app.services.ai_report_delivery_service import AIReportDeliveryService
@@ -77,6 +79,7 @@ def generate_weekly_manager_report(
         branch_id=effective_branch_id,
         generated_by_user_id=current_user.id,
         deliver=payload.deliver,
+        idempotent=True,
     )
     return _report_response(report)
 
@@ -147,6 +150,67 @@ def deliver_weekly_manager_report(
     return [_delivery_response(delivery) for delivery in deliveries]
 
 
+@router.get("/weekly-report-delivery-settings", response_model=AIWeeklyReportDeliverySettingResponse)
+def get_weekly_report_delivery_setting(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Fetch tenant-scoped weekly report delivery recipients."""
+    require_organization_access(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        current_user=current_user,
+    )
+    setting = _find_delivery_setting(
+        db,
+        organization_id=organization_id,
+        branch_id=branch_id,
+    )
+    if setting is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly report delivery setting not found")
+    return _delivery_setting_response(setting)
+
+
+@router.put("/weekly-report-delivery-settings", response_model=AIWeeklyReportDeliverySettingResponse)
+def upsert_weekly_report_delivery_setting(
+    payload: AIWeeklyReportDeliverySettingUpsert,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Create or update tenant-scoped weekly report delivery recipients."""
+    require_organization_access(
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+        current_user=current_user,
+    )
+    setting = _find_delivery_setting(
+        db,
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+    )
+    report_scope_key = AIWeeklyReportService.scope_key(payload.branch_id)
+    if setting is None:
+        setting = AIWeeklyReportDeliverySetting(
+            organization_id=payload.organization_id,
+            branch_id=payload.branch_id,
+            report_scope_key=report_scope_key,
+            created_by_user_id=current_user.id,
+        )
+        db.add(setting)
+
+    setting.email_enabled = payload.email_enabled
+    setting.email_recipients = _clean_list(payload.email_recipients)
+    setting.telegram_enabled = payload.telegram_enabled
+    setting.telegram_chat_ids = _clean_list(payload.telegram_chat_ids)
+    setting.is_active = payload.is_active
+    setting.updated_by_user_id = current_user.id
+    db.commit()
+    db.refresh(setting)
+    return _delivery_setting_response(setting)
+
+
 def _resolve_branch_scope(current_user: User, requested_branch_id: Optional[int]) -> Optional[int]:
     if current_user.branch_id is None:
         return requested_branch_id
@@ -193,3 +257,41 @@ def _delivery_response(delivery) -> AIWeeklyReportDeliveryResponse:
         sent_at=delivery.sent_at,
         created_at=delivery.created_at,
     )
+
+
+def _find_delivery_setting(
+    db: Session,
+    *,
+    organization_id: int,
+    branch_id: Optional[int],
+):
+    return (
+        db.query(AIWeeklyReportDeliverySetting)
+        .filter(
+            AIWeeklyReportDeliverySetting.organization_id == organization_id,
+            AIWeeklyReportDeliverySetting.report_scope_key == AIWeeklyReportService.scope_key(branch_id),
+        )
+        .first()
+    )
+
+
+def _delivery_setting_response(setting: AIWeeklyReportDeliverySetting) -> AIWeeklyReportDeliverySettingResponse:
+    return AIWeeklyReportDeliverySettingResponse(
+        id=setting.id,
+        organization_id=setting.organization_id,
+        branch_id=setting.branch_id,
+        report_scope_key=setting.report_scope_key,
+        email_enabled=setting.email_enabled,
+        email_recipients=setting.email_recipients or [],
+        telegram_enabled=setting.telegram_enabled,
+        telegram_chat_ids=setting.telegram_chat_ids or [],
+        is_active=setting.is_active,
+        created_by_user_id=setting.created_by_user_id,
+        updated_by_user_id=setting.updated_by_user_id,
+        created_at=setting.created_at,
+        updated_at=setting.updated_at,
+    )
+
+
+def _clean_list(values: List[str]) -> List[str]:
+    return [value.strip() for value in values if isinstance(value, str) and value.strip()]

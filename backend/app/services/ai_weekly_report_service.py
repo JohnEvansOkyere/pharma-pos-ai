@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import case, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.ai_report import AIWeeklyManagerReport
@@ -36,9 +37,22 @@ class AIWeeklyReportService:
         generated_by_user_id: Optional[int] = None,
         as_of: Optional[datetime] = None,
         deliver: bool = False,
+        idempotent: bool = True,
     ) -> AIWeeklyManagerReport:
         as_of_utc = AIWeeklyReportService._coerce_utc(as_of or datetime.now(timezone.utc))
         performance_start, performance_end, action_start, action_end = AIWeeklyReportService._periods(as_of_utc)
+        report_scope_key = AIWeeklyReportService.scope_key(branch_id)
+
+        if idempotent:
+            existing_report = AIWeeklyReportService._find_existing_report(
+                db,
+                organization_id=organization_id,
+                report_scope_key=report_scope_key,
+                action_start=action_start,
+                action_end=action_end,
+            )
+            if existing_report is not None:
+                return existing_report
 
         tool_results = AIWeeklyReportService._collect_tool_results(
             db,
@@ -83,6 +97,7 @@ class AIWeeklyReportService:
         report = AIWeeklyManagerReport(
             organization_id=organization_id,
             branch_id=branch_id,
+            report_scope_key=report_scope_key,
             generated_by_user_id=generated_by_user_id,
             performance_period_start=performance_start,
             performance_period_end=performance_end,
@@ -99,14 +114,33 @@ class AIWeeklyReportService:
             generated_at=as_of_utc,
         )
         db.add(report)
-        db.commit()
-        db.refresh(report)
+        try:
+            db.commit()
+            db.refresh(report)
+        except IntegrityError:
+            db.rollback()
+            existing_report = AIWeeklyReportService._find_existing_report(
+                db,
+                organization_id=organization_id,
+                report_scope_key=report_scope_key,
+                action_start=action_start,
+                action_end=action_end,
+            )
+            if existing_report is None:
+                raise
+            return existing_report
         if deliver:
             AIReportDeliveryService.deliver(db, report)
         return report
 
     @staticmethod
-    def generate_all(db: Session, *, as_of: Optional[datetime] = None, deliver: bool = False) -> List[AIWeeklyManagerReport]:
+    def generate_all(
+        db: Session,
+        *,
+        as_of: Optional[datetime] = None,
+        deliver: bool = False,
+        idempotent: bool = True,
+    ) -> List[AIWeeklyManagerReport]:
         reports: List[AIWeeklyManagerReport] = []
         organizations = db.query(Organization).filter(Organization.is_active.is_(True)).order_by(Organization.id.asc()).all()
         for organization in organizations:
@@ -118,6 +152,7 @@ class AIWeeklyReportService:
                     generated_by_user_id=None,
                     as_of=as_of,
                     deliver=deliver,
+                    idempotent=idempotent,
                 )
             )
         return reports
@@ -134,6 +169,30 @@ class AIWeeklyReportService:
         if branch_id is not None:
             query = query.filter(AIWeeklyManagerReport.branch_id == branch_id)
         return query.order_by(AIWeeklyManagerReport.generated_at.desc(), AIWeeklyManagerReport.id.desc()).limit(limit).all()
+
+    @staticmethod
+    def scope_key(branch_id: Optional[int]) -> str:
+        return "organization" if branch_id is None else f"branch:{branch_id}"
+
+    @staticmethod
+    def _find_existing_report(
+        db: Session,
+        *,
+        organization_id: int,
+        report_scope_key: str,
+        action_start: date,
+        action_end: date,
+    ) -> Optional[AIWeeklyManagerReport]:
+        return (
+            db.query(AIWeeklyManagerReport)
+            .filter(
+                AIWeeklyManagerReport.organization_id == organization_id,
+                AIWeeklyManagerReport.report_scope_key == report_scope_key,
+                AIWeeklyManagerReport.action_period_start == action_start,
+                AIWeeklyManagerReport.action_period_end == action_end,
+            )
+            .first()
+        )
 
     @staticmethod
     def get_report(db: Session, *, report_id: int, organization_id: int) -> Optional[AIWeeklyManagerReport]:

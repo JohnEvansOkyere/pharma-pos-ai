@@ -88,3 +88,29 @@ class AIWeeklyReportDeliveryResponse(BaseModel):
     provider_response: Optional[Dict[str, Any]] = None
     sent_at: Optional[datetime] = None
     created_at: datetime
+
+
+class AIWeeklyReportDeliverySettingUpsert(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    email_enabled: bool = False
+    email_recipients: List[str] = []
+    telegram_enabled: bool = False
+    telegram_chat_ids: List[str] = []
+    is_active: bool = True
+
+
+class AIWeeklyReportDeliverySettingResponse(BaseModel):
+    id: int
+    organization_id: int
+    branch_id: Optional[int] = None
+    report_scope_key: str
+    email_enabled: bool
+    email_recipients: List[str]
+    telegram_enabled: bool
+    telegram_chat_ids: List[str]
+    is_active: bool
+    created_by_user_id: Optional[int] = None
+    updated_by_user_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime

@@ -12,7 +12,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery
+from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
 
 
 class AIReportDeliveryService:
@@ -32,27 +32,73 @@ class AIReportDeliveryService:
         channels: Optional[List[str]] = None,
     ) -> List[AIWeeklyReportDelivery]:
         requested_channels = channels or [AIReportDeliveryService.EMAIL, AIReportDeliveryService.TELEGRAM]
+        delivery_setting = AIReportDeliveryService.get_effective_setting(db, report)
         deliveries: List[AIWeeklyReportDelivery] = []
 
         if AIReportDeliveryService.EMAIL in requested_channels:
-            deliveries.extend(AIReportDeliveryService._deliver_email(db, report))
+            deliveries.extend(AIReportDeliveryService._deliver_email(db, report, delivery_setting))
         if AIReportDeliveryService.TELEGRAM in requested_channels:
-            deliveries.extend(AIReportDeliveryService._deliver_telegram(db, report))
+            deliveries.extend(AIReportDeliveryService._deliver_telegram(db, report, delivery_setting))
 
         return deliveries
 
     @staticmethod
-    def _deliver_email(db: Session, report: AIWeeklyManagerReport) -> List[AIWeeklyReportDelivery]:
-        recipients = [recipient.strip() for recipient in settings.AI_WEEKLY_REPORT_EMAIL_RECIPIENTS if recipient.strip()]
-        if not settings.AI_WEEKLY_REPORT_EMAIL_ENABLED:
+    def get_effective_setting(db: Session, report: AIWeeklyManagerReport) -> Optional[AIWeeklyReportDeliverySetting]:
+        if report.branch_id is not None:
+            branch_setting = (
+                db.query(AIWeeklyReportDeliverySetting)
+                .filter(
+                    AIWeeklyReportDeliverySetting.organization_id == report.organization_id,
+                    AIWeeklyReportDeliverySetting.report_scope_key == f"branch:{report.branch_id}",
+                    AIWeeklyReportDeliverySetting.is_active.is_(True),
+                )
+                .first()
+            )
+            if branch_setting is not None:
+                return branch_setting
+
+        return (
+            db.query(AIWeeklyReportDeliverySetting)
+            .filter(
+                AIWeeklyReportDeliverySetting.organization_id == report.organization_id,
+                AIWeeklyReportDeliverySetting.report_scope_key == "organization",
+                AIWeeklyReportDeliverySetting.is_active.is_(True),
+            )
+            .first()
+        )
+
+    @staticmethod
+    def _deliver_email(
+        db: Session,
+        report: AIWeeklyManagerReport,
+        delivery_setting: Optional[AIWeeklyReportDeliverySetting],
+    ) -> List[AIWeeklyReportDelivery]:
+        if delivery_setting is None:
             return [
                 AIReportDeliveryService._record(
                     db,
                     report,
                     channel=AIReportDeliveryService.EMAIL,
-                    recipient="configured-email-recipients",
+                    recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.SKIPPED,
-                    error_message="Email weekly report delivery is disabled.",
+                    error_message="No active tenant delivery setting exists for this report scope.",
+                )
+            ]
+
+        recipients = [
+            recipient.strip()
+            for recipient in (delivery_setting.email_recipients or [])
+            if isinstance(recipient, str) and recipient.strip()
+        ]
+        if not delivery_setting.email_enabled:
+            return [
+                AIReportDeliveryService._record(
+                    db,
+                    report,
+                    channel=AIReportDeliveryService.EMAIL,
+                    recipient="tenant-email-recipients",
+                    status=AIReportDeliveryService.SKIPPED,
+                    error_message="Email weekly report delivery is disabled for this tenant scope.",
                 )
             ]
         if not recipients:
@@ -61,9 +107,9 @@ class AIReportDeliveryService:
                     db,
                     report,
                     channel=AIReportDeliveryService.EMAIL,
-                    recipient="configured-email-recipients",
+                    recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.SKIPPED,
-                    error_message="No weekly report email recipients configured.",
+                    error_message="No tenant email recipients configured for this report scope.",
                 )
             ]
         if not settings.SMTP_HOST or not settings.SMTP_FROM_EMAIL:
@@ -72,7 +118,7 @@ class AIReportDeliveryService:
                     db,
                     report,
                     channel=AIReportDeliveryService.EMAIL,
-                    recipient="configured-email-recipients",
+                    recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.FAILED,
                     error_message="SMTP_HOST and SMTP_FROM_EMAIL are required for email delivery.",
                 )
@@ -106,17 +152,37 @@ class AIReportDeliveryService:
         return deliveries
 
     @staticmethod
-    def _deliver_telegram(db: Session, report: AIWeeklyManagerReport) -> List[AIWeeklyReportDelivery]:
-        chat_ids = [chat_id.strip() for chat_id in settings.AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS if chat_id.strip()]
-        if not settings.AI_WEEKLY_REPORT_TELEGRAM_ENABLED:
+    def _deliver_telegram(
+        db: Session,
+        report: AIWeeklyManagerReport,
+        delivery_setting: Optional[AIWeeklyReportDeliverySetting],
+    ) -> List[AIWeeklyReportDelivery]:
+        if delivery_setting is None:
             return [
                 AIReportDeliveryService._record(
                     db,
                     report,
                     channel=AIReportDeliveryService.TELEGRAM,
-                    recipient="configured-telegram-chats",
+                    recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.SKIPPED,
-                    error_message="Telegram weekly report delivery is disabled.",
+                    error_message="No active tenant delivery setting exists for this report scope.",
+                )
+            ]
+
+        chat_ids = [
+            chat_id.strip()
+            for chat_id in (delivery_setting.telegram_chat_ids or [])
+            if isinstance(chat_id, str) and chat_id.strip()
+        ]
+        if not delivery_setting.telegram_enabled:
+            return [
+                AIReportDeliveryService._record(
+                    db,
+                    report,
+                    channel=AIReportDeliveryService.TELEGRAM,
+                    recipient="tenant-telegram-chats",
+                    status=AIReportDeliveryService.SKIPPED,
+                    error_message="Telegram weekly report delivery is disabled for this tenant scope.",
                 )
             ]
         if not chat_ids:
@@ -125,9 +191,9 @@ class AIReportDeliveryService:
                     db,
                     report,
                     channel=AIReportDeliveryService.TELEGRAM,
-                    recipient="configured-telegram-chats",
+                    recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.SKIPPED,
-                    error_message="No weekly report Telegram chat IDs configured.",
+                    error_message="No tenant Telegram chat IDs configured for this report scope.",
                 )
             ]
         if not settings.TELEGRAM_BOT_TOKEN:
@@ -136,7 +202,7 @@ class AIReportDeliveryService:
                     db,
                     report,
                     channel=AIReportDeliveryService.TELEGRAM,
-                    recipient="configured-telegram-chats",
+                    recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.FAILED,
                     error_message="TELEGRAM_BOT_TOKEN is required for Telegram delivery.",
                 )

@@ -38,6 +38,8 @@ from app.schemas.ai_manager import (
     AIWeeklyManagerReportResponse,
     AIWeeklyReportDeliverRequest,
     AIWeeklyReportDeliveryResponse,
+    AIWeeklyReportDeliverySettingResponse,
+    AIWeeklyReportDeliverySettingUpsert,
     AIWeeklyReportGenerateRequest,
 )
 
@@ -98,5 +100,7 @@ __all__ = [
     "AIWeeklyReportGenerateRequest",
     "AIWeeklyReportDeliverRequest",
     "AIWeeklyReportDeliveryResponse",
+    "AIWeeklyReportDeliverySettingUpsert",
+    "AIWeeklyReportDeliverySettingResponse",
     "AIWeeklyManagerReportResponse",
 ]

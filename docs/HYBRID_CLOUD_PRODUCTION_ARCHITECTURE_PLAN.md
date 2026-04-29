@@ -1828,10 +1828,12 @@ Implemented:
   - `AI_WEEKLY_REPORT_HOUR`
   - `AI_WEEKLY_REPORT_MINUTE`
 - audited report delivery attempts in `ai_weekly_report_deliveries`
+- tenant/branch-scoped delivery recipients in `ai_weekly_report_delivery_settings`
+- scheduled and manual weekly report generation is idempotent per organization, report scope, and action week
+- database uniqueness prevents duplicate weekly reports for the same organization/scope/action period, including multi-instance scheduler races
 - optional email delivery through SMTP configuration:
   - `AI_WEEKLY_REPORT_DELIVERY_ENABLED`
   - `AI_WEEKLY_REPORT_EMAIL_ENABLED`
-  - `AI_WEEKLY_REPORT_EMAIL_RECIPIENTS`
   - `SMTP_HOST`
   - `SMTP_PORT`
   - `SMTP_USERNAME`
@@ -1843,9 +1845,12 @@ Implemented:
 - optional Telegram delivery through bot configuration:
   - `AI_WEEKLY_REPORT_TELEGRAM_ENABLED`
   - `TELEGRAM_BOT_TOKEN`
-  - `AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS`
+- recipient lists are not global environment variables; they must be configured per organization or branch
 - manual delivery endpoint: `POST /ai-manager/weekly-reports/{report_id}/deliver`
-- regression tests for saved report generation, manual endpoint generation/list/detail, report delivery attempts, branch authorization, and scheduler job registration
+- delivery settings endpoints:
+  - `GET /ai-manager/weekly-report-delivery-settings`
+  - `PUT /ai-manager/weekly-report-delivery-settings`
+- regression tests for saved report generation, idempotency, manual endpoint generation/list/detail, tenant-scoped delivery settings, report delivery attempts, global-recipient non-use, branch authorization, and scheduler job registration
 
 Current scope:
 
@@ -1853,6 +1858,7 @@ Current scope:
 - first scheduled job generates organization-level reports for active organizations
 - no frontend saved-report viewer yet
 - email and Telegram delivery are backend-only and disabled by default
+- email SMTP credentials and Telegram bot token are deployment settings, but recipients are tenant/branch database settings
 - WhatsApp delivery is intentionally out of scope for the first production path
 - reports are generated from approved cloud projection tables only; unsynced local-only events are outside the report scope
 
@@ -1862,5 +1868,8 @@ Next foundation:
 
 - add reconciliation checks between movement facts and stock snapshots
 - expose saved weekly reports in the manager dashboard
+- expose tenant/branch delivery settings in an admin UI
 - add report acknowledgement/review workflow for managers
 - expose delivery status in the saved-report UI
+- add delivery retry/backoff for transient email and Telegram failures
+- add tenant-level external AI provider consent/configuration

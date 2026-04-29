@@ -9,12 +9,15 @@ from fastapi import HTTPException
 from app.api.endpoints.ai_manager import (
     deliver_weekly_manager_report,
     generate_weekly_manager_report,
+    get_weekly_report_delivery_setting,
     get_weekly_manager_report,
     list_weekly_manager_reports,
+    upsert_weekly_report_delivery_setting,
 )
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
+from app.models.ai_report import AIWeeklyReportDeliverySetting
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -25,7 +28,11 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
-from app.schemas.ai_manager import AIWeeklyReportDeliverRequest, AIWeeklyReportGenerateRequest
+from app.schemas.ai_manager import (
+    AIWeeklyReportDeliverRequest,
+    AIWeeklyReportDeliverySettingUpsert,
+    AIWeeklyReportGenerateRequest,
+)
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.scheduler import SchedulerService
@@ -73,6 +80,44 @@ def _manager(db_session, organization_id: int, *, branch_id=None, username="week
     db_session.add(user)
     db_session.commit()
     return user
+
+
+def _admin(db_session, organization_id: int, *, username="weekly-admin"):
+    user = User(
+        username=username,
+        email=f"{username}@example.com",
+        hashed_password=get_password_hash("admin-secret"),
+        full_name="Weekly Admin",
+        role=UserRole.ADMIN,
+        organization_id=organization_id,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+def _delivery_setting(
+    db_session,
+    organization_id: int,
+    *,
+    branch_id=None,
+    email_recipients=None,
+    telegram_chat_ids=None,
+):
+    setting = AIWeeklyReportDeliverySetting(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        report_scope_key=AIWeeklyReportService.scope_key(branch_id),
+        email_enabled=True,
+        email_recipients=email_recipients or ["owner@example.com"],
+        telegram_enabled=True,
+        telegram_chat_ids=telegram_chat_ids or ["12345"],
+        is_active=True,
+    )
+    db_session.add(setting)
+    db_session.commit()
+    return setting
 
 
 def _ingested(db_session, organization, branch, device, *, event_id: str, sequence: int, event_type: SyncEventType):
@@ -232,6 +277,35 @@ def test_weekly_report_service_generates_saved_performance_and_action_report(mon
     assert "controlled-drug" in " ".join(report.safety_notes)
 
 
+def test_weekly_report_generation_is_idempotent_for_same_scope_and_action_period(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    as_of = datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc)
+
+    first = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=as_of,
+    )
+    second = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=as_of,
+    )
+    forced = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=as_of,
+        idempotent=False,
+    )
+
+    assert second.id == first.id
+    assert forced.id == first.id
+
+
 def test_weekly_report_endpoint_persists_report_and_lists_it(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
@@ -268,13 +342,10 @@ def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch,
         branch_id=branch_a.id,
         as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
     )
-    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_EMAIL_ENABLED", True)
-    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_EMAIL_RECIPIENTS", ["owner@example.com"])
+    _delivery_setting(db_session, organization.id, branch_id=branch_a.id)
     monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
     monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "reports@example.com")
-    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_TELEGRAM_ENABLED", True)
     monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "telegram-token")
-    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS", ["12345"])
     monkeypatch.setattr(AIReportDeliveryService, "_send_email", lambda **kwargs: None)
     monkeypatch.setattr(AIReportDeliveryService, "_send_telegram", lambda **kwargs: {"ok": True})
 
@@ -288,6 +359,56 @@ def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch,
     assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
     assert all(delivery.status == "sent" for delivery in deliveries)
     assert {delivery.recipient for delivery in deliveries} == {"owner@example.com", "12345"}
+
+
+def test_admin_can_manage_tenant_scoped_delivery_settings(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    admin = _admin(db_session, organization.id)
+
+    saved = upsert_weekly_report_delivery_setting(
+        AIWeeklyReportDeliverySettingUpsert(
+            organization_id=organization.id,
+            branch_id=branch_a.id,
+            email_enabled=True,
+            email_recipients=[" owner@example.com ", ""],
+            telegram_enabled=True,
+            telegram_chat_ids=[" 12345 "],
+        ),
+        db=db_session,
+        current_user=admin,
+    )
+    fetched = get_weekly_report_delivery_setting(
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert saved.report_scope_key == f"branch:{branch_a.id}"
+    assert fetched.email_recipients == ["owner@example.com"]
+    assert fetched.telegram_chat_ids == ["12345"]
+
+
+def test_weekly_report_delivery_does_not_use_global_recipients_without_tenant_setting(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
+    assert all(delivery.status == "skipped" for delivery in deliveries)
+    assert all("No active tenant delivery setting" in delivery.error_message for delivery in deliveries)
 
 
 def test_weekly_report_delivery_is_audited_when_channels_are_disabled(db_session):
