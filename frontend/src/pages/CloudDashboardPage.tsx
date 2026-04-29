@@ -1,4 +1,4 @@
-import { type ComponentType, useEffect, useMemo, useState } from 'react'
+import { type ComponentType, type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   FiActivity,
   FiAlertTriangle,
@@ -7,7 +7,9 @@ import {
   FiCloud,
   FiDatabase,
   FiDollarSign,
+  FiMessageSquare,
   FiRefreshCw,
+  FiSend,
   FiShoppingCart,
 } from 'react-icons/fi'
 import {
@@ -57,7 +59,36 @@ interface CloudSyncHealth {
   last_projected_at: string | null
 }
 
+interface AIManagerChatResponse {
+  answer: string
+  data_scope: {
+    organization_id: number
+    branch_id: number | null
+    period_days: number
+    sources: string[]
+  }
+  safety_notes: string[]
+  provider: string
+  model: string | null
+  fallback_used: boolean
+  refused: boolean
+}
+
+interface ChatMessage {
+  id: number
+  role: 'user' | 'assistant'
+  content: string
+  response?: AIManagerChatResponse
+}
+
 type LoadState = 'idle' | 'loading' | 'loaded'
+
+const suggestedPrompts = [
+  'Which branch is performing best?',
+  'Summarize sync health.',
+  'Summarize inventory movement.',
+  'What should I investigate today?',
+]
 
 function formatCurrency(value: number) {
   return `GH₵ ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -93,6 +124,10 @@ export default function CloudDashboardPage() {
   const [syncHealth, setSyncHealth] = useState<CloudSyncHealth | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [isChatLoading, setIsChatLoading] = useState(false)
+  const [chatError, setChatError] = useState<string | null>(null)
 
   const organizationId = Number(organizationInput)
   const hasValidOrganization = Number.isInteger(organizationId) && organizationId > 0
@@ -192,6 +227,48 @@ export default function CloudDashboardPage() {
     revenue: row.total_revenue,
     sales: row.sales_count,
   }))
+
+  const sendAIMessage = async (message: string) => {
+    const trimmedMessage = message.trim()
+    if (!trimmedMessage || !hasValidOrganization || isChatLoading) return
+
+    const userMessage: ChatMessage = {
+      id: Date.now(),
+      role: 'user',
+      content: trimmedMessage,
+    }
+    setChatMessages((current) => [...current, userMessage])
+    setChatInput('')
+    setChatError(null)
+    setIsChatLoading(true)
+
+    try {
+      const response: AIManagerChatResponse = await api.chatWithAIManager({
+        message: trimmedMessage,
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : {}),
+        period_days: periodDays,
+      })
+      setChatMessages((current) => [
+        ...current,
+        {
+          id: Date.now() + 1,
+          role: 'assistant',
+          content: response.answer,
+          response,
+        },
+      ])
+    } catch (error) {
+      setChatError('AI assistant request failed.')
+    } finally {
+      setIsChatLoading(false)
+    }
+  }
+
+  const handleAISubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    sendAIMessage(chatInput)
+  }
 
   return (
     <div className="space-y-6">
@@ -386,6 +463,109 @@ export default function CloudDashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="card p-6">
+        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+              <FiMessageSquare className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+              AI Manager Assistant
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Read-only answers from approved cloud reporting data
+            </p>
+          </div>
+          <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+            Scope: Org {hasValidOrganization ? organizationId : '-'} · {branchId ? `Branch ${branchId}` : 'Permitted branches'} · {periodDays}D
+          </div>
+        </div>
+
+        <div className="mb-4 flex flex-wrap gap-2">
+          {suggestedPrompts.map((prompt) => (
+            <button
+              key={prompt}
+              type="button"
+              onClick={() => sendAIMessage(prompt)}
+              disabled={!hasValidOrganization || isChatLoading}
+              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700"
+            >
+              {prompt}
+            </button>
+          ))}
+        </div>
+
+        <div className="mb-4 max-h-96 space-y-4 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+          {chatMessages.length === 0 ? (
+            <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+              Ask about branch performance, sync health, or inventory movement.
+            </div>
+          ) : (
+            chatMessages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-3xl rounded-lg px-4 py-3 text-sm ${
+                    message.role === 'user'
+                      ? 'bg-primary-600 text-white'
+                      : 'border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100'
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                  {message.response && (
+                    <div className="mt-3 space-y-2 border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        <span>Provider: {message.response.provider}</span>
+                        <span>Model: {message.response.model || 'not configured'}</span>
+                        <span>Fallback: {message.response.fallback_used ? 'yes' : 'no'}</span>
+                        <span>Refused: {message.response.refused ? 'yes' : 'no'}</span>
+                      </div>
+                      <div>
+                        Data scope: Org {message.response.data_scope.organization_id}, {message.response.data_scope.branch_id ? `Branch ${message.response.data_scope.branch_id}` : 'permitted branches'}, {message.response.data_scope.period_days}D
+                      </div>
+                      <ul className="space-y-1">
+                        {message.response.safety_notes.map((note) => (
+                          <li key={note}>{note}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+          {isChatLoading && (
+            <div className="text-sm text-gray-500 dark:text-gray-400">
+              Assistant is checking approved report data...
+            </div>
+          )}
+        </div>
+
+        {chatError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+            {chatError}
+          </div>
+        )}
+
+        <form onSubmit={handleAISubmit} className="flex flex-col gap-3 md:flex-row">
+          <input
+            className="input min-h-11 flex-1"
+            value={chatInput}
+            onChange={(event) => setChatInput(event.target.value)}
+            placeholder="Ask the assistant about synced sales, branches, inventory movement, or sync health"
+            disabled={!hasValidOrganization || isChatLoading}
+          />
+          <button
+            type="submit"
+            disabled={!hasValidOrganization || !chatInput.trim() || isChatLoading}
+            className="btn-primary flex min-h-11 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <FiSend className="h-4 w-4" />
+            Send
+          </button>
+        </form>
       </div>
     </div>
   )

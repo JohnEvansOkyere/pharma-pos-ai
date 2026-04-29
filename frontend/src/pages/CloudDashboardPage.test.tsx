@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
@@ -6,6 +7,7 @@ const apiMocks = vi.hoisted(() => ({
   getCloudBranchSales: vi.fn(),
   getCloudInventoryMovementSummary: vi.fn(),
   getCloudSyncHealth: vi.fn(),
+  chatWithAIManager: vi.fn(),
 }))
 
 vi.mock('../services/api', () => ({
@@ -74,6 +76,21 @@ describe('CloudDashboardPage', () => {
       last_received_at: '2026-04-29T08:00:00Z',
       last_projected_at: '2026-04-29T08:05:00Z',
     })
+    apiMocks.chatWithAIManager.mockResolvedValue({
+      answer: 'Branch 2 is performing best from approved cloud report data.',
+      data_scope: {
+        organization_id: 22,
+        branch_id: null,
+        period_days: 30,
+        sources: ['cloud_sale_facts'],
+      },
+      tool_results: {},
+      safety_notes: ['Read-only assistant: it does not mutate stock, sales, users, or sync records.'],
+      provider: 'groq',
+      model: 'llama-3.3-70b-versatile',
+      fallback_used: false,
+      refused: false,
+    })
   })
 
   it('loads cloud reporting sections using the current user organization', async () => {
@@ -98,6 +115,26 @@ describe('CloudDashboardPage', () => {
       expect(apiMocks.getCloudSyncHealth).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22 })
       )
+    })
+  })
+
+  it('sends scoped AI manager chat requests and renders provider metadata', async () => {
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    await screen.findByText(/ai manager assistant/i)
+    await user.click(screen.getByRole('button', { name: /which branch is performing best/i }))
+
+    expect(await screen.findByText(/branch 2 is performing best/i)).toBeInTheDocument()
+    expect(await screen.findByText(/provider: groq/i)).toBeInTheDocument()
+    expect(await screen.findByText(/fallback: no/i)).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(apiMocks.chatWithAIManager).toHaveBeenCalledWith({
+        message: 'Which branch is performing best?',
+        organization_id: 22,
+        period_days: 30,
+      })
     })
   })
 })

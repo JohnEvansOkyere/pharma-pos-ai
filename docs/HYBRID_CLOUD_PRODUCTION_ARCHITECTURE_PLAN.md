@@ -1723,7 +1723,7 @@ Implemented:
 
 Current scope:
 
-- no frontend chat UI yet
+- first frontend chat UI is available on the cloud dashboard
 - no provider SDK dependency is required; HTTP requests are made server-side through the configured provider adapter
 - low-stock and expiry cloud report tools are still pending
 - responses are deterministic summaries over approved reporting data, not free-form database access
@@ -1732,7 +1732,28 @@ Next foundation:
 
 14. AI manager chat UI
 
+Status: implemented for first manager-facing chat panel.
+
+Implemented:
+
 - add a chat panel on the cloud dashboard or dedicated assistant route
 - call `POST /ai-manager/chat`
 - show data scope and safety notes with each answer
 - include suggested prompts for sales, branch performance, inventory movement, and sync health
+- show provider, model, fallback, and refusal metadata
+- frontend regression test for scoped chat request and response metadata rendering
+
+Current scope:
+
+- chat panel lives inside `/cloud-dashboard`
+- chat uses the dashboard organization, branch, and period filters
+- chat history is in-memory only
+- low-stock and expiry cloud report tools are still pending
+
+Next foundation:
+
+15. Cloud low-stock and expiry report tools
+
+- project or summarize cloud low-stock and near-expiry risk by organization and branch
+- expose tenant-scoped cloud report endpoints for stock risk
+- make those approved tools available to the AI manager assistant

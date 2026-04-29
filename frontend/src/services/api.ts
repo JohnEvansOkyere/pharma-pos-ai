@@ -324,6 +324,11 @@ class ApiClient {
     return response.data
   }
 
+  async chatWithAIManager(payload: any) {
+    const response = await this.client.post('/ai-manager/chat', payload)
+    return response.data
+  }
+
   // Notification endpoints
   async getNotifications(params?: any) {
     const response = await this.client.get('/notifications', { params })
