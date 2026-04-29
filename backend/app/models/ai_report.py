@@ -30,3 +30,22 @@ class AIWeeklyManagerReport(Base):
     fallback_used = Column(Boolean, nullable=False, default=False)
     generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AIWeeklyReportDelivery(Base):
+    """Audited delivery attempt for a weekly manager report."""
+
+    __tablename__ = "ai_weekly_report_deliveries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    report_id = Column(Integer, ForeignKey("ai_weekly_manager_reports.id"), nullable=False, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    channel = Column(String(30), nullable=False, index=True)
+    recipient = Column(String(255), nullable=False, index=True)
+    status = Column(String(30), nullable=False, index=True)
+    attempt_count = Column(Integer, nullable=False, default=1)
+    error_message = Column(Text, nullable=True)
+    provider_response = Column(JSON, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

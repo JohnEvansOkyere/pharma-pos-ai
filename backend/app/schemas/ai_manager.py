@@ -4,7 +4,7 @@ Schemas for the read-only AI manager assistant.
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AIManagerChatRequest(BaseModel):
@@ -35,6 +35,23 @@ class AIManagerChatResponse(BaseModel):
 class AIWeeklyReportGenerateRequest(BaseModel):
     organization_id: int
     branch_id: Optional[int] = None
+    deliver: bool = False
+
+
+class AIWeeklyReportDeliverRequest(BaseModel):
+    channels: Optional[List[str]] = None
+
+    @field_validator("channels")
+    @classmethod
+    def validate_channels(cls, value):
+        if value is None:
+            return value
+        allowed = {"email", "telegram"}
+        normalized = [channel.strip().lower() for channel in value]
+        unsupported = [channel for channel in normalized if channel not in allowed]
+        if unsupported:
+            raise ValueError("channels may only include email and telegram")
+        return normalized
 
 
 class AIWeeklyManagerReportResponse(BaseModel):
@@ -55,4 +72,19 @@ class AIWeeklyManagerReportResponse(BaseModel):
     model: Optional[str] = None
     fallback_used: bool = False
     generated_at: datetime
+    created_at: datetime
+
+
+class AIWeeklyReportDeliveryResponse(BaseModel):
+    id: int
+    report_id: int
+    organization_id: int
+    branch_id: Optional[int] = None
+    channel: str
+    recipient: str
+    status: str
+    attempt_count: int
+    error_message: Optional[str] = None
+    provider_response: Optional[Dict[str, Any]] = None
+    sent_at: Optional[datetime] = None
     created_at: datetime

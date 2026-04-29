@@ -37,10 +37,16 @@ class Settings(BaseSettings):
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000"]
 
-    @field_validator("BACKEND_CORS_ORIGINS", mode="before")
+    @field_validator(
+        "BACKEND_CORS_ORIGINS",
+        "AI_WEEKLY_REPORT_EMAIL_RECIPIENTS",
+        "AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS",
+        mode="before",
+        check_fields=False,
+    )
     @classmethod
-    def assemble_cors_origins(cls, v):
-        """Parse CORS origins from string or list."""
+    def assemble_comma_separated_list(cls, v):
+        """Parse comma-separated environment values into lists."""
         if isinstance(v, str):
             if v.startswith("[") and v.endswith("]"):
                 # Handle JSON-like env strings without requiring callers to
@@ -82,6 +88,21 @@ class Settings(BaseSettings):
     AI_WEEKLY_REPORT_DAY: str = "sun"
     AI_WEEKLY_REPORT_HOUR: int = 19
     AI_WEEKLY_REPORT_MINUTE: int = 0
+    AI_WEEKLY_REPORT_DELIVERY_ENABLED: bool = False
+    AI_WEEKLY_REPORT_EMAIL_ENABLED: bool = False
+    AI_WEEKLY_REPORT_EMAIL_RECIPIENTS: List[str] = []
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM_EMAIL: Optional[str] = None
+    SMTP_FROM_NAME: str = "Pharmacy POS"
+    SMTP_USE_TLS: bool = True
+    SMTP_USE_SSL: bool = False
+    AI_WEEKLY_REPORT_TELEGRAM_ENABLED: bool = False
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS: List[str] = []
+    AI_WEEKLY_REPORT_DELIVERY_TIMEOUT_SECONDS: int = 15
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None

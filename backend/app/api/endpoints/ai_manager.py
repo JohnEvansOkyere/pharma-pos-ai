@@ -14,8 +14,11 @@ from app.schemas.ai_manager import (
     AIManagerChatRequest,
     AIManagerChatResponse,
     AIWeeklyManagerReportResponse,
+    AIWeeklyReportDeliverRequest,
+    AIWeeklyReportDeliveryResponse,
     AIWeeklyReportGenerateRequest,
 )
+from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_manager_service import AIManagerService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 
@@ -73,6 +76,7 @@ def generate_weekly_manager_report(
         organization_id=payload.organization_id,
         branch_id=effective_branch_id,
         generated_by_user_id=current_user.id,
+        deliver=payload.deliver,
     )
     return _report_response(report)
 
@@ -121,6 +125,28 @@ def get_weekly_manager_report(
     return _report_response(report)
 
 
+@router.post("/weekly-reports/{report_id}/deliver", response_model=List[AIWeeklyReportDeliveryResponse])
+def deliver_weekly_manager_report(
+    report_id: int,
+    payload: AIWeeklyReportDeliverRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """Send a saved weekly manager report through configured email and/or Telegram channels."""
+    report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+    require_organization_access(
+        organization_id=report.organization_id,
+        branch_id=report.branch_id,
+        current_user=current_user,
+    )
+    if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+    deliveries = AIReportDeliveryService.deliver(db, report, channels=payload.channels)
+    return [_delivery_response(delivery) for delivery in deliveries]
+
+
 def _resolve_branch_scope(current_user: User, requested_branch_id: Optional[int]) -> Optional[int]:
     if current_user.branch_id is None:
         return requested_branch_id
@@ -149,4 +175,21 @@ def _report_response(report: AIWeeklyManagerReport) -> AIWeeklyManagerReportResp
         fallback_used=report.fallback_used,
         generated_at=report.generated_at,
         created_at=report.created_at,
+    )
+
+
+def _delivery_response(delivery) -> AIWeeklyReportDeliveryResponse:
+    return AIWeeklyReportDeliveryResponse(
+        id=delivery.id,
+        report_id=delivery.report_id,
+        organization_id=delivery.organization_id,
+        branch_id=delivery.branch_id,
+        channel=delivery.channel,
+        recipient=delivery.recipient,
+        status=delivery.status,
+        attempt_count=delivery.attempt_count,
+        error_message=delivery.error_message,
+        provider_response=delivery.provider_response,
+        sent_at=delivery.sent_at,
+        created_at=delivery.created_at,
     )

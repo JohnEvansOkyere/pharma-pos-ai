@@ -19,6 +19,7 @@ from app.models.cloud_projection import (
 )
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Organization
+from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.ai_manager_service import AIManagerService
 
@@ -34,6 +35,7 @@ class AIWeeklyReportService:
         branch_id: Optional[int] = None,
         generated_by_user_id: Optional[int] = None,
         as_of: Optional[datetime] = None,
+        deliver: bool = False,
     ) -> AIWeeklyManagerReport:
         as_of_utc = AIWeeklyReportService._coerce_utc(as_of or datetime.now(timezone.utc))
         performance_start, performance_end, action_start, action_end = AIWeeklyReportService._periods(as_of_utc)
@@ -99,10 +101,12 @@ class AIWeeklyReportService:
         db.add(report)
         db.commit()
         db.refresh(report)
+        if deliver:
+            AIReportDeliveryService.deliver(db, report)
         return report
 
     @staticmethod
-    def generate_all(db: Session, *, as_of: Optional[datetime] = None) -> List[AIWeeklyManagerReport]:
+    def generate_all(db: Session, *, as_of: Optional[datetime] = None, deliver: bool = False) -> List[AIWeeklyManagerReport]:
         reports: List[AIWeeklyManagerReport] = []
         organizations = db.query(Organization).filter(Organization.is_active.is_(True)).order_by(Organization.id.asc()).all()
         for organization in organizations:
@@ -113,6 +117,7 @@ class AIWeeklyReportService:
                     branch_id=None,
                     generated_by_user_id=None,
                     as_of=as_of,
+                    deliver=deliver,
                 )
             )
         return reports

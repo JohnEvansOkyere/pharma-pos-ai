@@ -1827,14 +1827,33 @@ Implemented:
   - `AI_WEEKLY_REPORT_DAY`
   - `AI_WEEKLY_REPORT_HOUR`
   - `AI_WEEKLY_REPORT_MINUTE`
-- regression tests for saved report generation, manual endpoint generation/list/detail, branch authorization, and scheduler job registration
+- audited report delivery attempts in `ai_weekly_report_deliveries`
+- optional email delivery through SMTP configuration:
+  - `AI_WEEKLY_REPORT_DELIVERY_ENABLED`
+  - `AI_WEEKLY_REPORT_EMAIL_ENABLED`
+  - `AI_WEEKLY_REPORT_EMAIL_RECIPIENTS`
+  - `SMTP_HOST`
+  - `SMTP_PORT`
+  - `SMTP_USERNAME`
+  - `SMTP_PASSWORD`
+  - `SMTP_FROM_EMAIL`
+  - `SMTP_FROM_NAME`
+  - `SMTP_USE_TLS`
+  - `SMTP_USE_SSL`
+- optional Telegram delivery through bot configuration:
+  - `AI_WEEKLY_REPORT_TELEGRAM_ENABLED`
+  - `TELEGRAM_BOT_TOKEN`
+  - `AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS`
+- manual delivery endpoint: `POST /ai-manager/weekly-reports/{report_id}/deliver`
+- regression tests for saved report generation, manual endpoint generation/list/detail, report delivery attempts, branch authorization, and scheduler job registration
 
 Current scope:
 
 - scheduled generation is disabled by default and must be explicitly enabled per deployment
 - first scheduled job generates organization-level reports for active organizations
 - no frontend saved-report viewer yet
-- no email, SMS, or WhatsApp delivery yet
+- email and Telegram delivery are backend-only and disabled by default
+- WhatsApp delivery is intentionally out of scope for the first production path
 - reports are generated from approved cloud projection tables only; unsynced local-only events are outside the report scope
 
 Next foundation:
@@ -1844,4 +1863,4 @@ Next foundation:
 - add reconciliation checks between movement facts and stock snapshots
 - expose saved weekly reports in the manager dashboard
 - add report acknowledgement/review workflow for managers
-- add optional delivery channel after operational review
+- expose delivery status in the saved-report UI

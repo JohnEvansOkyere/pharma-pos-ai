@@ -36,6 +36,8 @@ from app.schemas.ai_manager import (
     AIManagerChatRequest,
     AIManagerChatResponse,
     AIWeeklyManagerReportResponse,
+    AIWeeklyReportDeliverRequest,
+    AIWeeklyReportDeliveryResponse,
     AIWeeklyReportGenerateRequest,
 )
 
@@ -94,5 +96,7 @@ __all__ = [
     "AIManagerChatRequest",
     "AIManagerChatResponse",
     "AIWeeklyReportGenerateRequest",
+    "AIWeeklyReportDeliverRequest",
+    "AIWeeklyReportDeliveryResponse",
     "AIWeeklyManagerReportResponse",
 ]

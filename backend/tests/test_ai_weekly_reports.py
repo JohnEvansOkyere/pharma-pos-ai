@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.endpoints.ai_manager import (
+    deliver_weekly_manager_report,
     generate_weekly_manager_report,
     get_weekly_manager_report,
     list_weekly_manager_reports,
@@ -24,7 +25,8 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
-from app.schemas.ai_manager import AIWeeklyReportGenerateRequest
+from app.schemas.ai_manager import AIWeeklyReportDeliverRequest, AIWeeklyReportGenerateRequest
+from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.scheduler import SchedulerService
 
@@ -254,6 +256,60 @@ def test_weekly_report_endpoint_persists_report_and_lists_it(monkeypatch, db_ses
     assert reports[0].id == generated.id
     assert fetched.tool_results["stock_risks"]["out_of_stock_count"] == 1
     assert fetched.sections["coming_week_action_plan"]["risk_counts"]["out_of_stock_count"] == 1
+
+
+def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_EMAIL_ENABLED", True)
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_EMAIL_RECIPIENTS", ["owner@example.com"])
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "reports@example.com")
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_TELEGRAM_CHAT_IDS", ["12345"])
+    monkeypatch.setattr(AIReportDeliveryService, "_send_email", lambda **kwargs: None)
+    monkeypatch.setattr(AIReportDeliveryService, "_send_telegram", lambda **kwargs: {"ok": True})
+
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
+    assert all(delivery.status == "sent" for delivery in deliveries)
+    assert {delivery.recipient for delivery in deliveries} == {"owner@example.com", "12345"}
+
+
+def test_weekly_report_delivery_is_audited_when_channels_are_disabled(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(channels=["email", "telegram"]),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
+    assert all(delivery.status == "skipped" for delivery in deliveries)
+    assert all(delivery.error_message for delivery in deliveries)
 
 
 def test_branch_manager_cannot_generate_cross_branch_report(db_session):

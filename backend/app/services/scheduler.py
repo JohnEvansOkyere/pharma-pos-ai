@@ -207,7 +207,10 @@ class SchedulerService:
         db: Session = SessionLocal()
         try:
             logger.info("Running weekly AI manager report generation task")
-            reports = AIWeeklyReportService.generate_all(db)
+            reports = AIWeeklyReportService.generate_all(
+                db,
+                deliver=settings.AI_WEEKLY_REPORT_DELIVERY_ENABLED,
+            )
             logger.info("Generated %s weekly AI manager report(s)", len(reports))
         except Exception as e:
             logger.error(f"Error in weekly AI manager report task: {str(e)}")
