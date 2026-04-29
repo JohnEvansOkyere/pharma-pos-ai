@@ -130,3 +130,26 @@ require_refund_sale = require_permission(UserPermission.REFUND_SALE)
 require_adjust_stock = require_permission(UserPermission.ADJUST_STOCK)
 require_perform_stock_take = require_permission(UserPermission.PERFORM_STOCK_TAKE)
 require_trigger_backup = require_permission(UserPermission.TRIGGER_BACKUP)
+
+
+def require_organization_access(
+    organization_id: int,
+    current_user: User = Depends(require_view_reports),
+) -> User:
+    """
+    Require report access to the requested organization.
+
+    Users assigned to an organization are scoped to that organization. Admin
+    users without an organization assignment are treated as platform operators
+    for the current transition period.
+    """
+    if current_user.organization_id is None and current_user.role == UserRole.ADMIN:
+        return current_user
+
+    if current_user.organization_id != organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Organization access denied",
+        )
+
+    return current_user

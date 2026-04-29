@@ -700,6 +700,11 @@ Backend APIs must enforce permissions.
 
 Frontend route hiding is not authorization.
 
+Cloud report APIs must enforce tenant scope on the backend. A user assigned to
+an organization may only query that organization's cloud reporting data.
+Platform-level admin access is explicit and reserved for admin users without an
+organization assignment during the current transition period.
+
 ### Secrets And Keys
 
 Rules:
@@ -1629,13 +1634,14 @@ Implemented:
 - idempotent projection behavior
 - projection status endpoint: `GET /sync/projection-status`
 - manual projection endpoint: `POST /sync/project`
+- admin-only access for projection status and manual projection controls
 - regression tests for sale projection, inventory projection, idempotency, and projection status
 
 Current scope:
 
 - reporting facts only
 - does not yet build richer branch inventory balance snapshots
-- does not yet expose owner dashboard report endpoints
+- owner dashboard report endpoints are available as first-pass API contracts
 - unsupported event types are marked projected/skipped to avoid blocking the queue
 
 Next foundation:
@@ -1653,14 +1659,16 @@ Implemented:
 - schemas for sales, branch sales, inventory movement, and sync health summaries
 - organization and optional branch filters
 - optional time-window filters for projected fact reports
+- backend-enforced organization access for cloud report queries
 - regression tests for organization/branch isolation and health counts
+- regression tests for cross-organization denial and platform-admin access
 
 Current scope:
 
 - reporting endpoints query cloud projection tables only
 - no frontend cloud owner dashboard yet
 - no AI assistant tools yet
-- auth/tenant scoping for cloud users still needs hardening before real hosted exposure
+- branch-level user scoping beyond organization membership still needs hardening before real hosted exposure
 
 Next foundation:
 

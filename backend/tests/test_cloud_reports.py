@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+from fastapi import HTTPException
+
+from app.api.dependencies.auth import require_organization_access
 from app.api.endpoints.cloud_reports import (
     get_cloud_branch_sales,
     get_cloud_inventory_movement_summary,
@@ -13,6 +17,8 @@ from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFac
 from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
+from app.models.user import User, UserPermission, UserRole
+from app.core.security import get_password_hash
 
 
 def _tenant(db_session, *, name: str, branch_code: str):
@@ -32,6 +38,22 @@ def _tenant(db_session, *, name: str, branch_code: str):
     db_session.add(device)
     db_session.commit()
     return organization, branch, device
+
+
+def _report_user(db_session, organization_id: int, *, username: str = "report-user"):
+    user = User(
+        username=username,
+        email=f"{username}@example.com",
+        hashed_password=get_password_hash("report-secret"),
+        full_name="Report User",
+        role=UserRole.MANAGER,
+        permissions=[UserPermission.VIEW_REPORTS.value],
+        organization_id=organization_id,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
 
 
 def _ingested(db_session, organization, branch, device, *, event_id: str, sequence: int, event_type: SyncEventType):
@@ -102,9 +124,10 @@ def test_cloud_sales_summary_filters_by_organization_and_branch(db_session):
         ]
     )
     db_session.commit()
+    report_user = _report_user(db_session, org_a.id)
 
-    summary = get_cloud_sales_summary(organization_id=org_a.id, branch_id=branch_a.id, db=db_session)
-    branch_rows = get_cloud_branch_sales(organization_id=org_a.id, db=db_session)
+    summary = get_cloud_sales_summary(organization_id=org_a.id, branch_id=branch_a.id, db=db_session, current_user=report_user)
+    branch_rows = get_cloud_branch_sales(organization_id=org_a.id, db=db_session, current_user=report_user)
 
     assert summary.sales_count == 2
     assert summary.total_revenue == 25.5
@@ -148,8 +171,9 @@ def test_cloud_inventory_movement_summary(db_session):
         ]
     )
     db_session.commit()
+    report_user = _report_user(db_session, org.id)
 
-    summary = get_cloud_inventory_movement_summary(organization_id=org.id, branch_id=branch.id, db=db_session)
+    summary = get_cloud_inventory_movement_summary(organization_id=org.id, branch_id=branch.id, db=db_session, current_user=report_user)
 
     assert summary.movement_count == 2
     assert summary.total_positive_quantity == 10
@@ -165,8 +189,9 @@ def test_cloud_sync_health_counts_ingested_projection_and_duplicates(db_session)
     event_one.projected_at = event_one.received_at
     event_two.projection_error = "bad payload"
     db_session.commit()
+    report_user = _report_user(db_session, org.id)
 
-    health = get_cloud_sync_health(organization_id=org.id, branch_id=branch.id, db=db_session)
+    health = get_cloud_sync_health(organization_id=org.id, branch_id=branch.id, db=db_session, current_user=report_user)
 
     assert health.ingested_event_count == 2
     assert health.projected_event_count == 1
@@ -174,3 +199,33 @@ def test_cloud_sync_health_counts_ingested_projection_and_duplicates(db_session)
     assert health.duplicate_delivery_count == 2
     assert health.last_received_at is not None
     assert health.last_projected_at is not None
+
+
+def test_cloud_report_rejects_cross_organization_access(db_session):
+    org_a, _branch_a, _device_a = _tenant(db_session, name="Tenant A", branch_code="TA")
+    org_b, _branch_b, _device_b = _tenant(db_session, name="Tenant B", branch_code="TB")
+    report_user = _report_user(db_session, org_a.id)
+
+    with pytest.raises(HTTPException) as exc:
+        require_organization_access(organization_id=org_b.id, current_user=report_user)
+
+    assert exc.value.status_code == 403
+    assert "Organization access denied" in exc.value.detail
+
+
+def test_cloud_report_allows_platform_admin_access(db_session):
+    org, _branch, _device = _tenant(db_session, name="Platform Tenant", branch_code="PT")
+    platform_admin = User(
+        username="platform-admin",
+        email="platform-admin@example.com",
+        hashed_password=get_password_hash("admin-secret"),
+        full_name="Platform Admin",
+        role=UserRole.ADMIN,
+        permissions=[UserPermission.VIEW_REPORTS.value],
+        organization_id=None,
+        is_active=True,
+    )
+    db_session.add(platform_admin)
+    db_session.commit()
+
+    assert require_organization_access(organization_id=org.id, current_user=platform_admin) == platform_admin

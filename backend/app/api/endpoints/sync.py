@@ -6,12 +6,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_admin
 from app.db.base import get_db
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Device, DeviceStatus
 from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
 from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
 from app.services.cloud_projection_service import CloudProjectionService
+from app.models.user import User
 
 router = APIRouter(prefix="/sync", tags=["Sync"])
 
@@ -117,6 +119,7 @@ def ingest_sync_event(
 @router.get("/projection-status", response_model=CloudProjectionStatus)
 def get_projection_status(
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     status_payload = CloudProjectionService.status(db)
     return CloudProjectionStatus(
@@ -133,5 +136,6 @@ def get_projection_status(
 def project_ingested_events(
     limit: int = 100,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
 ):
     return CloudProjectionRunResult(**CloudProjectionService.project_pending(db, limit=limit))

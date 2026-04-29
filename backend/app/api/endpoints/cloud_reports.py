@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_organization_access
 from app.db.base import get_db
+from app.models.user import User
 from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.schemas.cloud_reports import (
@@ -36,6 +38,7 @@ def get_cloud_sales_summary(
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
 ):
     query = db.query(
         func.count(CloudSaleFact.id).label("sales_count"),
@@ -63,6 +66,7 @@ def get_cloud_branch_sales(
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
 ):
     query = db.query(
         CloudSaleFact.branch_id,
@@ -92,6 +96,7 @@ def get_cloud_inventory_movement_summary(
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
 ):
     positive_quantity = func.coalesce(
         func.sum(case((CloudInventoryMovementFact.quantity_delta > 0, CloudInventoryMovementFact.quantity_delta), else_=0)),
@@ -130,6 +135,7 @@ def get_cloud_sync_health(
     organization_id: int,
     branch_id: Optional[int] = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
 ):
     query = db.query(IngestedSyncEvent).filter(IngestedSyncEvent.organization_id == organization_id)
     if branch_id is not None:
