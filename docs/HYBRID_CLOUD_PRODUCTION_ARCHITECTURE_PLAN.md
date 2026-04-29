@@ -1712,14 +1712,19 @@ Implemented:
 - organization and branch access checks reused from cloud report authorization
 - branch-assigned users are limited to their assigned branch even when no branch filter is sent
 - deterministic read-only assistant response over approved cloud reporting facts
+- server-side provider adapter supports `openai`, `claude`, and `groq`
+- provider selection uses `AI_MANAGER_PROVIDER`
+- model selection uses `AI_MANAGER_MODEL`
+- provider keys remain server-side only: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GROQ_API_KEY`
+- deterministic fallback is used when no external provider/model/key is configured or provider calls fail
 - do not allow AI to mutate stock, approve dispensing, override rules, or make clinical decisions
 - explicit refusal for clinical, controlled-drug override, dispensing approval, and mutating requests
-- regression tests for normal answers, branch scope, cross-branch denial, and unsafe-request refusal
+- regression tests for normal answers, branch scope, cross-branch denial, unsafe-request refusal, and provider fallback
 
 Current scope:
 
 - no frontend chat UI yet
-- no external LLM provider is called by this first contract
+- no provider SDK dependency is required; HTTP requests are made server-side through the configured provider adapter
 - low-stock and expiry cloud report tools are still pending
 - responses are deterministic summaries over approved reporting data, not free-form database access
 

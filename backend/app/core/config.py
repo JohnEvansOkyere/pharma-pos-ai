@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     CLOUD_SYNC_MAX_RETRIES: int = 10
     CLOUD_SYNC_INTERVAL_MINUTES: int = 5
 
+    # AI manager assistant provider. Keys remain server-side only.
+    AI_MANAGER_PROVIDER: str = "deterministic"  # deterministic, openai, claude, groq
+    AI_MANAGER_MODEL: Optional[str] = None
+    AI_MANAGER_TIMEOUT_SECONDS: int = 20
+    AI_MANAGER_MAX_TOKENS: int = 700
+    OPENAI_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None
+
     # Business Rules
     LOW_STOCK_THRESHOLD: int = 10
     EXPIRY_WARNING_DAYS: int = 30

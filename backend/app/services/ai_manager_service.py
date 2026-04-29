@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.user import User
+from app.services.ai_llm_provider import AIManagerLLMProvider
 
 
 REFUSAL_MESSAGE = (
@@ -53,6 +54,9 @@ class AIManagerService:
                 ),
                 "tool_results": {},
                 "safety_notes": AIManagerService._safety_notes(),
+                "provider": AIManagerLLMProvider.configured_provider(),
+                "model": AIManagerLLMProvider.configured_model(),
+                "fallback_used": False,
                 "refused": True,
             }
 
@@ -87,16 +91,29 @@ class AIManagerService:
             "sync_health": sync_health,
         }
 
-        return {
-            "answer": AIManagerService._compose_answer(
-                normalized_message,
-                sales_summary=sales_summary,
-                branch_sales=branch_sales,
-                inventory_summary=inventory_summary,
-                sync_health=sync_health,
-                period_days=period_days,
+        deterministic_answer = AIManagerService._compose_answer(
+            normalized_message,
+            sales_summary=sales_summary,
+            branch_sales=branch_sales,
+            inventory_summary=inventory_summary,
+            sync_health=sync_health,
+            period_days=period_days,
+            branch_id=effective_branch_id,
+        )
+        provider_result = AIManagerLLMProvider.generate_answer(
+            prompt=AIManagerService._provider_prompt(
+                message=message.strip(),
+                deterministic_answer=deterministic_answer,
+                tool_results=tool_results,
+                organization_id=organization_id,
                 branch_id=effective_branch_id,
+                period_days=period_days,
             ),
+            deterministic_answer=deterministic_answer,
+        )
+
+        return {
+            "answer": provider_result["answer"],
             "data_scope": AIManagerService._scope_payload(
                 organization_id,
                 effective_branch_id,
@@ -109,6 +126,9 @@ class AIManagerService:
             ),
             "tool_results": tool_results,
             "safety_notes": AIManagerService._safety_notes(),
+            "provider": provider_result["provider"],
+            "model": provider_result["model"],
+            "fallback_used": provider_result["fallback_used"],
             "refused": False,
         }
 
@@ -300,6 +320,30 @@ class AIManagerService:
             f"{sales_summary['total_items']} item(s). Inventory net movement is "
             f"{inventory_summary['net_quantity_delta']}. Sync projection failures: "
             f"{sync_health['projection_failed_count']}."
+        )
+
+    @staticmethod
+    def _provider_prompt(
+        *,
+        message: str,
+        deterministic_answer: str,
+        tool_results: Dict[str, Any],
+        organization_id: int,
+        branch_id: Optional[int],
+        period_days: int,
+    ) -> str:
+        scope = f"organization_id={organization_id}, branch_id={branch_id}, period_days={period_days}"
+        return (
+            "User question:\n"
+            f"{message}\n\n"
+            "Authorized reporting scope:\n"
+            f"{scope}\n\n"
+            "Approved reporting data:\n"
+            f"{tool_results}\n\n"
+            "Deterministic baseline answer:\n"
+            f"{deterministic_answer}\n\n"
+            "Write a concise manager-facing answer using only the approved reporting data. "
+            "Do not add clinical, dispensing, controlled-drug, patient, or stock mutation advice."
         )
 
     @staticmethod

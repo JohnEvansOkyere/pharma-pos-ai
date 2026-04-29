@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.endpoints.ai_manager import chat_with_ai_manager
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
 from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
@@ -234,3 +235,29 @@ def test_ai_manager_refuses_clinical_or_mutating_requests(db_session):
     assert response.refused is True
     assert response.tool_results == {}
     assert "cannot provide clinical advice" in response.answer.lower()
+
+
+@pytest.mark.parametrize("provider", ["openai", "claude", "groq"])
+def test_ai_manager_supports_configured_external_providers_with_fallback(monkeypatch, db_session, provider):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id, username=f"{provider}-manager")
+    monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", provider)
+    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", None)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", None)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Summarize sales",
+            organization_id=organization.id,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.provider == provider
+    assert response.model is None
+    assert response.fallback_used is True
+    assert response.tool_results["sales_summary"]["total_revenue"] == 400.0

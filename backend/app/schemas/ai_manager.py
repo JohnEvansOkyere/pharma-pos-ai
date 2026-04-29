@@ -25,4 +25,7 @@ class AIManagerChatResponse(BaseModel):
     data_scope: AIManagerDataScope
     tool_results: Dict[str, Any]
     safety_notes: List[str]
+    provider: str
+    model: Optional[str] = None
+    fallback_used: bool = False
     refused: bool = False
