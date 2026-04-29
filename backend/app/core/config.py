@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     AI_MANAGER_MODEL: Optional[str] = None
     AI_MANAGER_TIMEOUT_SECONDS: int = 20
     AI_MANAGER_MAX_TOKENS: int = 700
+    AI_WEEKLY_REPORTS_ENABLED: bool = False
+    AI_WEEKLY_REPORT_DAY: str = "sun"
+    AI_WEEKLY_REPORT_HOUR: int = 19
+    AI_WEEKLY_REPORT_MINUTE: int = 0
     OPENAI_API_KEY: Optional[str] = None
     ANTHROPIC_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None

@@ -9,6 +9,7 @@ from pytz import timezone
 from sqlalchemy.orm import Session
 
 from app.db.base import SessionLocal
+from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.notification_service import NotificationService
 from app.services.sync_upload_service import SyncUploadService
 from app.core.config import settings
@@ -85,6 +86,20 @@ class SchedulerService:
                 minutes=settings.CLOUD_SYNC_INTERVAL_MINUTES,
                 id="upload_sync_events",
                 name="Upload sync events",
+                replace_existing=True,
+            )
+
+        if settings.AI_WEEKLY_REPORTS_ENABLED:
+            self.scheduler.add_job(
+                self.generate_weekly_ai_reports,
+                CronTrigger(
+                    day_of_week=settings.AI_WEEKLY_REPORT_DAY,
+                    hour=settings.AI_WEEKLY_REPORT_HOUR,
+                    minute=settings.AI_WEEKLY_REPORT_MINUTE,
+                    timezone=tz,
+                ),
+                id="generate_weekly_ai_reports",
+                name="Generate weekly AI manager reports",
                 replace_existing=True,
             )
 
@@ -183,6 +198,19 @@ class SchedulerService:
             logger.info("Cloud sync upload result: %s", result)
         except Exception as e:
             logger.error(f"Error in cloud sync upload task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def generate_weekly_ai_reports():
+        """Task to generate saved weekly manager reports for active organizations."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running weekly AI manager report generation task")
+            reports = AIWeeklyReportService.generate_all(db)
+            logger.info("Generated %s weekly AI manager report(s)", len(reports))
+        except Exception as e:
+            logger.error(f"Error in weekly AI manager report task: {str(e)}")
         finally:
             db.close()
 

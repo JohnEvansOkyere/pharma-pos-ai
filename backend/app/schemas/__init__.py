@@ -32,7 +32,12 @@ from app.schemas.cloud_reports import (
     CloudStockRiskSummary,
     CloudSyncHealth,
 )
-from app.schemas.ai_manager import AIManagerChatRequest, AIManagerChatResponse
+from app.schemas.ai_manager import (
+    AIManagerChatRequest,
+    AIManagerChatResponse,
+    AIWeeklyManagerReportResponse,
+    AIWeeklyReportGenerateRequest,
+)
 
 __all__ = [
     "User",
@@ -88,4 +93,6 @@ __all__ = [
     "CloudSyncHealth",
     "AIManagerChatRequest",
     "AIManagerChatResponse",
+    "AIWeeklyReportGenerateRequest",
+    "AIWeeklyManagerReportResponse",
 ]

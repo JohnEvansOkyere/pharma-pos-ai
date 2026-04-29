@@ -1802,8 +1802,46 @@ Next foundation:
 
 17. AI weekly manager report
 
-- generate a Sunday 7 PM weekly manager report
-- include just-ended week performance and coming-week action plan
-- save generated reports in the database for dashboard review
-- support manual generation for testing and manager review
+Status: implemented for first persisted backend report contract.
+
+Implemented:
+
+- `ai_weekly_manager_reports` table for saved manager reports
+- report storage includes organization, optional branch, generating user, performance period, action period, generated timestamp, provider, model, fallback status, structured sections, tool results, and safety notes
+- manual generation endpoint: `POST /ai-manager/weekly-reports/generate`
+- saved report listing endpoint: `GET /ai-manager/weekly-reports`
+- saved report detail endpoint: `GET /ai-manager/weekly-reports/{report_id}`
+- branch-assigned managers are forced to their branch scope and cannot generate or read cross-branch reports
+- generated report combines:
+  - just-ended seven-day sales performance
+  - branch performance
+  - inventory movement
+  - coming Monday-Sunday stock action plan
+  - low-stock and out-of-stock risks
+  - expired and near-expiry batch risks
+  - sync and data-quality health
+- report executive summary uses the existing server-side provider adapter supporting `openai`, `claude`, and `groq`
+- deterministic fallback remains available when no provider/model/key is configured or provider calls fail
+- scheduler hook for Sunday 7 PM reports is available through:
+  - `AI_WEEKLY_REPORTS_ENABLED`
+  - `AI_WEEKLY_REPORT_DAY`
+  - `AI_WEEKLY_REPORT_HOUR`
+  - `AI_WEEKLY_REPORT_MINUTE`
+- regression tests for saved report generation, manual endpoint generation/list/detail, branch authorization, and scheduler job registration
+
+Current scope:
+
+- scheduled generation is disabled by default and must be explicitly enabled per deployment
+- first scheduled job generates organization-level reports for active organizations
+- no frontend saved-report viewer yet
+- no email, SMS, or WhatsApp delivery yet
+- reports are generated from approved cloud projection tables only; unsynced local-only events are outside the report scope
+
+Next foundation:
+
+18. Cloud report reconciliation and saved-report UI
+
 - add reconciliation checks between movement facts and stock snapshots
+- expose saved weekly reports in the manager dashboard
+- add report acknowledgement/review workflow for managers
+- add optional delivery channel after operational review
