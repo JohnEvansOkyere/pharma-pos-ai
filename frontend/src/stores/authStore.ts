@@ -10,6 +10,8 @@ interface User {
   email: string
   full_name: string
   role: 'admin' | 'manager' | 'cashier'
+  organization_id?: number | null
+  branch_id?: number | null
   is_active: boolean
 }
 

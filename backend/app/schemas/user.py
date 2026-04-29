@@ -38,6 +38,8 @@ class UserUpdate(BaseModel):
 class User(UserBase):
     """Schema for user response."""
     id: int
+    organization_id: Optional[int] = None
+    branch_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

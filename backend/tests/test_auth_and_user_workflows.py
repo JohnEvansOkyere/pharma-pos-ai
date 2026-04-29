@@ -7,9 +7,10 @@ from fastapi import HTTPException
 
 from app.api.endpoints.auth import login
 from app.api.endpoints.users import create_user, update_user
+from app.models import Branch, Organization
 from app.models.activity_log import ActivityLog
 from app.models.user import UserPermission, UserRole
-from app.schemas.user import UserCreate, UserUpdate
+from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 from app.api.dependencies.auth import require_adjust_stock, require_manage_products
 
 
@@ -75,3 +76,21 @@ def test_explicit_permissions_override_role_defaults(manager_user):
 
     assert exc.value.status_code == 403
     assert UserPermission.MANAGE_PRODUCTS.value in exc.value.detail
+
+
+def test_user_schema_exposes_tenant_assignment(db_session, manager_user):
+    organization = Organization(name="Schema Tenant")
+    db_session.add(organization)
+    db_session.flush()
+    branch = Branch(organization_id=organization.id, name="Main", code="MAIN")
+    db_session.add(branch)
+    db_session.flush()
+    manager_user.organization_id = organization.id
+    manager_user.branch_id = branch.id
+    db_session.commit()
+    db_session.refresh(manager_user)
+
+    payload = UserSchema.model_validate(manager_user)
+
+    assert payload.organization_id == organization.id
+    assert payload.branch_id == branch.id

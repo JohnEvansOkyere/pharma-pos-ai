@@ -295,6 +295,35 @@ class ApiClient {
     return response.data
   }
 
+  // Cloud reporting endpoints
+  async getCloudSalesSummary(params: any) {
+    const response = await this.client.get('/cloud-reports/sales-summary', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudBranchSales(params: any) {
+    const response = await this.client.get('/cloud-reports/branch-sales', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudInventoryMovementSummary(params: any) {
+    const response = await this.client.get('/cloud-reports/inventory-movements-summary', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudSyncHealth(params: any) {
+    const response = await this.client.get('/cloud-reports/sync-health', {
+      params,
+    })
+    return response.data
+  }
+
   // Notification endpoints
   async getNotifications(params?: any) {
     const response = await this.client.get('/notifications', { params })

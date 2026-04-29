@@ -1669,7 +1669,7 @@ Implemented:
 Current scope:
 
 - reporting endpoints query cloud projection tables only
-- no frontend cloud owner dashboard yet
+- first cloud owner dashboard UI is available
 - no AI assistant tools yet
 - richer branch-role policy is still needed before real hosted exposure, including owner, multi-branch manager, auditor, and support technician semantics
 
@@ -1677,6 +1677,31 @@ Next foundation:
 
 12. Cloud owner dashboard UI
 
+Status: implemented for first reporting surface.
+
+Implemented:
+
 - query Supabase-backed projection tables by organization and branch
-- expose sales summaries, inventory movement summaries, sync health, and projection health
-- prepare API contracts for cloud owner dashboard and AI manager assistant
+- expose sales summaries, inventory movement summaries, and sync health
+- frontend cloud report API client methods
+- dedicated `/cloud-dashboard` route
+- sidebar navigation for admin and manager users
+- organization and branch filters using backend tenant scope as the authority
+- period filters for projected fact reports
+- frontend regression test for dashboard data loading
+- `/auth/me` now exposes user organization and branch assignment for scoped cloud queries
+
+Current scope:
+
+- dashboard reads the existing cloud report endpoints only
+- projection status remains admin-only and is not shown to manager users in the first UI
+- branch names are not yet hydrated from a branch registry endpoint, so the first UI labels branches by ID
+- no AI assistant tools yet
+
+Next foundation:
+
+13. AI manager assistant
+
+- use the cloud reporting API surface as approved tool context
+- answer manager questions about sales, inventory movement, sync health, low-stock risk, and expiry risk
+- do not allow AI to mutate stock, approve dispensing, override rules, or make clinical decisions
