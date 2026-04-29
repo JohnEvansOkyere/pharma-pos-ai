@@ -35,6 +35,8 @@ class IngestedSyncEvent(Base):
     duplicate_count = Column(Integer, default=0, nullable=False)
     last_duplicate_at = Column(DateTime(timezone=True))
     ingest_error = Column(Text)
+    projected_at = Column(DateTime(timezone=True))
+    projection_error = Column(Text)
     received_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     def __repr__(self):

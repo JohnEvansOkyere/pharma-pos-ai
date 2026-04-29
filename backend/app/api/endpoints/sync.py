@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Device, DeviceStatus
+from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
 from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
+from app.services.cloud_projection_service import CloudProjectionService
 
 router = APIRouter(prefix="/sync", tags=["Sync"])
 
@@ -110,3 +112,26 @@ def ingest_sync_event(
     except Exception:
         db.rollback()
         raise
+
+
+@router.get("/projection-status", response_model=CloudProjectionStatus)
+def get_projection_status(
+    db: Session = Depends(get_db),
+):
+    status_payload = CloudProjectionService.status(db)
+    return CloudProjectionStatus(
+        **{
+            **status_payload,
+            "last_projected_at": status_payload["last_projected_at"].isoformat()
+            if status_payload["last_projected_at"]
+            else None,
+        }
+    )
+
+
+@router.post("/project", response_model=CloudProjectionRunResult)
+def project_ingested_events(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    return CloudProjectionRunResult(**CloudProjectionService.project_pending(db, limit=limit))

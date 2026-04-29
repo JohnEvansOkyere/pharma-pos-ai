@@ -22,6 +22,7 @@ from app.schemas.stock_take import StockTake, StockTakeCreate, StockTakeComplete
 from app.schemas.tenancy import Branch, Device, Organization
 from app.schemas.sync_event import SyncEvent
 from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
+from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
 
 __all__ = [
     "User",
@@ -66,4 +67,6 @@ __all__ = [
     "SyncEvent",
     "SyncIngestionRequest",
     "SyncIngestionResponse",
+    "CloudProjectionRunResult",
+    "CloudProjectionStatus",
 ]

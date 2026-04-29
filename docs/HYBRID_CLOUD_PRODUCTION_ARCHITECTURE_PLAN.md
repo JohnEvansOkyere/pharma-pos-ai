@@ -1613,3 +1613,37 @@ Original goal:
 - mark events sent/failed without blocking POS
 - retry safely with backoff
 - expose sync health in local diagnostics
+
+10. Cloud projection/read models
+
+Status: implemented for first reporting facts.
+
+Implemented:
+
+- `cloud_sale_facts` table
+- `cloud_inventory_movement_facts` table
+- projection status fields on `ingested_sync_events`
+- projector service for accepted Supabase/cloud events
+- sale-created projection into cloud sales facts
+- stock-received, stock-adjusted, stock-take-completed, and sale-reversed projection into inventory movement facts
+- idempotent projection behavior
+- projection status endpoint: `GET /sync/projection-status`
+- manual projection endpoint: `POST /sync/project`
+- regression tests for sale projection, inventory projection, idempotency, and projection status
+
+Current scope:
+
+- reporting facts only
+- does not yet build richer branch inventory balance snapshots
+- does not yet expose owner dashboard report endpoints
+- unsupported event types are marked projected/skipped to avoid blocking the queue
+
+Next foundation:
+
+11. Cloud reporting endpoints
+
+Goal:
+
+- query Supabase-backed projection tables by organization and branch
+- expose sales summaries, inventory movement summaries, sync health, and projection health
+- prepare API contracts for cloud owner dashboard and AI manager assistant
