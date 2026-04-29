@@ -15,7 +15,12 @@ from app.models.inventory_movement import InventoryMovement
 from app.models.stock_take import StockTake, StockTakeItem
 from app.models.sync_event import SyncEvent, SyncEventCounter
 from app.models.sync_ingestion import IngestedSyncEvent
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 
 __all__ = [
     "User",
@@ -40,4 +45,6 @@ __all__ = [
     "IngestedSyncEvent",
     "CloudSaleFact",
     "CloudInventoryMovementFact",
+    "CloudProductSnapshot",
+    "CloudBatchSnapshot",
 ]

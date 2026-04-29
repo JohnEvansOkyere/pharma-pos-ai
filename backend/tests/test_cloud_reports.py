@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -8,12 +9,20 @@ from fastapi import HTTPException
 from app.api.dependencies.auth import require_organization_access
 from app.api.endpoints.cloud_reports import (
     get_cloud_branch_sales,
+    get_cloud_expiry_risk,
     get_cloud_inventory_movement_summary,
+    get_cloud_low_stock,
     get_cloud_sales_summary,
+    get_cloud_stock_risk_summary,
     get_cloud_sync_health,
 )
 from app.models import Branch, Device, Organization
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
@@ -314,3 +323,115 @@ def test_cloud_report_allows_platform_admin_access(db_session):
     db_session.commit()
 
     assert require_organization_access(organization_id=org.id, current_user=platform_admin) == platform_admin
+
+
+def test_cloud_stock_risk_reports_are_tenant_and_branch_scoped(db_session):
+    org, branch, device = _tenant(db_session, name="Risk Org", branch_code="RISK")
+    other_org, other_branch, other_device = _tenant(db_session, name="Other Risk Org", branch_code="ORISK")
+    event = _ingested(db_session, org, branch, device, event_id="99999999-9999-9999-9999-999999999991", sequence=1, event_type=SyncEventType.PRODUCT_CREATED)
+    other_event = _ingested(db_session, other_org, other_branch, other_device, event_id="99999999-9999-9999-9999-999999999992", sequence=1, event_type=SyncEventType.PRODUCT_CREATED)
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=1,
+                name="Low Stock Tabs",
+                sku="LOW-1",
+                total_stock=3,
+                low_stock_threshold=5,
+                reorder_level=10,
+                cost_price=Decimal("2.00"),
+                selling_price=Decimal("4.00"),
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=2,
+                name="Out Stock Syrup",
+                sku="OUT-1",
+                total_stock=0,
+                low_stock_threshold=5,
+                reorder_level=12,
+                cost_price=Decimal("3.00"),
+                selling_price=Decimal("6.00"),
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=other_org.id,
+                branch_id=other_branch.id,
+                local_product_id=1,
+                name="Other Low Stock",
+                sku="OTHER-1",
+                total_stock=0,
+                low_stock_threshold=10,
+                is_active=True,
+                last_source_event_id=other_event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=1,
+                local_batch_id=10,
+                batch_number="EXP-1",
+                quantity=3,
+                expiry_date=date.today() + timedelta(days=20),
+                cost_price=Decimal("2.00"),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=2,
+                local_batch_id=11,
+                batch_number="OLD-1",
+                quantity=4,
+                expiry_date=date.today() - timedelta(days=1),
+                cost_price=Decimal("3.00"),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch.id, username="risk-report-user")
+
+    summary = get_cloud_stock_risk_summary(
+        organization_id=org.id,
+        expiry_warning_days=90,
+        db=db_session,
+        current_user=report_user,
+    )
+    low_stock = get_cloud_low_stock(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=report_user,
+    )
+    expiry_risk = get_cloud_expiry_risk(
+        organization_id=org.id,
+        days=30,
+        limit=50,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert summary.branch_id == branch.id
+    assert summary.low_stock_count == 1
+    assert summary.out_of_stock_count == 1
+    assert summary.near_expiry_batch_count == 1
+    assert summary.expired_batch_count == 1
+    assert summary.value_at_risk == 18.0
+    assert [item.product_id for item in low_stock] == [2, 1]
+    assert low_stock[0].status == "out_of_stock"
+    assert {item.batch_id for item in expiry_risk} == {10, 11}
+    assert any(item.status == "expired" for item in expiry_risk)

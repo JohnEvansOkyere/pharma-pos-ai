@@ -429,6 +429,9 @@ def create_product(
             "category_id": db_product.category_id,
             "cost_price": db_product.cost_price,
             "selling_price": db_product.selling_price,
+            "total_stock": db_product.total_stock,
+            "low_stock_threshold": db_product.low_stock_threshold,
+            "reorder_level": db_product.reorder_level,
             "is_active": db_product.is_active,
         },
     )
@@ -684,6 +687,8 @@ def add_product_batch(
             "batch_number": db_batch.batch_number,
             "quantity": db_batch.quantity,
             "expiry_date": db_batch.expiry_date,
+            "cost_price": db_batch.cost_price,
+            "is_quarantined": db_batch.is_quarantined,
             "stock_after": stock_after,
         },
     )

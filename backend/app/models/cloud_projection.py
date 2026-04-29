@@ -1,7 +1,7 @@
 """
 Cloud reporting projection models built from ingested sync events.
 """
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -48,3 +48,53 @@ class CloudInventoryMovementFact(Base):
     reason = Column(String(300))
     payload = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CloudProductSnapshot(Base):
+    """Current cloud product state projected from branch sync events."""
+
+    __tablename__ = "cloud_product_snapshots"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "branch_id", "local_product_id", name="uq_cloud_product_snapshot_scope_product"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False, index=True)
+    local_product_id = Column(Integer, nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    sku = Column(String(50), nullable=False, index=True)
+    total_stock = Column(Integer, nullable=False, default=0)
+    low_stock_threshold = Column(Integer, nullable=False, default=10)
+    reorder_level = Column(Integer, nullable=True)
+    cost_price = Column(Numeric(12, 2), nullable=True)
+    selling_price = Column(Numeric(12, 2), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    last_source_event_id = Column(Integer, ForeignKey("ingested_sync_events.id"), nullable=False, index=True)
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CloudBatchSnapshot(Base):
+    """Current cloud batch state projected from branch sync events."""
+
+    __tablename__ = "cloud_batch_snapshots"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "branch_id", "local_batch_id", name="uq_cloud_batch_snapshot_scope_batch"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False, index=True)
+    local_batch_id = Column(Integer, nullable=False, index=True)
+    local_product_id = Column(Integer, nullable=False, index=True)
+    batch_number = Column(String(100), nullable=False, index=True)
+    quantity = Column(Integer, nullable=False, default=0)
+    expiry_date = Column(Date, nullable=False, index=True)
+    cost_price = Column(Numeric(12, 2), nullable=True)
+    is_quarantined = Column(Boolean, nullable=False, default=False, index=True)
+    last_source_event_id = Column(Integer, ForeignKey("ingested_sync_events.id"), nullable=False, index=True)
+    payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

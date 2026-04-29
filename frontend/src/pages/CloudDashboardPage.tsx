@@ -59,6 +59,43 @@ interface CloudSyncHealth {
   last_projected_at: string | null
 }
 
+interface CloudStockRiskSummary {
+  organization_id: number
+  branch_id: number | null
+  low_stock_count: number
+  out_of_stock_count: number
+  near_expiry_batch_count: number
+  expired_batch_count: number
+  total_quantity_on_hand: number
+  value_at_risk: number
+  expiry_warning_days: number
+}
+
+interface CloudLowStockItem {
+  branch_id: number
+  product_id: number
+  product_name: string
+  sku: string
+  total_stock: number
+  low_stock_threshold: number
+  units_needed: number
+  status: string
+}
+
+interface CloudExpiryRiskItem {
+  branch_id: number
+  product_id: number
+  product_name: string
+  sku: string
+  batch_id: number
+  batch_number: string
+  quantity: number
+  expiry_date: string
+  days_until_expiry: number
+  value_at_risk: number
+  status: string
+}
+
 interface AIManagerChatResponse {
   answer: string
   data_scope: {
@@ -87,6 +124,7 @@ const suggestedPrompts = [
   'Which branch is performing best?',
   'Summarize sync health.',
   'Summarize inventory movement.',
+  'What stock risks should I investigate today?',
   'What should I investigate today?',
 ]
 
@@ -122,6 +160,9 @@ export default function CloudDashboardPage() {
   const [branchSales, setBranchSales] = useState<CloudBranchSalesSummary[]>([])
   const [inventorySummary, setInventorySummary] = useState<CloudInventoryMovementSummary | null>(null)
   const [syncHealth, setSyncHealth] = useState<CloudSyncHealth | null>(null)
+  const [stockRiskSummary, setStockRiskSummary] = useState<CloudStockRiskSummary | null>(null)
+  const [lowStockItems, setLowStockItems] = useState<CloudLowStockItem[]>([])
+  const [expiryRiskItems, setExpiryRiskItems] = useState<CloudExpiryRiskItem[]>([])
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -184,10 +225,23 @@ export default function CloudDashboardPage() {
       }),
       api.getCloudInventoryMovementSummary(baseParams),
       api.getCloudSyncHealth(syncParams),
+      api.getCloudStockRiskSummary({
+        ...syncParams,
+        expiry_warning_days: 90,
+      }),
+      api.getCloudLowStock({
+        ...syncParams,
+        limit: 10,
+      }),
+      api.getCloudExpiryRisk({
+        ...syncParams,
+        days: 90,
+        limit: 10,
+      }),
     ])
 
     const failures: string[] = []
-    const [salesResult, branchResult, inventoryResult, syncResult] = results
+    const [salesResult, branchResult, inventoryResult, syncResult, stockRiskResult, lowStockResult, expiryRiskResult] = results
 
     if (salesResult.status === 'fulfilled') {
       setSalesSummary(salesResult.value)
@@ -215,6 +269,27 @@ export default function CloudDashboardPage() {
     } else {
       setSyncHealth(null)
       failures.push('Sync health')
+    }
+
+    if (stockRiskResult.status === 'fulfilled') {
+      setStockRiskSummary(stockRiskResult.value)
+    } else {
+      setStockRiskSummary(null)
+      failures.push('Stock risk summary')
+    }
+
+    if (lowStockResult.status === 'fulfilled') {
+      setLowStockItems(lowStockResult.value)
+    } else {
+      setLowStockItems([])
+      failures.push('Low stock')
+    }
+
+    if (expiryRiskResult.status === 'fulfilled') {
+      setExpiryRiskItems(expiryRiskResult.value)
+    } else {
+      setExpiryRiskItems([])
+      failures.push('Expiry risk')
     }
 
     setFailedSections(failures)
@@ -391,6 +466,20 @@ export default function CloudDashboardPage() {
             icon={syncHealth?.projection_failed_count ? FiAlertTriangle : FiActivity}
             tone={syncHealth?.projection_failed_count ? 'red' : 'slate'}
           />
+          <MetricCard
+            title="Stock Risk"
+            value={formatNumber((stockRiskSummary?.out_of_stock_count ?? 0) + (stockRiskSummary?.low_stock_count ?? 0))}
+            detail={`${formatNumber(stockRiskSummary?.expired_batch_count ?? 0)} expired batches`}
+            icon={FiAlertTriangle}
+            tone={(stockRiskSummary?.out_of_stock_count || stockRiskSummary?.expired_batch_count) ? 'red' : 'slate'}
+          />
+          <MetricCard
+            title="Expiry Value Risk"
+            value={formatCurrency(stockRiskSummary?.value_at_risk ?? 0)}
+            detail={`${formatNumber(stockRiskSummary?.near_expiry_batch_count ?? 0)} near-expiry batches`}
+            icon={FiCalendar}
+            tone={(stockRiskSummary?.near_expiry_batch_count || stockRiskSummary?.expired_batch_count) ? 'red' : 'slate'}
+          />
         </div>
       )}
 
@@ -463,6 +552,31 @@ export default function CloudDashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <RiskTable
+          title="Low Stock"
+          emptyText="No low-stock products in the current scope"
+          rows={lowStockItems.map((item) => ({
+            key: `${item.branch_id}-${item.product_id}`,
+            primary: item.product_name,
+            secondary: `${item.sku} · Branch ${item.branch_id}`,
+            value: `${item.total_stock} on hand`,
+            status: item.status === 'out_of_stock' ? 'Out of stock' : 'Low stock',
+          }))}
+        />
+        <RiskTable
+          title="Expiry Risk"
+          emptyText="No expiry risk in the current scope"
+          rows={expiryRiskItems.map((item) => ({
+            key: `${item.branch_id}-${item.batch_id}`,
+            primary: item.product_name,
+            secondary: `${item.batch_number} · Branch ${item.branch_id}`,
+            value: `${item.days_until_expiry} days`,
+            status: item.status === 'expired' ? 'Expired' : formatCurrency(item.value_at_risk),
+          }))}
+        />
       </div>
 
       <div className="card p-6">
@@ -611,6 +725,45 @@ function StatusRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-4 border-b border-gray-100 pb-3 last:border-0 last:pb-0 dark:border-gray-700">
       <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
       <span className="text-right text-sm font-semibold text-gray-900 dark:text-gray-100">{value}</span>
+    </div>
+  )
+}
+
+interface RiskTableRow {
+  key: string
+  primary: string
+  secondary: string
+  value: string
+  status: string
+}
+
+function RiskTable({ title, emptyText, rows }: { title: string; emptyText: string; rows: RiskTableRow[] }) {
+  return (
+    <div className="card p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{title}</h2>
+        <FiAlertTriangle className="h-5 w-5 text-gray-400" />
+      </div>
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          {emptyText}
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-100 dark:divide-gray-700">
+          {rows.map((row) => (
+            <div key={row.key} className="grid grid-cols-[1fr_auto] gap-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{row.primary}</p>
+                <p className="truncate text-xs text-gray-500 dark:text-gray-400">{row.secondary}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{row.value}</p>
+                <p className="text-xs text-red-600 dark:text-red-300">{row.status}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

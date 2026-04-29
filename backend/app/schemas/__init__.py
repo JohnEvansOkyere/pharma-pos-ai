@@ -25,8 +25,11 @@ from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionRespon
 from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
 from app.schemas.cloud_reports import (
     CloudBranchSalesSummary,
+    CloudExpiryRiskItem,
     CloudInventoryMovementSummary,
+    CloudLowStockItem,
     CloudSalesSummary,
+    CloudStockRiskSummary,
     CloudSyncHealth,
 )
 from app.schemas.ai_manager import AIManagerChatRequest, AIManagerChatResponse
@@ -79,6 +82,9 @@ __all__ = [
     "CloudSalesSummary",
     "CloudBranchSalesSummary",
     "CloudInventoryMovementSummary",
+    "CloudStockRiskSummary",
+    "CloudLowStockItem",
+    "CloudExpiryRiskItem",
     "CloudSyncHealth",
     "AIManagerChatRequest",
     "AIManagerChatResponse",

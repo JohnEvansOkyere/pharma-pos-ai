@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -9,7 +10,12 @@ from app.api.endpoints.ai_manager import chat_with_ai_manager
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
@@ -235,6 +241,65 @@ def test_ai_manager_refuses_clinical_or_mutating_requests(db_session):
     assert response.refused is True
     assert response.tool_results == {}
     assert "cannot provide clinical advice" in response.answer.lower()
+
+
+def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="44444444-4444-4444-4444-444444444444",
+        sequence=3,
+        event_type=SyncEventType.PRODUCT_CREATED,
+    )
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                local_product_id=50,
+                name="Out Stock",
+                sku="OUT",
+                total_stock=0,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                local_product_id=50,
+                local_batch_id=60,
+                batch_number="EXP",
+                quantity=4,
+                expiry_date=date.today() + timedelta(days=10),
+                cost_price=Decimal("2.00"),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="What stock risks should I investigate today?",
+            organization_id=organization.id,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.refused is False
+    assert "out-of-stock" in response.answer.lower()
+    assert response.tool_results["stock_risk"]["out_of_stock_count"] == 1
+    assert response.tool_results["stock_risk"]["near_expiry_batch_count"] == 1
 
 
 @pytest.mark.parametrize("provider", ["openai", "claude", "groq"])

@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date, timedelta
 
 from app.models import Branch, Device, Organization
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
@@ -146,6 +152,84 @@ def test_project_stock_received_builds_inventory_movement_fact(db_session):
     assert fact.quantity_delta == 30
     assert fact.stock_after == 40
     assert event.projected_at is not None
+
+
+def test_project_product_batch_and_sale_updates_stock_snapshots(db_session):
+    organization, branch, device = _tenant_device(db_session)
+    product_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="66666666-6666-6666-6666-666666666661",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_CREATED,
+        aggregate_type="product",
+        aggregate_id=15,
+        payload={
+            "product_id": 15,
+            "name": "Expiry Risk Tablets",
+            "sku": "ERT-001",
+            "total_stock": 0,
+            "low_stock_threshold": 10,
+            "reorder_level": 25,
+            "cost_price": "2.50",
+            "selling_price": "4.00",
+            "is_active": True,
+        },
+    )
+    batch_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="66666666-6666-6666-6666-666666666662",
+        sequence=2,
+        event_type=SyncEventType.PRODUCT_BATCH_CREATED,
+        aggregate_type="product_batch",
+        aggregate_id=4,
+        payload={
+            "product_id": 15,
+            "batch_id": 4,
+            "batch_number": "BATCH-EXP",
+            "quantity": 12,
+            "expiry_date": (date.today() + timedelta(days=20)).isoformat(),
+            "cost_price": "2.50",
+            "stock_after": 12,
+        },
+    )
+    sale_event = _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="66666666-6666-6666-6666-666666666663",
+        sequence=3,
+        event_type=SyncEventType.SALE_CREATED,
+        aggregate_type="sale",
+        aggregate_id=22,
+        payload={
+            "sale_id": 22,
+            "invoice_number": "INV-22",
+            "payment_method": "cash",
+            "total_amount": "12.00",
+            "items": [{"product_id": 15, "batch_number": "BATCH-EXP", "quantity": 5}],
+        },
+    )
+
+    result = CloudProjectionService.project_pending(db_session, limit=10)
+    product = db_session.query(CloudProductSnapshot).filter_by(local_product_id=15).one()
+    batch = db_session.query(CloudBatchSnapshot).filter_by(local_batch_id=4).one()
+
+    assert result["projected"] == 3
+    assert product_event.projected_at is not None
+    assert batch_event.projected_at is not None
+    assert sale_event.projected_at is not None
+    assert product.name == "Expiry Risk Tablets"
+    assert product.low_stock_threshold == 10
+    assert product.total_stock == 7
+    assert batch.quantity == 7
+    assert batch.expiry_date == date.today() + timedelta(days=20)
 
 
 def test_projection_status_counts_pending_projected_and_failed(db_session):

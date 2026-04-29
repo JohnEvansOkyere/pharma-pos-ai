@@ -3,14 +3,19 @@ Read-only manager assistant backed by approved cloud reporting data.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.user import User
 from app.services.ai_llm_provider import AIManagerLLMProvider
@@ -29,6 +34,8 @@ class AIManagerService:
     SALES_SOURCE = "cloud_sale_facts"
     INVENTORY_SOURCE = "cloud_inventory_movement_facts"
     SYNC_SOURCE = "ingested_sync_events"
+    PRODUCT_SNAPSHOT_SOURCE = "cloud_product_snapshots"
+    BATCH_SNAPSHOT_SOURCE = "cloud_batch_snapshots"
 
     @staticmethod
     def answer(
@@ -83,12 +90,18 @@ class AIManagerService:
             organization_id=organization_id,
             branch_id=effective_branch_id,
         )
+        stock_risk = AIManagerService._stock_risk_summary(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+        )
 
         tool_results = {
             "sales_summary": sales_summary,
             "branch_sales": branch_sales,
             "inventory_summary": inventory_summary,
             "sync_health": sync_health,
+            "stock_risk": stock_risk,
         }
 
         deterministic_answer = AIManagerService._compose_answer(
@@ -97,6 +110,7 @@ class AIManagerService:
             branch_sales=branch_sales,
             inventory_summary=inventory_summary,
             sync_health=sync_health,
+            stock_risk=stock_risk,
             period_days=period_days,
             branch_id=effective_branch_id,
         )
@@ -122,6 +136,8 @@ class AIManagerService:
                     AIManagerService.SALES_SOURCE,
                     AIManagerService.INVENTORY_SOURCE,
                     AIManagerService.SYNC_SOURCE,
+                    AIManagerService.PRODUCT_SNAPSHOT_SOURCE,
+                    AIManagerService.BATCH_SNAPSHOT_SOURCE,
                 ],
             ),
             "tool_results": tool_results,
@@ -270,6 +286,65 @@ class AIManagerService:
         }
 
     @staticmethod
+    def _stock_risk_summary(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        expiry_warning_days: int = 90,
+    ) -> Dict[str, Any]:
+        product_query = db.query(CloudProductSnapshot).filter(
+            CloudProductSnapshot.organization_id == organization_id,
+            CloudProductSnapshot.is_active.is_(True),
+        )
+        batch_query = db.query(CloudBatchSnapshot).filter(
+            CloudBatchSnapshot.organization_id == organization_id,
+            CloudBatchSnapshot.quantity > 0,
+            CloudBatchSnapshot.is_quarantined.is_(False),
+        )
+        if branch_id is not None:
+            product_query = product_query.filter(CloudProductSnapshot.branch_id == branch_id)
+            batch_query = batch_query.filter(CloudBatchSnapshot.branch_id == branch_id)
+
+        today = date.today()
+        warning_date = today + timedelta(days=expiry_warning_days)
+        products = product_query.all()
+        batches = batch_query.all()
+        low_stock_products = [
+            {"product_id": product.local_product_id, "name": product.name, "stock": product.total_stock}
+            for product in products
+            if 0 < product.total_stock <= product.low_stock_threshold
+        ]
+        out_of_stock_products = [
+            {"product_id": product.local_product_id, "name": product.name, "stock": product.total_stock}
+            for product in products
+            if product.total_stock <= 0
+        ]
+        expiry_batches = [
+            {
+                "product_id": batch.local_product_id,
+                "batch_id": batch.local_batch_id,
+                "batch_number": batch.batch_number,
+                "quantity": batch.quantity,
+                "expiry_date": batch.expiry_date.isoformat(),
+                "days_until_expiry": (batch.expiry_date - today).days,
+                "status": "expired" if batch.expiry_date < today else "near_expiry",
+            }
+            for batch in batches
+            if batch.expiry_date <= warning_date
+        ]
+        return {
+            "low_stock_count": len(low_stock_products),
+            "out_of_stock_count": len(out_of_stock_products),
+            "near_expiry_batch_count": sum(1 for batch in expiry_batches if batch["status"] == "near_expiry"),
+            "expired_batch_count": sum(1 for batch in expiry_batches if batch["status"] == "expired"),
+            "expiry_warning_days": expiry_warning_days,
+            "low_stock_products": low_stock_products[:10],
+            "out_of_stock_products": out_of_stock_products[:10],
+            "expiry_batches": expiry_batches[:10],
+        }
+
+    @staticmethod
     def _compose_answer(
         message: str,
         *,
@@ -277,11 +352,21 @@ class AIManagerService:
         branch_sales: List[Dict[str, Any]],
         inventory_summary: Dict[str, Any],
         sync_health: Dict[str, Any],
+        stock_risk: Dict[str, Any],
         period_days: int,
         branch_id: Optional[int],
     ) -> str:
         scope = f"branch {branch_id}" if branch_id is not None else "all permitted branches"
         top_branch = max(branch_sales, key=lambda row: row["total_revenue"], default=None)
+
+        if any(keyword in message for keyword in ["risk", "expiry", "expire", "expired", "low stock", "out of stock"]):
+            return (
+                f"For {scope}, stock risk shows {stock_risk['out_of_stock_count']} out-of-stock product(s), "
+                f"{stock_risk['low_stock_count']} low-stock product(s), "
+                f"{stock_risk['expired_batch_count']} expired batch(es), and "
+                f"{stock_risk['near_expiry_batch_count']} batch(es) expiring within "
+                f"{stock_risk['expiry_warning_days']} day(s). Investigate expired and out-of-stock items first."
+            )
 
         if any(keyword in message for keyword in ["sync", "upload", "project", "cloud"]):
             if sync_health["projection_failed_count"] > 0:

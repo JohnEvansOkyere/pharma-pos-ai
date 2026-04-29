@@ -7,6 +7,9 @@ const apiMocks = vi.hoisted(() => ({
   getCloudBranchSales: vi.fn(),
   getCloudInventoryMovementSummary: vi.fn(),
   getCloudSyncHealth: vi.fn(),
+  getCloudStockRiskSummary: vi.fn(),
+  getCloudLowStock: vi.fn(),
+  getCloudExpiryRisk: vi.fn(),
   chatWithAIManager: vi.fn(),
 }))
 
@@ -76,6 +79,44 @@ describe('CloudDashboardPage', () => {
       last_received_at: '2026-04-29T08:00:00Z',
       last_projected_at: '2026-04-29T08:05:00Z',
     })
+    apiMocks.getCloudStockRiskSummary.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      low_stock_count: 1,
+      out_of_stock_count: 1,
+      near_expiry_batch_count: 2,
+      expired_batch_count: 1,
+      total_quantity_on_hand: 44,
+      value_at_risk: 125.5,
+      expiry_warning_days: 90,
+    })
+    apiMocks.getCloudLowStock.mockResolvedValue([
+      {
+        branch_id: 1,
+        product_id: 8,
+        product_name: 'Low Stock Tablets',
+        sku: 'LOW-8',
+        total_stock: 2,
+        low_stock_threshold: 5,
+        units_needed: 8,
+        status: 'low_stock',
+      },
+    ])
+    apiMocks.getCloudExpiryRisk.mockResolvedValue([
+      {
+        branch_id: 1,
+        product_id: 9,
+        product_name: 'Expiry Risk Syrup',
+        sku: 'EXP-9',
+        batch_id: 20,
+        batch_number: 'EXP-20',
+        quantity: 5,
+        expiry_date: '2026-05-10',
+        days_until_expiry: 11,
+        value_at_risk: 125.5,
+        status: 'near_expiry',
+      },
+    ])
     apiMocks.chatWithAIManager.mockResolvedValue({
       answer: 'Branch 2 is performing best from approved cloud report data.',
       data_scope: {
@@ -101,6 +142,8 @@ describe('CloudDashboardPage', () => {
     expect(await screen.findByText('31')).toBeInTheDocument()
     expect(await screen.findByText('12 sales')).toBeInTheDocument()
     expect(await screen.findByText(/ingested events/i)).toBeInTheDocument()
+    expect(await screen.findByText(/low stock tablets/i)).toBeInTheDocument()
+    expect(await screen.findByText(/expiry risk syrup/i)).toBeInTheDocument()
 
     await waitFor(() => {
       expect(apiMocks.getCloudSalesSummary).toHaveBeenCalledWith(
@@ -114,6 +157,15 @@ describe('CloudDashboardPage', () => {
       )
       expect(apiMocks.getCloudSyncHealth).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22 })
+      )
+      expect(apiMocks.getCloudStockRiskSummary).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, expiry_warning_days: 90 })
+      )
+      expect(apiMocks.getCloudLowStock).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, limit: 10 })
+      )
+      expect(apiMocks.getCloudExpiryRisk).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, days: 90, limit: 10 })
       )
     })
   })

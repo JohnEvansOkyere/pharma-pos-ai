@@ -1748,12 +1748,41 @@ Current scope:
 - chat panel lives inside `/cloud-dashboard`
 - chat uses the dashboard organization, branch, and period filters
 - chat history is in-memory only
-- low-stock and expiry cloud report tools are still pending
+- first low-stock and expiry cloud report tools are available
 
 Next foundation:
 
 15. Cloud low-stock and expiry report tools
 
+Status: implemented for first stock-risk reporting surface.
+
+Implemented:
+
+- `cloud_product_snapshots` table
+- `cloud_batch_snapshots` table
+- projection of product, batch, stock receipt, stock adjustment, and sale-created events into stock snapshots
+- enriched product and batch sync payloads for future low-stock and expiry projections
+- `GET /cloud-reports/stock-risk-summary`
+- `GET /cloud-reports/low-stock`
+- `GET /cloud-reports/expiry-risk`
 - project or summarize cloud low-stock and near-expiry risk by organization and branch
 - expose tenant-scoped cloud report endpoints for stock risk
 - make those approved tools available to the AI manager assistant
+- cloud dashboard stock-risk cards and low-stock/expiry-risk tables
+- suggested AI prompt for stock-risk investigation
+- regression tests for projection, tenant/branch-scoped reports, AI stock-risk answers, and frontend dashboard rendering
+
+Current scope:
+
+- snapshot accuracy depends on synced product/batch payloads and stock-impacting events
+- stock take completion still projects only aggregate variance until line-level stock take sync payloads are added
+- sale reversal stock restoration still projects only aggregate restored quantity until line-level reversal payloads are added
+- branch labels still use IDs until branch registry UI/API hydration is added
+
+Next foundation:
+
+16. Stock snapshot completeness
+
+- enrich stock take completion sync payloads with counted line details
+- enrich sale reversal sync payloads with product/batch restoration details
+- add reconciliation checks between movement facts and stock snapshots

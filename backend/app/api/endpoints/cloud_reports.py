@@ -1,22 +1,30 @@
 """
 Cloud reporting endpoints backed by projected sync facts.
 """
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_organization_access
 from app.db.base import get_db
 from app.models.user import User
-from app.models.cloud_projection import CloudInventoryMovementFact, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.schemas.cloud_reports import (
     CloudBranchSalesSummary,
+    CloudExpiryRiskItem,
     CloudInventoryMovementSummary,
+    CloudLowStockItem,
     CloudSalesSummary,
+    CloudStockRiskSummary,
     CloudSyncHealth,
 )
 
@@ -173,3 +181,130 @@ def get_cloud_sync_health(
         last_received_at=row.last_received_at,
         last_projected_at=row.last_projected_at,
     )
+
+
+@router.get("/stock-risk-summary", response_model=CloudStockRiskSummary)
+def get_cloud_stock_risk_summary(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    expiry_warning_days: int = Query(90, ge=1, le=730),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    product_query = db.query(CloudProductSnapshot).filter(
+        CloudProductSnapshot.organization_id == organization_id,
+        CloudProductSnapshot.is_active.is_(True),
+    )
+    batch_query = db.query(CloudBatchSnapshot).filter(
+        CloudBatchSnapshot.organization_id == organization_id,
+        CloudBatchSnapshot.quantity > 0,
+        CloudBatchSnapshot.is_quarantined.is_(False),
+    )
+
+    if effective_branch_id is not None:
+        product_query = product_query.filter(CloudProductSnapshot.branch_id == effective_branch_id)
+        batch_query = batch_query.filter(CloudBatchSnapshot.branch_id == effective_branch_id)
+
+    today = date.today()
+    warning_date = today + timedelta(days=expiry_warning_days)
+    products = product_query.all()
+    batches = batch_query.all()
+
+    return CloudStockRiskSummary(
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        low_stock_count=sum(1 for product in products if 0 < product.total_stock <= product.low_stock_threshold),
+        out_of_stock_count=sum(1 for product in products if product.total_stock <= 0),
+        near_expiry_batch_count=sum(1 for batch in batches if today <= batch.expiry_date <= warning_date),
+        expired_batch_count=sum(1 for batch in batches if batch.expiry_date < today),
+        total_quantity_on_hand=sum(max(product.total_stock, 0) for product in products),
+        value_at_risk=float(
+            sum(
+                (batch.cost_price or 0) * batch.quantity
+                for batch in batches
+                if batch.expiry_date <= warning_date
+            )
+        ),
+        expiry_warning_days=expiry_warning_days,
+    )
+
+
+@router.get("/low-stock", response_model=List[CloudLowStockItem])
+def get_cloud_low_stock(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    query = db.query(CloudProductSnapshot).filter(
+        CloudProductSnapshot.organization_id == organization_id,
+        CloudProductSnapshot.is_active.is_(True),
+        CloudProductSnapshot.total_stock <= CloudProductSnapshot.low_stock_threshold,
+    )
+    if effective_branch_id is not None:
+        query = query.filter(CloudProductSnapshot.branch_id == effective_branch_id)
+
+    rows = query.order_by(CloudProductSnapshot.total_stock.asc(), CloudProductSnapshot.name.asc()).limit(limit).all()
+    return [
+        CloudLowStockItem(
+            branch_id=row.branch_id,
+            product_id=row.local_product_id,
+            product_name=row.name,
+            sku=row.sku,
+            total_stock=row.total_stock,
+            low_stock_threshold=row.low_stock_threshold,
+            reorder_level=row.reorder_level,
+            units_needed=max((row.reorder_level or row.low_stock_threshold) - row.total_stock, 0),
+            status="out_of_stock" if row.total_stock <= 0 else "low_stock",
+        )
+        for row in rows
+    ]
+
+
+@router.get("/expiry-risk", response_model=List[CloudExpiryRiskItem])
+def get_cloud_expiry_risk(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    days: int = Query(90, ge=1, le=730),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    today = date.today()
+    warning_date = today + timedelta(days=days)
+    query = db.query(CloudBatchSnapshot, CloudProductSnapshot).join(
+        CloudProductSnapshot,
+        (CloudProductSnapshot.organization_id == CloudBatchSnapshot.organization_id)
+        & (CloudProductSnapshot.branch_id == CloudBatchSnapshot.branch_id)
+        & (CloudProductSnapshot.local_product_id == CloudBatchSnapshot.local_product_id),
+    ).filter(
+        CloudBatchSnapshot.organization_id == organization_id,
+        CloudBatchSnapshot.quantity > 0,
+        CloudBatchSnapshot.is_quarantined.is_(False),
+        CloudBatchSnapshot.expiry_date <= warning_date,
+        CloudProductSnapshot.is_active.is_(True),
+    )
+    if effective_branch_id is not None:
+        query = query.filter(CloudBatchSnapshot.branch_id == effective_branch_id)
+
+    rows = query.order_by(CloudBatchSnapshot.expiry_date.asc(), CloudProductSnapshot.name.asc()).limit(limit).all()
+    return [
+        CloudExpiryRiskItem(
+            branch_id=batch.branch_id,
+            product_id=batch.local_product_id,
+            product_name=product.name,
+            sku=product.sku,
+            batch_id=batch.local_batch_id,
+            batch_number=batch.batch_number,
+            quantity=batch.quantity,
+            expiry_date=batch.expiry_date,
+            days_until_expiry=(batch.expiry_date - today).days,
+            value_at_risk=float((batch.cost_price or 0) * batch.quantity),
+            status="expired" if batch.expiry_date < today else "near_expiry",
+        )
+        for batch, product in rows
+    ]

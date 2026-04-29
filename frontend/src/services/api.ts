@@ -324,6 +324,27 @@ class ApiClient {
     return response.data
   }
 
+  async getCloudStockRiskSummary(params: any) {
+    const response = await this.client.get('/cloud-reports/stock-risk-summary', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudLowStock(params: any) {
+    const response = await this.client.get('/cloud-reports/low-stock', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudExpiryRisk(params: any) {
+    const response = await this.client.get('/cloud-reports/expiry-risk', {
+      params,
+    })
+    return response.data
+  }
+
   async chatWithAIManager(payload: any) {
     const response = await this.client.post('/ai-manager/chat', payload)
     return response.data

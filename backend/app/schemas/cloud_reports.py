@@ -1,7 +1,7 @@
 """
 Schemas for cloud reporting endpoints.
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel
@@ -40,3 +40,41 @@ class CloudSyncHealth(BaseModel):
     duplicate_delivery_count: int
     last_received_at: Optional[datetime] = None
     last_projected_at: Optional[datetime] = None
+
+
+class CloudStockRiskSummary(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    low_stock_count: int
+    out_of_stock_count: int
+    near_expiry_batch_count: int
+    expired_batch_count: int
+    total_quantity_on_hand: int
+    value_at_risk: float
+    expiry_warning_days: int
+
+
+class CloudLowStockItem(BaseModel):
+    branch_id: int
+    product_id: int
+    product_name: str
+    sku: str
+    total_stock: int
+    low_stock_threshold: int
+    reorder_level: Optional[int] = None
+    units_needed: int
+    status: str
+
+
+class CloudExpiryRiskItem(BaseModel):
+    branch_id: int
+    product_id: int
+    product_name: str
+    sku: str
+    batch_id: int
+    batch_number: str
+    quantity: int
+    expiry_date: date
+    days_until_expiry: int
+    value_at_risk: float
+    status: str
