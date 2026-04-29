@@ -10,25 +10,25 @@ if not exist "backend" (
     exit /b 1
 )
 
-set "PHARMACY_NAME=Pharma POS AI"
-set "POSTGRES_PASSWORD_VALUE="
-
-if "%PHARMA_SETUP_NONINTERACTIVE%"=="1" (
-    for /f %%I in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "[guid]::NewGuid().ToString(''N'') + [guid]::NewGuid().ToString(''N'')"') do set "POSTGRES_PASSWORD_VALUE=%%I"
-) else (
-    set /p PHARMACY_NAME=Enter pharmacy name [Pharma POS AI]:
-    if "%PHARMACY_NAME%"=="" set "PHARMACY_NAME=Pharma POS AI"
-
-    set /p POSTGRES_PASSWORD_VALUE=Enter PostgreSQL password for pharma_user:
-    if "%POSTGRES_PASSWORD_VALUE%"=="" (
-        echo PostgreSQL password cannot be empty.
-        exit /b 1
-    )
-)
-
 if not exist "%BACKEND_ENV%" (
-    if exist ".env.example" (
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "$secret=[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $content = Get-Content '.env.example'; $content = $content -replace '^POSTGRES_PASSWORD=.*$', ('POSTGRES_PASSWORD=' + '%POSTGRES_PASSWORD_VALUE%'); $content = $content -replace '^SECRET_KEY=.*$', ('SECRET_KEY=' + $secret); $content = $content -replace '^APP_NAME=.*$', ('APP_NAME=' + '%PHARMACY_NAME%'); $content = $content -replace '^VITE_API_URL=.*$', 'VITE_API_URL=http://localhost:8000/api'; Set-Content '%BACKEND_ENV%' $content"
+    set "PHARMACY_NAME=Pharma POS AI"
+    set "POSTGRES_PASSWORD_VALUE="
+
+    if "%PHARMA_SETUP_NONINTERACTIVE%"=="1" (
+        for /f %%I in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "[guid]::NewGuid().ToString(''N'') + [guid]::NewGuid().ToString(''N'')"') do set "POSTGRES_PASSWORD_VALUE=%%I"
+    ) else (
+        set /p PHARMACY_NAME=Enter pharmacy name [Pharma POS AI]:
+        if "%PHARMACY_NAME%"=="" set "PHARMACY_NAME=Pharma POS AI"
+
+        set /p POSTGRES_PASSWORD_VALUE=Enter PostgreSQL password for pharma_user:
+        if "%POSTGRES_PASSWORD_VALUE%"=="" (
+            echo PostgreSQL password cannot be empty.
+            exit /b 1
+        )
+    )
+
+    if exist "backend\.env.example" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "$secret=[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $content = Get-Content 'backend\.env.example'; $content = $content -replace '^POSTGRES_PASSWORD=.*$', ('POSTGRES_PASSWORD=' + '%POSTGRES_PASSWORD_VALUE%'); $content = $content -replace '^SECRET_KEY=.*$', ('SECRET_KEY=' + $secret); $content = $content -replace '^APP_NAME=.*$', ('APP_NAME=' + '%PHARMACY_NAME%'); Set-Content '%BACKEND_ENV%' $content"
     ) else (
         > "%BACKEND_ENV%" echo DATABASE_BACKEND=postgresql
         >> "%BACKEND_ENV%" echo DATABASE_URL=
@@ -54,7 +54,11 @@ if not exist "%BACKEND_ENV%" (
 )
 
 if not exist "%FRONTEND_ENV%" (
-    > "%FRONTEND_ENV%" echo VITE_API_URL=http://localhost:8000/api
+    if exist "frontend\.env.example" (
+        copy /Y "frontend\.env.example" "%FRONTEND_ENV%" > nul
+    ) else (
+        > "%FRONTEND_ENV%" echo VITE_API_URL=http://localhost:8000/api
+    )
 )
 
 echo Environment files prepared:
@@ -62,7 +66,7 @@ echo   %BACKEND_ENV%
 echo   %FRONTEND_ENV%
 echo.
 echo Review backend\.env before client handover, especially:
-echo   APP_NAME=%PHARMACY_NAME%
+echo   APP_NAME
 echo   POSTGRES_PASSWORD
 echo   SECRET_KEY
 exit /b 0

@@ -22,6 +22,12 @@ echo    STARTING PHARMA-POS-AI
 echo ========================================
 echo.
 
+if not exist "%~dp0backend\.env" (
+    echo Backend environment file not found. Running setup...
+    call "%~dp0setup-env.bat"
+    if errorlevel 1 exit /b 1
+)
+
 start "Pharma POS Backend" cmd /k "cd /d ""%~dp0backend"" && ""%BACKEND_PYTHON%"" -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
 timeout /t 3 /nobreak >nul
 start "Pharma POS Frontend" cmd /k "cd /d ""%~dp0frontend\dist"" && ""%BACKEND_PYTHON%"" -m http.server 8080"

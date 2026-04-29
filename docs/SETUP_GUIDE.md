@@ -124,8 +124,7 @@ pip install -r requirements.txt
 
 ```bash
 # Create .env file
-cd ..  # Back to root
-cp .env.example backend/.env
+cp backend/.env.example backend/.env
 
 # Edit backend/.env
 # Set DATABASE_URL=sqlite:///./pharma_pos.db
@@ -178,7 +177,8 @@ cd frontend
 npm install
 
 # Create .env.local
-echo "VITE_API_URL=http://localhost:8000/api" > .env.local
+cp .env.example .env.local
+# Edit .env.local if your backend URL is different
 ```
 
 ### Step 7: Run Application
@@ -305,7 +305,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure environment
-cp ../.env.example .env
+cp .env.example .env
 nano .env  # Edit with production values
 
 # Run migrations

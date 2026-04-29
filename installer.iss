@@ -37,7 +37,6 @@ Source: "backend\*"; DestDir: "{app}\backend"; Flags: ignoreversion recursesubdi
 Source: "frontend\*"; DestDir: "{app}\frontend"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "database\*"; DestDir: "{app}\database"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "docker-compose.yml"; DestDir: "{app}"; Flags: ignoreversion
-Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "start.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "stop.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "backup.bat"; DestDir: "{app}"; Flags: ignoreversion

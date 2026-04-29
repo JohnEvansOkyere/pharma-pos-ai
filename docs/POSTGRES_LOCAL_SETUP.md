@@ -190,7 +190,7 @@ Check:
 
 - username is `pharma_user`
 - password matches the one used when creating the PostgreSQL user
-- `.env` and `backend/.env` match the database credentials
+- `backend/.env` matches the database credentials
 
 ### Problem: `database "pharma_pos" does not exist`
 

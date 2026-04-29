@@ -1896,7 +1896,7 @@ Status: implemented for first cloud dashboard surface.
 
 Implemented:
 
-- documented Supabase/cloud sync, AI provider, weekly report, SMTP, and Telegram environment variables in `.env.example`
+- documented Supabase/cloud sync, AI provider, weekly report, SMTP, and Telegram server variables in `backend/.env.example`, with browser-safe frontend variables isolated in `frontend/.env.example`
 - added frontend API methods for cloud reconciliation, saved weekly report listing, and manual weekly report generation
 - cloud dashboard loads `GET /cloud-reports/reconciliation`
 - cloud dashboard shows reconciliation issue counts and top issue details

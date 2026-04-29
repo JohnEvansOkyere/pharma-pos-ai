@@ -20,9 +20,19 @@ if errorlevel 1 (
 )
 
 echo [1/4] Checking environment configuration...
-if not exist .env (
-    echo Creating environment file from template...
-    copy .env.example .env
+if not exist backend\.env (
+    echo Creating backend environment file from template...
+    call setup-env.bat
+    if errorlevel 1 exit /b 1
+)
+
+if not exist frontend\.env.local (
+    echo Creating frontend environment file from template...
+    if exist frontend\.env.example (
+        copy frontend\.env.example frontend\.env.local
+    ) else (
+        echo VITE_API_URL=http://localhost:8000/api>frontend\.env.local
+    )
 )
 
 echo [2/4] Starting database...

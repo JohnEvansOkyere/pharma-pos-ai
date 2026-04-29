@@ -168,8 +168,9 @@ MAIN
 
 chmod +x dist/pharma-pos-portable/START_PHARMA_POS.sh
 
-# Create .env file
-cp .env.example dist/pharma-pos-portable/.env
+# Create environment template files in their owning applications
+cp backend/.env.example dist/pharma-pos-portable/backend/.env.example
+cp frontend/.env.example dist/pharma-pos-portable/frontend/.env.example
 
 # Create README
 cat > dist/pharma-pos-portable/README.txt << 'README'
@@ -414,10 +415,8 @@ version: '3.8'
 services:
   db:
     image: postgres:15
-    environment:
-      POSTGRES_DB: pharma_pos
-      POSTGRES_USER: pharma
-      POSTGRES_PASSWORD: pharma123
+    env_file:
+      - ./backend/.env
     volumes:
       - pharma_data:/var/lib/postgresql/data
     ports:
@@ -425,8 +424,10 @@ services:
 
   backend:
     image: pharma-pos-backend:1.0
+    env_file:
+      - ./backend/.env
     environment:
-      DATABASE_URL: postgresql://pharma:pharma123@db:5432/pharma_pos
+      POSTGRES_HOST: db
     ports:
       - "8000:8000"
     depends_on:
@@ -435,7 +436,7 @@ services:
   frontend:
     image: pharma-pos-frontend:1.0
     ports:
-      - "3000:80"
+      - "8080:80"
     depends_on:
       - backend
 
@@ -443,11 +444,17 @@ volumes:
   pharma_data:
 COMPOSE
 
+if [ ! -f backend/.env ]; then
+  cp backend/.env.example backend/.env
+  echo "Created backend/.env. Edit it with the site-specific PostgreSQL password and SECRET_KEY, then rerun this script."
+  exit 1
+fi
+
 # Start services
 docker-compose up -d
 
 echo "PHARMA-POS-AI is now running!"
-echo "Access at: http://localhost:3000"
+echo "Access at: http://localhost:8080"
 EOF
 
 chmod +x install_docker.sh

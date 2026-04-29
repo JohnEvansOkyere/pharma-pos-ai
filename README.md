@@ -131,7 +131,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Create .env file
-cp ../.env.example .env
+cp .env.example .env
 # Edit .env with your local PostgreSQL configuration
 
 # Initialize database
@@ -166,7 +166,8 @@ cd frontend
 npm install
 
 # Create environment file
-echo "VITE_API_URL=http://localhost:8000/api" > .env.local
+cp .env.example .env.local
+# Edit .env.local if your backend URL is different
 
 # Run development server
 npm run dev
@@ -246,7 +247,12 @@ Primary documentation:
 
 ### Environment Variables
 
-#### Backend (.env)
+Templates are separated by application boundary:
+
+- `backend/.env.example` -> `backend/.env` for server, database, Supabase, AI, SMTP, and Telegram secrets.
+- `frontend/.env.example` -> `frontend/.env.local` for browser-safe `VITE_*` values only.
+
+#### Backend (`backend/.env`)
 ```env
 # Database
 DATABASE_BACKEND=postgresql
@@ -280,7 +286,7 @@ EXPIRY_WARNING_DAYS=30
 DEAD_STOCK_DAYS=90
 ```
 
-#### Frontend (.env.local)
+#### Frontend (`frontend/.env.local`)
 ```env
 VITE_API_URL=http://localhost:8000/api
 ```
@@ -289,46 +295,12 @@ VITE_API_URL=http://localhost:8000/api
 
 ## 🐳 Docker Deployment (Optional)
 
-Create `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  db:
-    image: postgres:15
-    environment:
-      POSTGRES_DB: pharma_pos
-      POSTGRES_USER: pharma
-      POSTGRES_PASSWORD: changeme
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  backend:
-    build: ./backend
-    environment:
-      DATABASE_URL: postgresql://pharma:changeme@db:5432/pharma_pos
-    ports:
-      - "8000:8000"
-    depends_on:
-      - db
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
-
-volumes:
-  postgres_data:
-```
+Use the included `docker-compose.yml`. It reads server/database values from
+`backend/.env`; frontend Docker builds use the internal `/api` nginx proxy.
 
 Run:
 ```bash
+setup-env.bat  # Windows; creates backend/.env and frontend/.env.local
 docker-compose up -d
 ```
 
