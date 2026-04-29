@@ -14,6 +14,7 @@ from app.models.stock_adjustment import StockAdjustment
 from app.models.inventory_movement import InventoryMovement
 from app.models.stock_take import StockTake, StockTakeItem
 from app.models.sync_event import SyncEvent, SyncEventCounter
+from app.models.sync_ingestion import IngestedSyncEvent
 
 __all__ = [
     "User",
@@ -35,4 +36,5 @@ __all__ = [
     "StockTakeItem",
     "SyncEvent",
     "SyncEventCounter",
+    "IngestedSyncEvent",
 ]

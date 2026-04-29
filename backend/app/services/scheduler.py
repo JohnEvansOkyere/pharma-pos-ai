@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.db.base import SessionLocal
 from app.services.notification_service import NotificationService
+from app.services.sync_upload_service import SyncUploadService
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,16 @@ class SchedulerService:
             name="Check overstock",
             replace_existing=True,
         )
+
+        if settings.CLOUD_SYNC_ENABLED:
+            self.scheduler.add_job(
+                self.upload_sync_events,
+                "interval",
+                minutes=settings.CLOUD_SYNC_INTERVAL_MINUTES,
+                id="upload_sync_events",
+                name="Upload sync events",
+                replace_existing=True,
+            )
 
         self.scheduler.start()
         logger.info(f"Background scheduler started with timezone: {tz}")
@@ -159,6 +170,19 @@ class SchedulerService:
             NotificationService.check_overstock(db)
         except Exception as e:
             logger.error(f"Error in overstock check task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def upload_sync_events():
+        """Task to upload pending local sync events to the cloud ingestion API."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running cloud sync upload task")
+            result = SyncUploadService.upload_pending(db)
+            logger.info("Cloud sync upload result: %s", result)
+        except Exception as e:
+            logger.error(f"Error in cloud sync upload task: {str(e)}")
         finally:
             db.close()
 

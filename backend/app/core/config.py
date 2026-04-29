@@ -61,6 +61,18 @@ class Settings(BaseSettings):
     EXPIRY_CHECK_HOUR: int = 9
     LOW_STOCK_CHECK_HOUR: int = 10
 
+    # Cloud sync - Supabase Postgres target through backend/edge ingestion API
+    CLOUD_SYNC_ENABLED: bool = False
+    CLOUD_SYNC_INGEST_URL: Optional[str] = None
+    CLOUD_SYNC_API_TOKEN: Optional[str] = None
+    CLOUD_SYNC_DEVICE_UID: Optional[str] = None
+    CLOUD_SYNC_ORGANIZATION_ID: Optional[int] = None
+    CLOUD_SYNC_BRANCH_ID: Optional[int] = None
+    CLOUD_SYNC_BATCH_SIZE: int = 50
+    CLOUD_SYNC_TIMEOUT_SECONDS: int = 15
+    CLOUD_SYNC_MAX_RETRIES: int = 10
+    CLOUD_SYNC_INTERVAL_MINUTES: int = 5
+
     # Business Rules
     LOW_STOCK_THRESHOLD: int = 10
     EXPIRY_WARNING_DAYS: int = 30

@@ -12,10 +12,11 @@ from sqlalchemy import text
 
 from app.api.dependencies import require_trigger_backup
 from app.core.config import settings
-from app.db.base import engine
+from app.db.base import SessionLocal, engine
 from app.models.user import User
-from app.schemas.system import BackupStatus, BackupTriggerResult, SystemDiagnostics
+from app.schemas.system import BackupStatus, BackupTriggerResult, SyncRunResult, SyncStatus, SystemDiagnostics
 from app.services.scheduler import scheduler
+from app.services.sync_upload_service import SyncUploadService
 
 router = APIRouter(prefix="/system", tags=["System"])
 
@@ -137,6 +138,11 @@ def _database_connected() -> bool:
 
 def _build_system_diagnostics() -> SystemDiagnostics:
     backup = _build_backup_status()
+    db = SessionLocal()
+    try:
+        sync_status = SyncUploadService.sync_status(db)
+    finally:
+        db.close()
     return SystemDiagnostics(
         platform=platform.system(),
         app_version=settings.APP_VERSION,
@@ -153,6 +159,12 @@ def _build_system_diagnostics() -> SystemDiagnostics:
         frontend_dist_available=FRONTEND_DIST_DIR.exists(),
         windows_backup_task_helper_available=WINDOWS_SCHEDULE_HELPER.exists(),
         linux_backup_cron_helper_available=LINUX_SCHEDULE_HELPER.exists(),
+        cloud_sync_enabled=sync_status["enabled"],
+        cloud_sync_configured=sync_status["configured"],
+        sync_pending_count=sync_status["pending_count"],
+        sync_failed_count=sync_status["failed_count"],
+        sync_sent_count=sync_status["sent_count"],
+        sync_last_sent_at=sync_status["last_sent_at"].isoformat() if sync_status["last_sent_at"] else None,
     )
 
 
@@ -180,3 +192,33 @@ def get_system_diagnostics(
     current_user: User = Depends(require_trigger_backup),
 ):
     return _build_system_diagnostics()
+
+
+@router.get("/sync-status", response_model=SyncStatus)
+def get_sync_status(
+    current_user: User = Depends(require_trigger_backup),
+):
+    db = SessionLocal()
+    try:
+        status_payload = SyncUploadService.sync_status(db)
+        return SyncStatus(
+            **{
+                **status_payload,
+                "last_sent_at": status_payload["last_sent_at"].isoformat()
+                if status_payload["last_sent_at"]
+                else None,
+            }
+        )
+    finally:
+        db.close()
+
+
+@router.post("/sync-now", response_model=SyncRunResult)
+def trigger_sync_now(
+    current_user: User = Depends(require_trigger_backup),
+):
+    db = SessionLocal()
+    try:
+        return SyncRunResult(**SyncUploadService.upload_pending(db))
+    finally:
+        db.close()

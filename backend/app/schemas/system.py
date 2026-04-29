@@ -41,3 +41,26 @@ class SystemDiagnostics(BaseModel):
     frontend_dist_available: bool
     windows_backup_task_helper_available: bool
     linux_backup_cron_helper_available: bool
+    cloud_sync_enabled: bool
+    cloud_sync_configured: bool
+    sync_pending_count: int
+    sync_failed_count: int
+    sync_sent_count: int
+    sync_last_sent_at: Optional[str] = None
+
+
+class SyncStatus(BaseModel):
+    enabled: bool
+    configured: bool
+    pending_count: int
+    failed_count: int
+    sent_count: int
+    last_sent_at: Optional[str] = None
+
+
+class SyncRunResult(BaseModel):
+    attempted: int
+    sent: int
+    failed: int
+    skipped: int
+    message: str

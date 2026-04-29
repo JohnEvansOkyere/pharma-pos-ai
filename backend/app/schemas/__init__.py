@@ -21,6 +21,7 @@ from app.schemas.inventory_movement import InventoryMovement
 from app.schemas.stock_take import StockTake, StockTakeCreate, StockTakeComplete, StockTakeItem
 from app.schemas.tenancy import Branch, Device, Organization
 from app.schemas.sync_event import SyncEvent
+from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
 
 __all__ = [
     "User",
@@ -63,4 +64,6 @@ __all__ = [
     "Branch",
     "Device",
     "SyncEvent",
+    "SyncIngestionRequest",
+    "SyncIngestionResponse",
 ]

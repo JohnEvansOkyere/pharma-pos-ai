@@ -114,12 +114,15 @@ Cloud services own:
 
 ### Cloud Database Provider Direction
 
-The cloud database must be managed PostgreSQL.
+The cloud database is Supabase Postgres.
 
-Preferred options:
+Implementation rule:
 
-- Supabase Postgres when the product benefits from built-in auth, RLS, dashboard tooling, storage, and platform features
-- Neon Postgres when the product only needs managed scalable Postgres and the application backend owns auth, APIs, and platform behavior
+- Supabase is the managed cloud PostgreSQL provider.
+- Critical pharmacy writes still go through backend-controlled APIs or Supabase Edge Functions, not direct browser writes.
+- Supabase service-role credentials must stay server-side only.
+- RLS must be enabled on exposed tenant-owned tables as defense in depth.
+- Device sync should submit events to an ingestion API backed by Supabase Postgres.
 
 Architecture rule:
 
@@ -1549,9 +1552,64 @@ Next foundation:
 
 8. Cloud ingestion API
 
-Goal:
+Status: implemented for first-pass event acceptance and idempotency.
+
+Implemented:
+
+- `ingested_sync_events` table
+- active registered device validation by `device_uid`
+- organization/branch/device ownership checks
+- idempotent event acceptance by `event_id`
+- conflict rejection when the same `event_id` arrives with a different payload hash
+- conflict rejection when the same device local sequence number arrives with a different event
+- duplicate delivery tracking with `duplicate_count` and `last_duplicate_at`
+- ingestion endpoint: `POST /sync/ingest`
+- regression tests for first ingest, exact duplicate ingest, conflicting event hash, sequence conflict, and inactive device rejection
+
+Current scope:
+
+- cloud-side event storage only
+- does not yet project ingested events into cloud reporting read models
+- does not yet authenticate devices with signed credentials or rotating secrets
+- does not yet include the local upload worker that sends pending outbox events
+
+Original goal:
 
 - accept events from registered branch devices
 - validate event payloads
 - store events idempotently using event IDs and local sequence numbers
 - expose sync status without blocking local POS workflows
+
+Next foundation:
+
+9. Local sync upload worker
+
+Status: implemented for local upload attempts.
+
+Implemented:
+
+- cloud sync configuration fields
+- upload worker service for pending/failed local `sync_events`
+- support for Supabase Edge Function or backend ingestion URL
+- bearer token header support for server-side sync credentials
+- scheduler job when cloud sync is enabled
+- manual sync trigger endpoint: `POST /system/sync-now`
+- sync health endpoint: `GET /system/sync-status`
+- sync health fields in diagnostics
+- retry/error tracking on local sync events
+- regression tests for successful upload and missing identity failure
+
+Current scope:
+
+- worker uploads to configured ingestion API only
+- no Supabase project credentials are hardcoded
+- no frontend access to service-role credentials
+- no cloud reporting projections yet
+
+Original goal:
+
+- read pending local `sync_events`
+- submit them to the cloud ingestion endpoint
+- mark events sent/failed without blocking POS
+- retry safely with backoff
+- expose sync health in local diagnostics
