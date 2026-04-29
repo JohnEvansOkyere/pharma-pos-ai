@@ -345,6 +345,25 @@ class ApiClient {
     return response.data
   }
 
+  async getCloudReconciliation(params: any) {
+    const response = await this.client.get('/cloud-reports/reconciliation', {
+      params,
+    })
+    return response.data
+  }
+
+  async getAIWeeklyReports(params: any) {
+    const response = await this.client.get('/ai-manager/weekly-reports', {
+      params,
+    })
+    return response.data
+  }
+
+  async generateAIWeeklyReport(payload: any) {
+    const response = await this.client.post('/ai-manager/weekly-reports/generate', payload)
+    return response.data
+  }
+
   async chatWithAIManager(payload: any) {
     const response = await this.client.post('/ai-manager/chat', payload)
     return response.data

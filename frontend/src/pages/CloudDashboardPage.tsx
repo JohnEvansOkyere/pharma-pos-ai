@@ -7,10 +7,12 @@ import {
   FiCloud,
   FiDatabase,
   FiDollarSign,
+  FiFileText,
   FiMessageSquare,
   FiRefreshCw,
   FiSend,
   FiShoppingCart,
+  FiShield,
 } from 'react-icons/fi'
 import {
   Bar,
@@ -96,6 +98,72 @@ interface CloudExpiryRiskItem {
   status: string
 }
 
+interface CloudReconciliationIssue {
+  severity: string
+  issue_type: string
+  branch_id: number | null
+  product_id: number | null
+  batch_id: number | null
+  product_name: string | null
+  batch_number: string | null
+  expected_quantity: number | null
+  actual_quantity: number | null
+  delta: number | null
+  message: string
+}
+
+interface CloudReconciliationSummary {
+  organization_id: number
+  branch_id: number | null
+  product_snapshot_count: number
+  batch_snapshot_count: number
+  movement_fact_count: number
+  projection_failed_count: number
+  issue_count: number
+  critical_issue_count: number
+  high_issue_count: number
+  medium_issue_count: number
+  issues: CloudReconciliationIssue[]
+}
+
+interface AIWeeklyManagerReport {
+  id: number
+  organization_id: number
+  branch_id: number | null
+  generated_by_user_id: number | null
+  performance_period_start: string
+  performance_period_end: string
+  action_period_start: string
+  action_period_end: string
+  title: string
+  executive_summary: string
+  sections: {
+    coming_week_action_plan?: {
+      priorities?: string[]
+      risk_counts?: {
+        out_of_stock_count?: number
+        low_stock_count?: number
+        expired_batch_count?: number
+        near_expiry_batch_count?: number
+        value_at_risk?: number
+      }
+    }
+    sync_and_data_quality?: {
+      reconciliation?: {
+        issue_count?: number
+        critical_issue_count?: number
+        high_issue_count?: number
+        medium_issue_count?: number
+      }
+    }
+  }
+  safety_notes: string[]
+  provider: string
+  model: string | null
+  fallback_used: boolean
+  generated_at: string
+}
+
 interface AIManagerChatResponse {
   answer: string
   data_scope: {
@@ -123,6 +191,7 @@ type LoadState = 'idle' | 'loading' | 'loaded'
 const suggestedPrompts = [
   'Which branch is performing best?',
   'Summarize sync health.',
+  'Is the cloud data reliable for decisions?',
   'Summarize inventory movement.',
   'What stock risks should I investigate today?',
   'What should I investigate today?',
@@ -163,6 +232,11 @@ export default function CloudDashboardPage() {
   const [stockRiskSummary, setStockRiskSummary] = useState<CloudStockRiskSummary | null>(null)
   const [lowStockItems, setLowStockItems] = useState<CloudLowStockItem[]>([])
   const [expiryRiskItems, setExpiryRiskItems] = useState<CloudExpiryRiskItem[]>([])
+  const [reconciliationSummary, setReconciliationSummary] = useState<CloudReconciliationSummary | null>(null)
+  const [weeklyReports, setWeeklyReports] = useState<AIWeeklyManagerReport[]>([])
+  const [selectedReportId, setSelectedReportId] = useState<number | null>(null)
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false)
+  const [reportError, setReportError] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -238,10 +312,28 @@ export default function CloudDashboardPage() {
         days: 90,
         limit: 10,
       }),
+      api.getCloudReconciliation({
+        ...syncParams,
+        limit: 10,
+      }),
+      api.getAIWeeklyReports({
+        ...syncParams,
+        limit: 5,
+      }),
     ])
 
     const failures: string[] = []
-    const [salesResult, branchResult, inventoryResult, syncResult, stockRiskResult, lowStockResult, expiryRiskResult] = results
+    const [
+      salesResult,
+      branchResult,
+      inventoryResult,
+      syncResult,
+      stockRiskResult,
+      lowStockResult,
+      expiryRiskResult,
+      reconciliationResult,
+      weeklyReportsResult,
+    ] = results
 
     if (salesResult.status === 'fulfilled') {
       setSalesSummary(salesResult.value)
@@ -292,6 +384,21 @@ export default function CloudDashboardPage() {
       failures.push('Expiry risk')
     }
 
+    if (reconciliationResult.status === 'fulfilled') {
+      setReconciliationSummary(reconciliationResult.value)
+    } else {
+      setReconciliationSummary(null)
+      failures.push('Reconciliation')
+    }
+
+    if (weeklyReportsResult.status === 'fulfilled') {
+      setWeeklyReports(weeklyReportsResult.value)
+      setSelectedReportId((current) => current ?? weeklyReportsResult.value[0]?.id ?? null)
+    } else {
+      setWeeklyReports([])
+      failures.push('Weekly reports')
+    }
+
     setFailedSections(failures)
     setLoadState('loaded')
   }
@@ -302,6 +409,27 @@ export default function CloudDashboardPage() {
     revenue: row.total_revenue,
     sales: row.sales_count,
   }))
+  const selectedReport = weeklyReports.find((report) => report.id === selectedReportId) ?? weeklyReports[0] ?? null
+  const hasCriticalReconciliation =
+    (reconciliationSummary?.critical_issue_count ?? 0) > 0 || (reconciliationSummary?.high_issue_count ?? 0) > 0
+
+  const generateWeeklyReport = async () => {
+    if (!hasValidOrganization || isGeneratingReport) return
+    setIsGeneratingReport(true)
+    setReportError(null)
+    try {
+      const report: AIWeeklyManagerReport = await api.generateAIWeeklyReport({
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : {}),
+      })
+      setWeeklyReports((current) => [report, ...current.filter((item) => item.id !== report.id)].slice(0, 5))
+      setSelectedReportId(report.id)
+    } catch (error) {
+      setReportError('Weekly report generation failed.')
+    } finally {
+      setIsGeneratingReport(false)
+    }
+  }
 
   const sendAIMessage = async (message: string) => {
     const trimmedMessage = message.trim()
@@ -467,6 +595,13 @@ export default function CloudDashboardPage() {
             tone={syncHealth?.projection_failed_count ? 'red' : 'slate'}
           />
           <MetricCard
+            title="Reconciliation"
+            value={formatNumber(reconciliationSummary?.issue_count ?? 0)}
+            detail={`${formatNumber(reconciliationSummary?.critical_issue_count ?? 0)} critical · ${formatNumber(reconciliationSummary?.high_issue_count ?? 0)} high`}
+            icon={hasCriticalReconciliation ? FiAlertTriangle : FiShield}
+            tone={hasCriticalReconciliation ? 'red' : 'slate'}
+          />
+          <MetricCard
             title="Stock Risk"
             value={formatNumber((stockRiskSummary?.out_of_stock_count ?? 0) + (stockRiskSummary?.low_stock_count ?? 0))}
             detail={`${formatNumber(stockRiskSummary?.expired_batch_count ?? 0)} expired batches`}
@@ -552,6 +687,20 @@ export default function CloudDashboardPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <ReconciliationPanel reconciliation={reconciliationSummary} />
+        <WeeklyReportsPanel
+          reports={weeklyReports}
+          selectedReport={selectedReport}
+          selectedReportId={selectedReportId}
+          onSelectReport={setSelectedReportId}
+          onGenerate={generateWeeklyReport}
+          isGenerating={isGeneratingReport}
+          error={reportError}
+          disabled={!hasValidOrganization}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -725,6 +874,195 @@ function StatusRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-4 border-b border-gray-100 pb-3 last:border-0 last:pb-0 dark:border-gray-700">
       <span className="text-sm text-gray-500 dark:text-gray-400">{label}</span>
       <span className="text-right text-sm font-semibold text-gray-900 dark:text-gray-100">{value}</span>
+    </div>
+  )
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(value))
+}
+
+function formatIssueType(value: string) {
+  return value.replace(/_/g, ' ')
+}
+
+function ReconciliationPanel({ reconciliation }: { reconciliation: CloudReconciliationSummary | null }) {
+  const issues = reconciliation?.issues ?? []
+  const hasHighRisk = (reconciliation?.critical_issue_count ?? 0) > 0 || (reconciliation?.high_issue_count ?? 0) > 0
+
+  return (
+    <div className="card p-6">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FiShield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            Reconciliation
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Projection consistency checks
+          </p>
+        </div>
+        <span className={`rounded-lg px-3 py-1 text-xs font-semibold ${
+          hasHighRisk
+            ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+            : 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+        }`}>
+          {hasHighRisk ? 'Review required' : 'No high risk'}
+        </span>
+      </div>
+
+      <div className="mb-4 grid grid-cols-3 gap-3">
+        <MiniStat label="Critical" value={reconciliation?.critical_issue_count ?? 0} tone="red" />
+        <MiniStat label="High" value={reconciliation?.high_issue_count ?? 0} tone="amber" />
+        <MiniStat label="Medium" value={reconciliation?.medium_issue_count ?? 0} tone="slate" />
+      </div>
+
+      {issues.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          No reconciliation issues in the current scope
+        </div>
+      ) : (
+        <div className="max-h-80 divide-y divide-gray-100 overflow-y-auto dark:divide-gray-700">
+          {issues.map((issue, index) => (
+            <div key={`${issue.issue_type}-${issue.branch_id}-${issue.product_id}-${issue.batch_id}-${index}`} className="py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold capitalize text-gray-900 dark:text-gray-100">
+                    {formatIssueType(issue.issue_type)}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{issue.message}</p>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Branch {issue.branch_id ?? '-'} · Product {issue.product_id ?? '-'} · Batch {issue.batch_id ?? '-'}
+                  </p>
+                </div>
+                <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
+                  issue.severity === 'critical'
+                    ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                    : issue.severity === 'high'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300'
+                      : 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300'
+                }`}>
+                  {issue.severity}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function WeeklyReportsPanel({
+  reports,
+  selectedReport,
+  selectedReportId,
+  onSelectReport,
+  onGenerate,
+  isGenerating,
+  error,
+  disabled,
+}: {
+  reports: AIWeeklyManagerReport[]
+  selectedReport: AIWeeklyManagerReport | null
+  selectedReportId: number | null
+  onSelectReport: (id: number) => void
+  onGenerate: () => void
+  isGenerating: boolean
+  error: string | null
+  disabled: boolean
+}) {
+  const riskCounts = selectedReport?.sections.coming_week_action_plan?.risk_counts
+  const reconciliation = selectedReport?.sections.sync_and_data_quality?.reconciliation
+
+  return (
+    <div className="card p-6">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FiFileText className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            Weekly AI Reports
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Saved Sunday manager reports
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={disabled || isGenerating}
+          className="btn-secondary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <FiRefreshCw className={`h-4 w-4 ${isGenerating ? 'animate-spin' : ''}`} />
+          Generate
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {error}
+        </div>
+      )}
+
+      {reports.length > 0 && (
+        <div className="mb-4">
+          <label className="block">
+            <span className="label">Report</span>
+            <select
+              className="input h-10 w-full"
+              value={selectedReportId ?? reports[0].id}
+              onChange={(event) => onSelectReport(Number(event.target.value))}
+            >
+              {reports.map((report) => (
+                <option key={report.id} value={report.id}>
+                  {formatDate(report.action_period_start)} to {formatDate(report.action_period_end)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {!selectedReport ? (
+        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          No saved weekly reports in the current scope
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selectedReport.title}</h3>
+            <p className="mt-2 line-clamp-4 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
+              {selectedReport.executive_summary}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <MiniStat label="Out of stock" value={riskCounts?.out_of_stock_count ?? 0} tone="red" />
+            <MiniStat label="Low stock" value={riskCounts?.low_stock_count ?? 0} tone="amber" />
+            <MiniStat label="Expired" value={riskCounts?.expired_batch_count ?? 0} tone="red" />
+            <MiniStat label="Recon issues" value={reconciliation?.issue_count ?? 0} tone="slate" />
+          </div>
+
+          <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-300">
+            Provider: {selectedReport.provider} · Model: {selectedReport.model || 'not configured'} · Fallback: {selectedReport.fallback_used ? 'yes' : 'no'} · Generated: {formatDateTime(selectedReport.generated_at)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MiniStat({ label, value, tone }: { label: string; value: number; tone: 'red' | 'amber' | 'slate' }) {
+  const classes = {
+    red: 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+    amber: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300',
+    slate: 'bg-slate-50 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300',
+  }
+
+  return (
+    <div className={`rounded-lg p-3 ${classes[tone]}`}>
+      <p className="text-xs font-medium">{label}</p>
+      <p className="mt-1 text-xl font-bold">{formatNumber(value)}</p>
     </div>
   )
 }

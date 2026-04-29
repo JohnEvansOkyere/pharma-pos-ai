@@ -10,6 +10,9 @@ const apiMocks = vi.hoisted(() => ({
   getCloudStockRiskSummary: vi.fn(),
   getCloudLowStock: vi.fn(),
   getCloudExpiryRisk: vi.fn(),
+  getCloudReconciliation: vi.fn(),
+  getAIWeeklyReports: vi.fn(),
+  generateAIWeeklyReport: vi.fn(),
   chatWithAIManager: vi.fn(),
 }))
 
@@ -117,6 +120,92 @@ describe('CloudDashboardPage', () => {
         status: 'near_expiry',
       },
     ])
+    apiMocks.getCloudReconciliation.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      product_snapshot_count: 3,
+      batch_snapshot_count: 4,
+      movement_fact_count: 5,
+      projection_failed_count: 1,
+      issue_count: 2,
+      critical_issue_count: 1,
+      high_issue_count: 1,
+      medium_issue_count: 0,
+      issues: [
+        {
+          severity: 'critical',
+          issue_type: 'negative_product_stock',
+          branch_id: 1,
+          product_id: 8,
+          batch_id: null,
+          product_name: 'Low Stock Tablets',
+          batch_number: null,
+          expected_quantity: null,
+          actual_quantity: -1,
+          delta: null,
+          message: 'Product snapshot total stock is negative.',
+        },
+      ],
+    })
+    apiMocks.getAIWeeklyReports.mockResolvedValue([
+      {
+        id: 55,
+        organization_id: 22,
+        branch_id: null,
+        generated_by_user_id: 7,
+        performance_period_start: '2026-04-26T19:00:00Z',
+        performance_period_end: '2026-05-03T19:00:00Z',
+        action_period_start: '2026-05-04',
+        action_period_end: '2026-05-10',
+        title: 'Weekly Manager Report: 2026-04-26 to 2026-05-03 | Action Plan 2026-05-04 to 2026-05-10',
+        executive_summary: 'Weekly summary with coming week action priorities.',
+        sections: {
+          coming_week_action_plan: {
+            risk_counts: {
+              out_of_stock_count: 1,
+              low_stock_count: 1,
+              expired_batch_count: 1,
+              near_expiry_batch_count: 2,
+              value_at_risk: 125.5,
+            },
+          },
+          sync_and_data_quality: {
+            reconciliation: {
+              issue_count: 2,
+              critical_issue_count: 1,
+              high_issue_count: 1,
+              medium_issue_count: 0,
+            },
+          },
+        },
+        safety_notes: ['Read-only assistant.'],
+        provider: 'groq',
+        model: 'llama-3.3-70b-versatile',
+        fallback_used: false,
+        generated_at: '2026-05-03T19:00:00Z',
+      },
+    ])
+    apiMocks.generateAIWeeklyReport.mockResolvedValue({
+      id: 55,
+      organization_id: 22,
+      branch_id: null,
+      generated_by_user_id: 7,
+      performance_period_start: '2026-04-26T19:00:00Z',
+      performance_period_end: '2026-05-03T19:00:00Z',
+      action_period_start: '2026-05-04',
+      action_period_end: '2026-05-10',
+      title: 'Weekly Manager Report: 2026-04-26 to 2026-05-03 | Action Plan 2026-05-04 to 2026-05-10',
+      executive_summary: 'Weekly summary with coming week action priorities.',
+      sections: {
+        coming_week_action_plan: { risk_counts: { out_of_stock_count: 1, low_stock_count: 1 } },
+        sync_and_data_quality: { reconciliation: { issue_count: 2 } },
+      },
+      safety_notes: ['Read-only assistant.'],
+      provider: 'groq',
+      model: null,
+      fallback_used: false,
+      generated_at: '2026-05-03T19:00:00Z',
+    })
     apiMocks.chatWithAIManager.mockResolvedValue({
       answer: 'Branch 2 is performing best from approved cloud report data.',
       data_scope: {
@@ -144,6 +233,10 @@ describe('CloudDashboardPage', () => {
     expect(await screen.findByText(/ingested events/i)).toBeInTheDocument()
     expect(await screen.findByText(/low stock tablets/i)).toBeInTheDocument()
     expect(await screen.findByText(/expiry risk syrup/i)).toBeInTheDocument()
+    expect((await screen.findAllByText(/reconciliation/i)).length).toBeGreaterThan(0)
+    expect(await screen.findByText(/negative product stock/i)).toBeInTheDocument()
+    expect(await screen.findByText(/weekly ai reports/i)).toBeInTheDocument()
+    expect(await screen.findByText(/weekly summary with coming week action priorities/i)).toBeInTheDocument()
 
     await waitFor(() => {
       expect(apiMocks.getCloudSalesSummary).toHaveBeenCalledWith(
@@ -167,6 +260,26 @@ describe('CloudDashboardPage', () => {
       expect(apiMocks.getCloudExpiryRisk).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, days: 90, limit: 10 })
       )
+      expect(apiMocks.getCloudReconciliation).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, limit: 10 })
+      )
+      expect(apiMocks.getAIWeeklyReports).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, limit: 5 })
+      )
+    })
+  })
+
+  it('generates a saved weekly manager report from the dashboard', async () => {
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    await screen.findByText(/weekly ai reports/i)
+    await user.click(screen.getByRole('button', { name: /generate/i }))
+
+    await waitFor(() => {
+      expect(apiMocks.generateAIWeeklyReport).toHaveBeenCalledWith({
+        organization_id: 22,
+      })
     })
   })
 
@@ -178,8 +291,8 @@ describe('CloudDashboardPage', () => {
     await user.click(screen.getByRole('button', { name: /which branch is performing best/i }))
 
     expect(await screen.findByText(/branch 2 is performing best/i)).toBeInTheDocument()
-    expect(await screen.findByText(/provider: groq/i)).toBeInTheDocument()
-    expect(await screen.findByText(/fallback: no/i)).toBeInTheDocument()
+    expect((await screen.findAllByText(/provider: groq/i)).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText(/fallback: no/i)).length).toBeGreaterThan(0)
 
     await waitFor(() => {
       expect(apiMocks.chatWithAIManager).toHaveBeenCalledWith({

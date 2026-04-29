@@ -1856,7 +1856,6 @@ Current scope:
 
 - scheduled generation is disabled by default and must be explicitly enabled per deployment
 - first scheduled job generates organization-level reports for active organizations
-- no frontend saved-report viewer yet
 - email and Telegram delivery are backend-only and disabled by default
 - email SMTP credentials and Telegram bot token are deployment settings, but recipients are tenant/branch database settings
 - WhatsApp delivery is intentionally out of scope for the first production path
@@ -1888,15 +1887,37 @@ Current scope:
 
 - reconciliation is diagnostic only; it does not mutate snapshots or repair projections
 - first pass uses projected movement `stock_after` as an integrity signal, not a full ledger replay
-- no frontend reconciliation view yet
 
 Next foundation:
 
 19. Saved-report UI and reconciliation dashboard
 
-- expose saved weekly reports in the manager dashboard
+Status: implemented for first cloud dashboard surface.
+
+Implemented:
+
+- documented Supabase/cloud sync, AI provider, weekly report, SMTP, and Telegram environment variables in `.env.example`
+- added frontend API methods for cloud reconciliation, saved weekly report listing, and manual weekly report generation
+- cloud dashboard loads `GET /cloud-reports/reconciliation`
+- cloud dashboard shows reconciliation issue counts and top issue details
+- cloud dashboard clearly marks reconciliation states that need review
+- cloud dashboard loads saved weekly manager reports
+- cloud dashboard shows report summary, provider/model/fallback metadata, generated timestamp, stock risk counts, and reconciliation issue count
+- cloud dashboard can manually generate the current-scope weekly manager report
+- frontend regression tests for reconciliation loading, saved report rendering, and manual report generation
+
+Current scope:
+
+- saved report detail is embedded on the existing cloud dashboard, not a dedicated route
+- delivery status is not exposed yet because there is no delivery-attempt listing endpoint
+- tenant/branch delivery settings still need a frontend admin form
+- report acknowledgement/review workflow is not implemented yet
+
+Next foundation:
+
+20. Report operations and delivery administration
+
 - expose tenant/branch delivery settings in an admin UI
-- expose reconciliation summary and issue details in the cloud dashboard
 - add report acknowledgement/review workflow for managers
 - expose delivery status in the saved-report UI
 - add delivery retry/backoff for transient email and Telegram failures
