@@ -19,6 +19,7 @@ from app.models.cloud_projection import (
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.user import User
 from app.services.ai_llm_provider import AIManagerLLMProvider
+from app.services.cloud_reconciliation_service import CloudReconciliationService
 
 
 REFUSAL_MESSAGE = (
@@ -36,6 +37,7 @@ class AIManagerService:
     SYNC_SOURCE = "ingested_sync_events"
     PRODUCT_SNAPSHOT_SOURCE = "cloud_product_snapshots"
     BATCH_SNAPSHOT_SOURCE = "cloud_batch_snapshots"
+    RECONCILIATION_SOURCE = "cloud_reconciliation_checks"
 
     @staticmethod
     def answer(
@@ -95,6 +97,12 @@ class AIManagerService:
             organization_id=organization_id,
             branch_id=effective_branch_id,
         )
+        reconciliation = CloudReconciliationService.reconcile(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            limit=10,
+        )
 
         tool_results = {
             "sales_summary": sales_summary,
@@ -102,6 +110,7 @@ class AIManagerService:
             "inventory_summary": inventory_summary,
             "sync_health": sync_health,
             "stock_risk": stock_risk,
+            "reconciliation": reconciliation,
         }
 
         deterministic_answer = AIManagerService._compose_answer(
@@ -111,6 +120,7 @@ class AIManagerService:
             inventory_summary=inventory_summary,
             sync_health=sync_health,
             stock_risk=stock_risk,
+            reconciliation=reconciliation,
             period_days=period_days,
             branch_id=effective_branch_id,
         )
@@ -138,6 +148,7 @@ class AIManagerService:
                     AIManagerService.SYNC_SOURCE,
                     AIManagerService.PRODUCT_SNAPSHOT_SOURCE,
                     AIManagerService.BATCH_SNAPSHOT_SOURCE,
+                    AIManagerService.RECONCILIATION_SOURCE,
                 ],
             ),
             "tool_results": tool_results,
@@ -353,6 +364,7 @@ class AIManagerService:
         inventory_summary: Dict[str, Any],
         sync_health: Dict[str, Any],
         stock_risk: Dict[str, Any],
+        reconciliation: Dict[str, Any],
         period_days: int,
         branch_id: Optional[int],
     ) -> str:
@@ -366,6 +378,21 @@ class AIManagerService:
                 f"{stock_risk['expired_batch_count']} expired batch(es), and "
                 f"{stock_risk['near_expiry_batch_count']} batch(es) expiring within "
                 f"{stock_risk['expiry_warning_days']} day(s). Investigate expired and out-of-stock items first."
+            )
+
+        if any(keyword in message for keyword in ["reconcile", "reconciliation", "data quality", "trust", "accurate", "reliable"]):
+            if reconciliation["critical_issue_count"] or reconciliation["high_issue_count"]:
+                return (
+                    f"For {scope}, cloud reconciliation found {reconciliation['issue_count']} issue(s): "
+                    f"{reconciliation['critical_issue_count']} critical, {reconciliation['high_issue_count']} high, and "
+                    f"{reconciliation['medium_issue_count']} medium. Review these before relying on cloud reports for "
+                    "purchasing or stock decisions."
+                )
+            return (
+                f"For {scope}, cloud reconciliation found no critical or high severity issues across "
+                f"{reconciliation['product_snapshot_count']} product snapshot(s), "
+                f"{reconciliation['batch_snapshot_count']} batch snapshot(s), and "
+                f"{reconciliation['movement_fact_count']} movement fact(s)."
             )
 
         if any(keyword in message for keyword in ["sync", "upload", "project", "cloud"]):

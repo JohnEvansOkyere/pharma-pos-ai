@@ -12,6 +12,7 @@ from app.api.endpoints.cloud_reports import (
     get_cloud_expiry_risk,
     get_cloud_inventory_movement_summary,
     get_cloud_low_stock,
+    get_cloud_reconciliation,
     get_cloud_sales_summary,
     get_cloud_stock_risk_summary,
     get_cloud_sync_health,
@@ -435,3 +436,113 @@ def test_cloud_stock_risk_reports_are_tenant_and_branch_scoped(db_session):
     assert low_stock[0].status == "out_of_stock"
     assert {item.batch_id for item in expiry_risk} == {10, 11}
     assert any(item.status == "expired" for item in expiry_risk)
+
+
+def test_cloud_reconciliation_flags_projection_and_snapshot_inconsistencies(db_session):
+    org, branch, device = _tenant(db_session, name="Reconcile Org", branch_code="REC")
+    other_org, other_branch, other_device = _tenant(db_session, name="Other Reconcile Org", branch_code="OREC")
+    event = _ingested(db_session, org, branch, device, event_id="88888888-8888-8888-8888-888888888881", sequence=1, event_type=SyncEventType.PRODUCT_CREATED)
+    movement_event = _ingested(db_session, org, branch, device, event_id="88888888-8888-8888-8888-888888888882", sequence=2, event_type=SyncEventType.STOCK_ADJUSTED)
+    failed_event = _ingested(db_session, org, branch, device, event_id="88888888-8888-8888-8888-888888888883", sequence=3, event_type=SyncEventType.STOCK_RECEIVED)
+    other_event = _ingested(db_session, other_org, other_branch, other_device, event_id="88888888-8888-8888-8888-888888888884", sequence=1, event_type=SyncEventType.PRODUCT_CREATED)
+    failed_event.projection_error = "bad payload"
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=10,
+                name="Mismatch Tabs",
+                sku="MM-10",
+                total_stock=5,
+                low_stock_threshold=2,
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=11,
+                name="Negative Syrup",
+                sku="NEG-11",
+                total_stock=-1,
+                low_stock_threshold=2,
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=other_org.id,
+                branch_id=other_branch.id,
+                local_product_id=10,
+                name="Other Product",
+                sku="OTHER",
+                total_stock=0,
+                low_stock_threshold=2,
+                is_active=True,
+                last_source_event_id=other_event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=10,
+                local_batch_id=100,
+                batch_number="B-100",
+                quantity=3,
+                expiry_date=date.today() + timedelta(days=100),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=99,
+                local_batch_id=999,
+                batch_number="ORPHAN",
+                quantity=-2,
+                expiry_date=date.today() + timedelta(days=100),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=movement_event.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.STOCK_ADJUSTED.value,
+                local_product_id=10,
+                local_batch_id=100,
+                quantity_delta=2,
+                stock_after=4,
+                payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch.id, username="reconcile-report-user")
+
+    summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    issue_types = {issue.issue_type for issue in summary.issues}
+    assert summary.branch_id == branch.id
+    assert summary.product_snapshot_count == 2
+    assert summary.batch_snapshot_count == 2
+    assert summary.projection_failed_count == 1
+    assert summary.issue_count >= 5
+    assert summary.critical_issue_count >= 2
+    assert "product_batch_quantity_mismatch" in issue_types
+    assert "latest_movement_stock_after_mismatch" in issue_types
+    assert "negative_product_stock" in issue_types
+    assert "negative_batch_quantity" in issue_types
+    assert "orphan_batch_snapshot" in issue_types
+    assert "projection_failures_present" in issue_types

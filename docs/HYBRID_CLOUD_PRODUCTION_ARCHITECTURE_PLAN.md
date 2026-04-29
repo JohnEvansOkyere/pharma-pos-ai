@@ -1866,9 +1866,37 @@ Next foundation:
 
 18. Cloud report reconciliation and saved-report UI
 
-- add reconciliation checks between movement facts and stock snapshots
+Status: implemented for first backend reconciliation surface.
+
+Implemented:
+
+- reusable cloud reconciliation service over approved projection tables
+- `GET /cloud-reports/reconciliation`
+- tenant and branch scoped reconciliation through existing cloud report authorization
+- checks for product snapshot total vs non-quarantined batch quantity sum
+- checks for negative product snapshot stock
+- checks for negative batch snapshot quantity
+- checks for batch snapshots with no active product snapshot in the same tenant/branch
+- checks latest projected movement `stock_after` against product snapshot total stock
+- includes projection failure count and a high-severity issue when failed projections exist
+- reconciliation summary includes issue counts by critical, high, and medium severity
+- reconciliation issues are included in weekly AI manager reports under sync and data quality
+- reconciliation is available as approved AI manager assistant context for data reliability questions
+- regression tests for reconciliation endpoint, AI assistant reconciliation answers, and weekly report data-quality inclusion
+
+Current scope:
+
+- reconciliation is diagnostic only; it does not mutate snapshots or repair projections
+- first pass uses projected movement `stock_after` as an integrity signal, not a full ledger replay
+- no frontend reconciliation view yet
+
+Next foundation:
+
+19. Saved-report UI and reconciliation dashboard
+
 - expose saved weekly reports in the manager dashboard
 - expose tenant/branch delivery settings in an admin UI
+- expose reconciliation summary and issue details in the cloud dashboard
 - add report acknowledgement/review workflow for managers
 - expose delivery status in the saved-report UI
 - add delivery retry/backoff for transient email and Telegram failures

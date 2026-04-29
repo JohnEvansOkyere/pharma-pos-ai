@@ -272,6 +272,7 @@ def test_weekly_report_service_generates_saved_performance_and_action_report(mon
     assert report.sections["coming_week_action_plan"]["risk_counts"]["out_of_stock_count"] == 1
     assert report.sections["coming_week_action_plan"]["risk_counts"]["near_expiry_batch_count"] == 1
     assert report.sections["sync_and_data_quality"]["projection_failed_count"] == 0
+    assert report.sections["sync_and_data_quality"]["reconciliation"]["issue_count"] >= 1
     assert report.provider == "deterministic"
     assert report.fallback_used is False
     assert "controlled-drug" in " ".join(report.safety_notes)

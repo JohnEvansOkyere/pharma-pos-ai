@@ -23,6 +23,7 @@ from app.models.tenancy import Organization
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.ai_manager_service import AIManagerService
+from app.services.cloud_reconciliation_service import CloudReconciliationService
 
 
 class AIWeeklyReportService:
@@ -252,6 +253,12 @@ class AIWeeklyReportService:
                 start=performance_start,
                 end=performance_end,
             ),
+            "reconciliation": CloudReconciliationService.reconcile(
+                db,
+                organization_id=organization_id,
+                branch_id=branch_id,
+                limit=25,
+            ),
         }
 
     @staticmethod
@@ -472,6 +479,7 @@ class AIWeeklyReportService:
     ) -> Dict[str, Any]:
         stock = tool_results["stock_risks"]
         sync = tool_results["sync_health"]
+        reconciliation = tool_results["reconciliation"]
         actions = []
         if stock["expired_batch_count"]:
             actions.append("Quarantine or review expired batches before opening sales for the week.")
@@ -483,6 +491,8 @@ class AIWeeklyReportService:
             actions.append("Prepare purchase orders for low-stock products using reorder levels where configured.")
         if sync["projection_failed_count"]:
             actions.append("Resolve failed cloud projections before relying on the report for owner-level decisions.")
+        if reconciliation["critical_issue_count"] or reconciliation["high_issue_count"]:
+            actions.append("Review cloud reconciliation issues before using this report for purchasing or stock decisions.")
         if not actions:
             actions.append("No critical projected stock or sync risks were found; keep normal daily checks running.")
 
@@ -511,7 +521,16 @@ class AIWeeklyReportService:
                     "value_at_risk": stock["value_at_risk"],
                 },
             },
-            "sync_and_data_quality": sync,
+            "sync_and_data_quality": {
+                **sync,
+                "reconciliation": {
+                    "issue_count": reconciliation["issue_count"],
+                    "critical_issue_count": reconciliation["critical_issue_count"],
+                    "high_issue_count": reconciliation["high_issue_count"],
+                    "medium_issue_count": reconciliation["medium_issue_count"],
+                    "issues": reconciliation["issues"],
+                },
+            },
             "data_limits": {
                 "source": "Approved cloud projection tables only.",
                 "excludes": "Patient-level records, clinical advice, dispensing overrides, and unsynced local-only events.",
@@ -532,6 +551,7 @@ class AIWeeklyReportService:
         performance = sections["performance_review"]
         risks = sections["coming_week_action_plan"]["risk_counts"]
         sync = sections["sync_and_data_quality"]
+        reconciliation = sync["reconciliation"]
         scope = f"organization {organization_id}" if branch_id is None else f"organization {organization_id}, branch {branch_id}"
         return (
             f"Weekly manager report for {scope}. Performance window: "
@@ -544,7 +564,9 @@ class AIWeeklyReportService:
             f"with projected expiry value at risk of GHS {risks['value_at_risk']:.2f}. "
             f"Sync health shows {sync['projected_event_count']} projected event(s), "
             f"{sync['projection_failed_count']} projection failure(s), and "
-            f"{sync['duplicate_delivery_count']} duplicate delivery attempt(s)."
+            f"{sync['duplicate_delivery_count']} duplicate delivery attempt(s). "
+            f"Cloud reconciliation found {reconciliation['issue_count']} issue(s), including "
+            f"{reconciliation['critical_issue_count']} critical and {reconciliation['high_issue_count']} high severity issue(s)."
         )
 
     @staticmethod

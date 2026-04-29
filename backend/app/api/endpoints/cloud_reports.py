@@ -23,10 +23,12 @@ from app.schemas.cloud_reports import (
     CloudExpiryRiskItem,
     CloudInventoryMovementSummary,
     CloudLowStockItem,
+    CloudReconciliationSummary,
     CloudSalesSummary,
     CloudStockRiskSummary,
     CloudSyncHealth,
 )
+from app.services.cloud_reconciliation_service import CloudReconciliationService
 
 router = APIRouter(prefix="/cloud-reports", tags=["Cloud Reports"])
 
@@ -308,3 +310,21 @@ def get_cloud_expiry_risk(
         )
         for batch, product in rows
     ]
+
+
+@router.get("/reconciliation", response_model=CloudReconciliationSummary)
+def get_cloud_reconciliation(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    result = CloudReconciliationService.reconcile(
+        db,
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        limit=limit,
+    )
+    return CloudReconciliationSummary(**result)

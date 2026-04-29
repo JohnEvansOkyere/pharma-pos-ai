@@ -302,6 +302,26 @@ def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session
     assert response.tool_results["stock_risk"]["near_expiry_batch_count"] == 1
 
 
+def test_ai_manager_answers_reconciliation_questions_from_cloud_checks(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Is the cloud data reliable for decisions?",
+            organization_id=organization.id,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.refused is False
+    assert "reconciliation" in response.answer.lower()
+    assert response.tool_results["reconciliation"]["issue_count"] >= 1
+    assert response.tool_results["reconciliation"]["high_issue_count"] >= 1
+
+
 @pytest.mark.parametrize("provider", ["openai", "claude", "groq"])
 def test_ai_manager_supports_configured_external_providers_with_fallback(monkeypatch, db_session, provider):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)

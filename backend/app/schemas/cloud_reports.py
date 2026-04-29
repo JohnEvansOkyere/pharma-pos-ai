@@ -2,7 +2,7 @@
 Schemas for cloud reporting endpoints.
 """
 from datetime import date, datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -78,3 +78,31 @@ class CloudExpiryRiskItem(BaseModel):
     days_until_expiry: int
     value_at_risk: float
     status: str
+
+
+class CloudReconciliationIssue(BaseModel):
+    severity: str
+    issue_type: str
+    branch_id: Optional[int] = None
+    product_id: Optional[int] = None
+    batch_id: Optional[int] = None
+    product_name: Optional[str] = None
+    batch_number: Optional[str] = None
+    expected_quantity: Optional[int] = None
+    actual_quantity: Optional[int] = None
+    delta: Optional[int] = None
+    message: str
+
+
+class CloudReconciliationSummary(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    product_snapshot_count: int
+    batch_snapshot_count: int
+    movement_fact_count: int
+    projection_failed_count: int
+    issue_count: int
+    critical_issue_count: int
+    high_issue_count: int
+    medium_issue_count: int
+    issues: List[CloudReconciliationIssue]
