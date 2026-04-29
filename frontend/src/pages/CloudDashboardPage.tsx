@@ -4,6 +4,7 @@ import {
   FiAlertTriangle,
   FiBarChart2,
   FiCalendar,
+  FiCheckCircle,
   FiCloud,
   FiDatabase,
   FiDollarSign,
@@ -164,6 +165,42 @@ interface AIWeeklyManagerReport {
   generated_at: string
 }
 
+interface AIWeeklyReportDelivery {
+  id: number
+  report_id: number
+  organization_id: number
+  branch_id: number | null
+  channel: string
+  recipient: string
+  status: string
+  attempt_count: number
+  error_message: string | null
+  sent_at: string | null
+  created_at: string
+}
+
+interface AIWeeklyReportDeliverySetting {
+  id: number
+  organization_id: number
+  branch_id: number | null
+  report_scope_key: string
+  email_enabled: boolean
+  email_recipients: string[]
+  telegram_enabled: boolean
+  telegram_chat_ids: string[]
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface DeliverySettingsFormState {
+  email_enabled: boolean
+  email_recipients: string
+  telegram_enabled: boolean
+  telegram_chat_ids: string
+  is_active: boolean
+}
+
 interface AIManagerChatResponse {
   answer: string
   data_scope: {
@@ -197,6 +234,14 @@ const suggestedPrompts = [
   'What should I investigate today?',
 ]
 
+const emptyDeliverySettingsForm: DeliverySettingsFormState = {
+  email_enabled: false,
+  email_recipients: '',
+  telegram_enabled: false,
+  telegram_chat_ids: '',
+  is_active: true,
+}
+
 function formatCurrency(value: number) {
   return `GH₵ ${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
@@ -219,6 +264,27 @@ function startDateForDays(days: number) {
   return date.toISOString()
 }
 
+function listToText(values: string[] | undefined) {
+  return (values ?? []).join('\n')
+}
+
+function textToList(value: string) {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function deliveryFormFromSetting(setting: AIWeeklyReportDeliverySetting): DeliverySettingsFormState {
+  return {
+    email_enabled: setting.email_enabled,
+    email_recipients: listToText(setting.email_recipients),
+    telegram_enabled: setting.telegram_enabled,
+    telegram_chat_ids: listToText(setting.telegram_chat_ids),
+    is_active: setting.is_active,
+  }
+}
+
 export default function CloudDashboardPage() {
   const { user } = useAuthStore()
   const defaultOrganizationId = user?.organization_id ? String(user.organization_id) : ''
@@ -237,6 +303,15 @@ export default function CloudDashboardPage() {
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null)
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
   const [reportError, setReportError] = useState<string | null>(null)
+  const [isDeliveringReport, setIsDeliveringReport] = useState(false)
+  const [deliveryResults, setDeliveryResults] = useState<AIWeeklyReportDelivery[]>([])
+  const [deliveryError, setDeliveryError] = useState<string | null>(null)
+  const [deliverySettings, setDeliverySettings] = useState<AIWeeklyReportDeliverySetting | null>(null)
+  const [deliveryForm, setDeliveryForm] = useState<DeliverySettingsFormState>(emptyDeliverySettingsForm)
+  const [deliverySettingsState, setDeliverySettingsState] = useState<LoadState>('idle')
+  const [deliverySettingsError, setDeliverySettingsError] = useState<string | null>(null)
+  const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null)
+  const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -248,6 +323,7 @@ export default function CloudDashboardPage() {
   const hasValidOrganization = Number.isInteger(organizationId) && organizationId > 0
   const branchId = selectedBranchId === 'all' ? undefined : Number(selectedBranchId)
   const isBranchLocked = user?.branch_id != null
+  const isAdmin = user?.role === 'admin'
 
   const branchOptions = useMemo(() => {
     const ids = new Set<number>()
@@ -275,6 +351,17 @@ export default function CloudDashboardPage() {
 
     loadCloudReports()
   }, [organizationInput, selectedBranchId, periodDays])
+
+  useEffect(() => {
+    if (!isAdmin || !hasValidOrganization) {
+      setDeliverySettings(null)
+      setDeliveryForm(emptyDeliverySettingsForm)
+      setDeliverySettingsState('idle')
+      return
+    }
+
+    loadDeliverySettings()
+  }, [isAdmin, organizationInput, selectedBranchId])
 
   const loadCloudReports = async () => {
     setLoadState('loading')
@@ -428,6 +515,73 @@ export default function CloudDashboardPage() {
       setReportError('Weekly report generation failed.')
     } finally {
       setIsGeneratingReport(false)
+    }
+  }
+
+  const deliverSelectedReport = async () => {
+    if (!selectedReport || isDeliveringReport) return
+    setIsDeliveringReport(true)
+    setDeliveryError(null)
+    setDeliveryResults([])
+    try {
+      const deliveries: AIWeeklyReportDelivery[] = await api.deliverAIWeeklyReport(selectedReport.id, {})
+      setDeliveryResults(deliveries)
+    } catch (error) {
+      setDeliveryError('Weekly report delivery failed.')
+    } finally {
+      setIsDeliveringReport(false)
+    }
+  }
+
+  const loadDeliverySettings = async () => {
+    setDeliverySettingsState('loading')
+    setDeliverySettingsError(null)
+    setDeliverySettingsMessage(null)
+
+    try {
+      const setting: AIWeeklyReportDeliverySetting = await api.getAIWeeklyReportDeliverySetting({
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : {}),
+      })
+      setDeliverySettings(setting)
+      setDeliveryForm(deliveryFormFromSetting(setting))
+    } catch (error: any) {
+      if (error?.response?.status === 404) {
+        setDeliverySettings(null)
+        setDeliveryForm(emptyDeliverySettingsForm)
+      } else {
+        setDeliverySettingsError('Delivery settings could not be loaded.')
+      }
+    } finally {
+      setDeliverySettingsState('loaded')
+    }
+  }
+
+  const saveDeliverySettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!hasValidOrganization || isSavingDeliverySettings) return
+
+    setIsSavingDeliverySettings(true)
+    setDeliverySettingsError(null)
+    setDeliverySettingsMessage(null)
+
+    try {
+      const setting: AIWeeklyReportDeliverySetting = await api.updateAIWeeklyReportDeliverySetting({
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : { branch_id: null }),
+        email_enabled: deliveryForm.email_enabled,
+        email_recipients: textToList(deliveryForm.email_recipients),
+        telegram_enabled: deliveryForm.telegram_enabled,
+        telegram_chat_ids: textToList(deliveryForm.telegram_chat_ids),
+        is_active: deliveryForm.is_active,
+      })
+      setDeliverySettings(setting)
+      setDeliveryForm(deliveryFormFromSetting(setting))
+      setDeliverySettingsMessage('Delivery settings saved.')
+    } catch (error) {
+      setDeliverySettingsError('Delivery settings could not be saved.')
+    } finally {
+      setIsSavingDeliverySettings(false)
     }
   }
 
@@ -697,11 +851,29 @@ export default function CloudDashboardPage() {
           selectedReportId={selectedReportId}
           onSelectReport={setSelectedReportId}
           onGenerate={generateWeeklyReport}
+          onDeliver={deliverSelectedReport}
           isGenerating={isGeneratingReport}
+          isDelivering={isDeliveringReport}
           error={reportError}
+          deliveryError={deliveryError}
+          deliveryResults={deliveryResults}
           disabled={!hasValidOrganization}
         />
       </div>
+
+      {isAdmin && (
+        <DeliverySettingsPanel
+          form={deliveryForm}
+          setting={deliverySettings}
+          state={deliverySettingsState}
+          error={deliverySettingsError}
+          message={deliverySettingsMessage}
+          disabled={!hasValidOrganization || isSavingDeliverySettings}
+          isSaving={isSavingDeliverySettings}
+          onSubmit={saveDeliverySettings}
+          onChange={setDeliveryForm}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <RiskTable
@@ -959,8 +1131,12 @@ function WeeklyReportsPanel({
   selectedReportId,
   onSelectReport,
   onGenerate,
+  onDeliver,
   isGenerating,
+  isDelivering,
   error,
+  deliveryError,
+  deliveryResults,
   disabled,
 }: {
   reports: AIWeeklyManagerReport[]
@@ -968,8 +1144,12 @@ function WeeklyReportsPanel({
   selectedReportId: number | null
   onSelectReport: (id: number) => void
   onGenerate: () => void
+  onDeliver: () => void
   isGenerating: boolean
+  isDelivering: boolean
   error: string | null
+  deliveryError: string | null
+  deliveryResults: AIWeeklyReportDelivery[]
   disabled: boolean
 }) {
   const riskCounts = selectedReport?.sections.coming_week_action_plan?.risk_counts
@@ -998,9 +1178,56 @@ function WeeklyReportsPanel({
         </button>
       </div>
 
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={onDeliver}
+          disabled={disabled || !selectedReport || isDelivering}
+          className="btn-primary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <FiSend className={`h-4 w-4 ${isDelivering ? 'animate-pulse' : ''}`} />
+          Deliver
+        </button>
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          Uses tenant-scoped email and Telegram settings
+        </span>
+      </div>
+
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
           {error}
+        </div>
+      )}
+
+      {deliveryError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {deliveryError}
+        </div>
+      )}
+
+      {deliveryResults.length > 0 && (
+        <div className="mb-4 divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-700 dark:border-gray-700">
+          {deliveryResults.map((delivery) => (
+            <div key={delivery.id} className="flex items-start justify-between gap-3 p-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold capitalize text-gray-900 dark:text-gray-100">
+                  {delivery.channel} · {delivery.recipient}
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Attempts: {delivery.attempt_count} · {delivery.error_message || (delivery.sent_at ? `Sent ${formatDateTime(delivery.sent_at)}` : 'No provider response')}
+                </p>
+              </div>
+              <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
+                delivery.status === 'sent'
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                  : delivery.status === 'failed'
+                    ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                    : 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300'
+              }`}>
+                {delivery.status}
+              </span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -1048,6 +1275,132 @@ function WeeklyReportsPanel({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function DeliverySettingsPanel({
+  form,
+  setting,
+  state,
+  error,
+  message,
+  disabled,
+  isSaving,
+  onSubmit,
+  onChange,
+}: {
+  form: DeliverySettingsFormState
+  setting: AIWeeklyReportDeliverySetting | null
+  state: LoadState
+  error: string | null
+  message: string | null
+  disabled: boolean
+  isSaving: boolean
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onChange: (next: DeliverySettingsFormState) => void
+}) {
+  const isLoading = state === 'loading'
+
+  return (
+    <div className="card p-6">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FiSend className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            Report Delivery Settings
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Tenant-scoped Sunday report recipients
+          </p>
+        </div>
+        <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+          {setting ? `Scope: ${setting.report_scope_key}` : 'No saved scope'}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100">
+          <FiCheckCircle className="h-4 w-4" />
+          {message}
+        </div>
+      )}
+
+      <form onSubmit={onSubmit} className="space-y-5">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <input
+              type="checkbox"
+              checked={form.email_enabled}
+              onChange={(event) => onChange({ ...form, email_enabled: event.target.checked })}
+              disabled={disabled || isLoading}
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">Email enabled</span>
+          </label>
+
+          <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <input
+              type="checkbox"
+              checked={form.telegram_enabled}
+              onChange={(event) => onChange({ ...form, telegram_enabled: event.target.checked })}
+              disabled={disabled || isLoading}
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">Telegram enabled</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <label className="block">
+            <span className="label">Email recipients</span>
+            <textarea
+              className="input min-h-28 resize-y"
+              value={form.email_recipients}
+              onChange={(event) => onChange({ ...form, email_recipients: event.target.value })}
+              disabled={disabled || isLoading}
+            />
+          </label>
+
+          <label className="block">
+            <span className="label">Telegram chat IDs</span>
+            <textarea
+              className="input min-h-28 resize-y"
+              value={form.telegram_chat_ids}
+              onChange={(event) => onChange({ ...form, telegram_chat_ids: event.target.value })}
+              disabled={disabled || isLoading}
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <label className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(event) => onChange({ ...form, is_active: event.target.checked })}
+              disabled={disabled || isLoading}
+              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-100">Active configuration</span>
+          </label>
+
+          <button
+            type="submit"
+            disabled={disabled || isLoading}
+            className="btn-primary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <FiCheckCircle className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
+            Save settings
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

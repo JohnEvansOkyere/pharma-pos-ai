@@ -13,7 +13,23 @@ const apiMocks = vi.hoisted(() => ({
   getCloudReconciliation: vi.fn(),
   getAIWeeklyReports: vi.fn(),
   generateAIWeeklyReport: vi.fn(),
+  deliverAIWeeklyReport: vi.fn(),
+  getAIWeeklyReportDeliverySetting: vi.fn(),
+  updateAIWeeklyReportDeliverySetting: vi.fn(),
   chatWithAIManager: vi.fn(),
+}))
+
+const authMock = vi.hoisted(() => ({
+  user: {
+    id: 7,
+    username: 'owner',
+    email: 'owner@example.com',
+    full_name: 'Owner User',
+    role: 'manager',
+    organization_id: 22,
+    branch_id: null as number | null,
+    is_active: true,
+  },
 }))
 
 vi.mock('../services/api', () => ({
@@ -22,16 +38,7 @@ vi.mock('../services/api', () => ({
 
 vi.mock('../stores/authStore', () => ({
   useAuthStore: () => ({
-    user: {
-      id: 7,
-      username: 'owner',
-      email: 'owner@example.com',
-      full_name: 'Owner User',
-      role: 'manager',
-      organization_id: 22,
-      branch_id: null,
-      is_active: true,
-    },
+    user: authMock.user,
   }),
 }))
 
@@ -53,6 +60,16 @@ import CloudDashboardPage from './CloudDashboardPage'
 describe('CloudDashboardPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    authMock.user = {
+      id: 7,
+      username: 'owner',
+      email: 'owner@example.com',
+      full_name: 'Owner User',
+      role: 'manager',
+      organization_id: 22,
+      branch_id: null,
+      is_active: true,
+    }
     apiMocks.getCloudSalesSummary.mockResolvedValue({
       organization_id: 22,
       branch_id: null,
@@ -206,6 +223,47 @@ describe('CloudDashboardPage', () => {
       fallback_used: false,
       generated_at: '2026-05-03T19:00:00Z',
     })
+    apiMocks.deliverAIWeeklyReport.mockResolvedValue([
+      {
+        id: 101,
+        report_id: 55,
+        organization_id: 22,
+        branch_id: null,
+        channel: 'email',
+        recipient: 'owner@example.com',
+        status: 'sent',
+        attempt_count: 1,
+        error_message: null,
+        sent_at: '2026-05-03T19:05:00Z',
+        created_at: '2026-05-03T19:05:00Z',
+      },
+    ])
+    apiMocks.getAIWeeklyReportDeliverySetting.mockResolvedValue({
+      id: 10,
+      organization_id: 22,
+      branch_id: null,
+      report_scope_key: 'organization',
+      email_enabled: true,
+      email_recipients: ['owner@example.com'],
+      telegram_enabled: false,
+      telegram_chat_ids: [],
+      is_active: true,
+      created_at: '2026-05-03T18:00:00Z',
+      updated_at: '2026-05-03T18:00:00Z',
+    })
+    apiMocks.updateAIWeeklyReportDeliverySetting.mockResolvedValue({
+      id: 10,
+      organization_id: 22,
+      branch_id: null,
+      report_scope_key: 'organization',
+      email_enabled: true,
+      email_recipients: ['owner@example.com', 'ops@example.com'],
+      telegram_enabled: true,
+      telegram_chat_ids: ['12345'],
+      is_active: true,
+      created_at: '2026-05-03T18:00:00Z',
+      updated_at: '2026-05-03T18:10:00Z',
+    })
     apiMocks.chatWithAIManager.mockResolvedValue({
       answer: 'Branch 2 is performing best from approved cloud report data.',
       data_scope: {
@@ -281,6 +339,55 @@ describe('CloudDashboardPage', () => {
         organization_id: 22,
       })
     })
+  })
+
+  it('delivers a saved weekly manager report and shows delivery status', async () => {
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    await screen.findByText(/weekly ai reports/i)
+    await user.click(screen.getByRole('button', { name: /^deliver$/i }))
+
+    expect(await screen.findByText(/email · owner@example.com/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^sent$/i)).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(apiMocks.deliverAIWeeklyReport).toHaveBeenCalledWith(55, {})
+    })
+  })
+
+  it('allows admins to manage weekly report delivery settings', async () => {
+    authMock.user = {
+      ...authMock.user,
+      role: 'admin',
+    }
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    expect(await screen.findByText(/report delivery settings/i)).toBeInTheDocument()
+    expect(apiMocks.getAIWeeklyReportDeliverySetting).toHaveBeenCalledWith({
+      organization_id: 22,
+    })
+
+    const emailRecipients = await screen.findByLabelText(/email recipients/i)
+    await user.clear(emailRecipients)
+    await user.type(emailRecipients, 'owner@example.com\nops@example.com')
+    await user.click(screen.getByLabelText(/telegram enabled/i))
+    await user.type(screen.getByLabelText(/telegram chat ids/i), '12345')
+    await user.click(screen.getByRole('button', { name: /save settings/i }))
+
+    await waitFor(() => {
+      expect(apiMocks.updateAIWeeklyReportDeliverySetting).toHaveBeenCalledWith({
+        organization_id: 22,
+        branch_id: null,
+        email_enabled: true,
+        email_recipients: ['owner@example.com', 'ops@example.com'],
+        telegram_enabled: true,
+        telegram_chat_ids: ['12345'],
+        is_active: true,
+      })
+    })
+    expect(await screen.findByText(/delivery settings saved/i)).toBeInTheDocument()
   })
 
   it('sends scoped AI manager chat requests and renders provider metadata', async () => {

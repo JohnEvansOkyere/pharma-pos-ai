@@ -1917,8 +1917,28 @@ Next foundation:
 
 20. Report operations and delivery administration
 
+Status: implemented for first frontend operations surface.
+
+Implemented:
+
 - expose tenant/branch delivery settings in an admin UI
+- added frontend API methods for weekly report delivery settings
+- added admin-only delivery settings panel on the cloud dashboard
+- delivery settings panel supports scoped email recipients, Telegram chat IDs, channel toggles, and active/inactive state
+- added manual saved-report delivery action from the weekly report panel
+- manual delivery results show channel, recipient, status, attempt count, sent time, or error message
+- frontend regression tests for manual delivery and admin delivery settings save flow
+
+Current scope:
+
+- delivery settings UI is available only to admin users
+- recipient secrets remain backend-side; frontend stores only tenant recipient targets through existing backend endpoints
+- delivery results shown in the UI are the results of the current manual delivery attempt
+- persisted historical delivery-attempt listing is not implemented yet
+
+Next foundation:
+
+- expose persisted delivery status in the saved-report UI
 - add report acknowledgement/review workflow for managers
-- expose delivery status in the saved-report UI
 - add delivery retry/backoff for transient email and Telegram failures
 - add tenant-level external AI provider consent/configuration

@@ -364,6 +364,23 @@ class ApiClient {
     return response.data
   }
 
+  async deliverAIWeeklyReport(reportId: number, payload: any = {}) {
+    const response = await this.client.post(`/ai-manager/weekly-reports/${reportId}/deliver`, payload)
+    return response.data
+  }
+
+  async getAIWeeklyReportDeliverySetting(params: any) {
+    const response = await this.client.get('/ai-manager/weekly-report-delivery-settings', {
+      params,
+    })
+    return response.data
+  }
+
+  async updateAIWeeklyReportDeliverySetting(payload: any) {
+    const response = await this.client.put('/ai-manager/weekly-report-delivery-settings', payload)
+    return response.data
+  }
+
   async chatWithAIManager(payload: any) {
     const response = await this.client.post('/ai-manager/chat', payload)
     return response.data
