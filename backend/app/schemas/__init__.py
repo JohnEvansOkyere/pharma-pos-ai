@@ -29,6 +29,7 @@ from app.schemas.cloud_reports import (
     CloudSalesSummary,
     CloudSyncHealth,
 )
+from app.schemas.ai_manager import AIManagerChatRequest, AIManagerChatResponse
 
 __all__ = [
     "User",
@@ -79,4 +80,6 @@ __all__ = [
     "CloudBranchSalesSummary",
     "CloudInventoryMovementSummary",
     "CloudSyncHealth",
+    "AIManagerChatRequest",
+    "AIManagerChatResponse",
 ]

@@ -12,6 +12,7 @@ from app.api.endpoints import (
     sales,
     stock_adjustments,
     stock_takes,
+    ai_manager,
     sync,
     cloud_reports,
     notifications,
@@ -32,6 +33,7 @@ api_router.include_router(suppliers.router)
 api_router.include_router(sales.router)
 api_router.include_router(stock_adjustments.router)
 api_router.include_router(stock_takes.router)
+api_router.include_router(ai_manager.router)
 api_router.include_router(sync.router)
 api_router.include_router(cloud_reports.router)
 api_router.include_router(notifications.router)

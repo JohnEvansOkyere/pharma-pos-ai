@@ -1696,12 +1696,38 @@ Current scope:
 - dashboard reads the existing cloud report endpoints only
 - projection status remains admin-only and is not shown to manager users in the first UI
 - branch names are not yet hydrated from a branch registry endpoint, so the first UI labels branches by ID
-- no AI assistant tools yet
+- AI assistant backend endpoint is available, but no frontend chat UI yet
 
 Next foundation:
 
 13. AI manager assistant
 
+Status: implemented for first backend assistant contract.
+
+Implemented:
+
+- `POST /ai-manager/chat`
 - use the cloud reporting API surface as approved tool context
-- answer manager questions about sales, inventory movement, sync health, low-stock risk, and expiry risk
+- answer manager questions about sales, inventory movement, sync health, and branch performance
+- organization and branch access checks reused from cloud report authorization
+- branch-assigned users are limited to their assigned branch even when no branch filter is sent
+- deterministic read-only assistant response over approved cloud reporting facts
 - do not allow AI to mutate stock, approve dispensing, override rules, or make clinical decisions
+- explicit refusal for clinical, controlled-drug override, dispensing approval, and mutating requests
+- regression tests for normal answers, branch scope, cross-branch denial, and unsafe-request refusal
+
+Current scope:
+
+- no frontend chat UI yet
+- no external LLM provider is called by this first contract
+- low-stock and expiry cloud report tools are still pending
+- responses are deterministic summaries over approved reporting data, not free-form database access
+
+Next foundation:
+
+14. AI manager chat UI
+
+- add a chat panel on the cloud dashboard or dedicated assistant route
+- call `POST /ai-manager/chat`
+- show data scope and safety notes with each answer
+- include suggested prompts for sales, branch performance, inventory movement, and sync health
