@@ -209,6 +209,7 @@ def _serialize_product_search_rows(
             "dosage_form": product.dosage_form,
             "strength": product.strength,
             "selling_price": product.selling_price,
+            "wholesale_price": product.wholesale_price,
             "cost_price": product.cost_price,
             "total_stock": product.total_stock,
             "low_stock_threshold": product.low_stock_threshold,

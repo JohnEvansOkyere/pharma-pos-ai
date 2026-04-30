@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from app.api.endpoints.products import receive_stock, update_product_batch
+from app.api.endpoints.products import list_products_catalog, receive_stock, update_product_batch
 from app.api.endpoints.sales import create_sale
 from app.models.activity_log import ActivityLog
 from app.models.inventory_movement import InventoryMovement, InventoryMovementType
@@ -11,6 +11,7 @@ from app.models.sale import PaymentMethod
 from app.models.stock_adjustment import StockAdjustment
 from app.models.sync_event import SyncEvent, SyncEventType
 from app.schemas.product import ProductBatchUpdate, ReceiveStock
+from app.schemas.product import ProductSearchPage
 from app.schemas.sale import SaleCreate, SaleItemCreate
 
 
@@ -79,6 +80,38 @@ def test_receive_stock_creates_batch_adjustment_and_audit_log(db_session, manage
     assert sync_event.payload["batch_id"] == saved_batch.id
     assert sync_event.payload["quantity"] == 25
     assert audit_entry.action == "receive_stock"
+
+
+def test_product_catalog_response_includes_wholesale_price(
+    db_session,
+    cashier_user,
+    category,
+    product_factory,
+    batch_factory,
+):
+    product = product_factory(category.id, name="Wholesale Catalog Product", sku="WHO-CAT-1")
+    product.wholesale_price = 3.0
+    db_session.commit()
+    batch_factory(
+        product.id,
+        batch_number="WHO-CAT-B1",
+        quantity=8,
+        expiry_offset_days=180,
+    )
+
+    response = list_products_catalog(
+        q=None,
+        skip=0,
+        limit=25,
+        category_id=None,
+        is_active=True,
+        db=db_session,
+        current_user=cashier_user,
+    )
+    validated = ProductSearchPage.model_validate(response)
+
+    assert validated.total == 1
+    assert validated.items[0].wholesale_price == 3.0
 
 
 def test_create_sale_depletes_batches_fefo_and_logs_audit(db_session, cashier_user, category, product_factory, batch_factory):

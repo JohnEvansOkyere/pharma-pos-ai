@@ -7,6 +7,7 @@ The POS route is the most important operator workflow. It must stay fast, predic
 ## Current Capabilities
 
 - product search by name/SKU/barcode
+- paginated catalog responses for POS and product management include retail and wholesale prices
 - cart workflow
 - retail and wholesale pricing mode support
 - backend sale total calculation
