@@ -19,6 +19,7 @@ from app.models.cloud_projection import (
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.user import User
 from app.services.ai_llm_provider import AIManagerLLMProvider
+from app.services.ai_provider_policy_service import AIProviderPolicyService
 from app.services.cloud_reconciliation_service import CloudReconciliationService
 
 
@@ -53,6 +54,7 @@ class AIManagerService:
         normalized_message = message.strip().lower()
 
         if AIManagerService._is_disallowed_request(normalized_message):
+            provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
             return {
                 "answer": REFUSAL_MESSAGE,
                 "data_scope": AIManagerService._scope_payload(
@@ -63,8 +65,8 @@ class AIManagerService:
                 ),
                 "tool_results": {},
                 "safety_notes": AIManagerService._safety_notes(),
-                "provider": AIManagerLLMProvider.configured_provider(),
-                "model": AIManagerLLMProvider.configured_model(),
+                "provider": provider_policy["provider"],
+                "model": provider_policy["model"],
                 "fallback_used": False,
                 "refused": True,
             }
@@ -124,6 +126,7 @@ class AIManagerService:
             period_days=period_days,
             branch_id=effective_branch_id,
         )
+        provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
         provider_result = AIManagerLLMProvider.generate_answer(
             prompt=AIManagerService._provider_prompt(
                 message=message.strip(),
@@ -134,6 +137,8 @@ class AIManagerService:
                 period_days=period_days,
             ),
             deterministic_answer=deterministic_answer,
+            provider=provider_policy["provider"],
+            model=provider_policy["model"],
         )
 
         return {

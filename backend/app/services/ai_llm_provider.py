@@ -31,9 +31,9 @@ class AIManagerLLMProvider:
         return settings.AI_MANAGER_MODEL.strip() if settings.AI_MANAGER_MODEL else None
 
     @staticmethod
-    def is_external_provider_configured() -> bool:
-        provider = AIManagerLLMProvider.configured_provider()
-        model = AIManagerLLMProvider.configured_model()
+    def is_external_provider_configured(provider: Optional[str] = None, model: Optional[str] = None) -> bool:
+        provider = provider or AIManagerLLMProvider.configured_provider()
+        model = model or AIManagerLLMProvider.configured_model()
         if provider == "openai":
             return bool(settings.OPENAI_API_KEY and model)
         if provider == "claude":
@@ -43,9 +43,21 @@ class AIManagerLLMProvider:
         return False
 
     @staticmethod
-    def generate_answer(*, prompt: str, deterministic_answer: str) -> Dict[str, Any]:
-        provider = AIManagerLLMProvider.configured_provider()
-        model = AIManagerLLMProvider.configured_model()
+    def generate_answer(
+        *,
+        prompt: str,
+        deterministic_answer: str,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        has_provider_override = provider is not None
+        provider = (provider or AIManagerLLMProvider.configured_provider()).strip().lower()
+        if model is not None:
+            model = model.strip() or None
+        elif has_provider_override:
+            model = None
+        else:
+            model = AIManagerLLMProvider.configured_model()
 
         if provider == "deterministic":
             return {
@@ -55,7 +67,7 @@ class AIManagerLLMProvider:
                 "fallback_used": False,
             }
 
-        if not AIManagerLLMProvider.is_external_provider_configured():
+        if not AIManagerLLMProvider.is_external_provider_configured(provider, model):
             return {
                 "answer": deterministic_answer,
                 "provider": provider,

@@ -58,6 +58,53 @@ class AIWeeklyReportReviewRequest(BaseModel):
     review_notes: Optional[str] = Field(None, max_length=2000)
 
 
+class AIExternalProviderSettingUpsert(BaseModel):
+    organization_id: int
+    external_ai_enabled: bool = False
+    allowed_providers: List[str] = Field(default_factory=list)
+    preferred_provider: Optional[str] = None
+    preferred_model: Optional[str] = Field(None, max_length=100)
+    consent_text: Optional[str] = Field(None, max_length=2000)
+
+    @field_validator("allowed_providers")
+    @classmethod
+    def validate_allowed_providers(cls, value):
+        allowed = {"openai", "claude", "groq"}
+        normalized = []
+        for provider in value or []:
+            item = provider.strip().lower()
+            if item not in allowed:
+                raise ValueError("allowed_providers may only include openai, claude, or groq")
+            if item not in normalized:
+                normalized.append(item)
+        return normalized
+
+    @field_validator("preferred_provider")
+    @classmethod
+    def validate_preferred_provider(cls, value):
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if normalized not in {"openai", "claude", "groq"}:
+            raise ValueError("preferred_provider must be openai, claude, or groq")
+        return normalized
+
+
+class AIExternalProviderSettingResponse(BaseModel):
+    id: Optional[int] = None
+    organization_id: int
+    external_ai_enabled: bool
+    allowed_providers: List[str]
+    preferred_provider: Optional[str] = None
+    preferred_model: Optional[str] = None
+    consent_text: Optional[str] = None
+    consented_by_user_id: Optional[int] = None
+    consented_at: Optional[datetime] = None
+    updated_by_user_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class AIWeeklyManagerReportResponse(BaseModel):
     id: int
     organization_id: int

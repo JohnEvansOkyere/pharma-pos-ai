@@ -89,3 +89,25 @@ class AIWeeklyReportDeliverySetting(Base):
     updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AIExternalProviderSetting(Base):
+    """Tenant-level policy for external AI provider use."""
+
+    __tablename__ = "ai_external_provider_settings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", name="uq_ai_external_provider_settings_org"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    external_ai_enabled = Column(Boolean, nullable=False, default=False, index=True)
+    allowed_providers = Column(JSON, nullable=False, default=list)
+    preferred_provider = Column(String(50), nullable=True)
+    preferred_model = Column(String(100), nullable=True)
+    consent_text = Column(Text, nullable=True)
+    consented_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    consented_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

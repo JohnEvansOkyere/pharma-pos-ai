@@ -2009,4 +2009,29 @@ Current scope:
 
 Next foundation:
 
-- add tenant-level external AI provider consent/configuration
+24. Tenant external AI provider policy
+
+Status: implemented for organization-level provider authorization.
+
+Implemented:
+
+- added persisted tenant AI provider policy with `external_ai_enabled`, allowed providers, preferred provider/model, consent text, consenting user, and consent timestamp
+- supported external providers are constrained to OpenAI, Claude, and Groq
+- external AI is disabled by default for every tenant, even when global API keys exist
+- AI manager chat and weekly report generation resolve the tenant policy before calling an external model
+- deterministic reporting remains the fallback when tenant policy is missing, disabled, unsupported, or provider calls fail
+- added admin-only endpoints to fetch and update tenant AI provider policy
+- added cloud dashboard admin UI for enabling external AI, selecting allowed providers, setting the preferred model, and recording consent
+- added backend regression coverage for default-disabled behavior, provider fallback, admin-only policy updates, and provider selection
+- added frontend regression coverage for admin policy management
+
+Current scope:
+
+- policy is organization-level, not per branch
+- API keys remain server-side environment configuration and are not stored per tenant
+- consent is a current-state record, not a full consent event ledger
+- external AI prompts are still limited to aggregate reporting and stock-risk context; no patient-identifiable or prescription-sensitive prompt path is allowed
+
+Next foundation:
+
+- add audit-event logging for AI policy changes and weekly report delivery/review actions

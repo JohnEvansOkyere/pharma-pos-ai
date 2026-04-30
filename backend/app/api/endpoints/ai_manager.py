@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import require_admin, require_organization_access, require_view_reports
 from app.db.base import get_db
 from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.ai_manager import (
     AIManagerChatRequest,
     AIManagerChatResponse,
+    AIExternalProviderSettingResponse,
+    AIExternalProviderSettingUpsert,
     AIWeeklyManagerReportResponse,
     AIWeeklyReportDeliverRequest,
     AIWeeklyReportDeliveryResponse,
@@ -24,6 +26,7 @@ from app.schemas.ai_manager import (
 )
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_manager_service import AIManagerService
+from app.services.ai_provider_policy_service import AIProviderPolicyService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 
 router = APIRouter(prefix="/ai-manager", tags=["AI Manager Assistant"])
@@ -55,6 +58,58 @@ def chat_with_ai_manager(
         current_user=current_user,
     )
     return AIManagerChatResponse(**result)
+
+
+@router.get("/external-provider-settings", response_model=AIExternalProviderSettingResponse)
+def get_external_provider_settings(
+    organization_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Fetch tenant-level external AI provider policy."""
+    _require_admin_user(current_user)
+    require_organization_access(
+        organization_id=organization_id,
+        branch_id=None,
+        current_user=current_user,
+    )
+    return AIExternalProviderSettingResponse(
+        **AIProviderPolicyService.get_or_default(db, organization_id=organization_id)
+    )
+
+
+@router.put("/external-provider-settings", response_model=AIExternalProviderSettingResponse)
+def upsert_external_provider_settings(
+    payload: AIExternalProviderSettingUpsert,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Create or update tenant-level external AI provider policy."""
+    _require_admin_user(current_user)
+    require_organization_access(
+        organization_id=payload.organization_id,
+        branch_id=None,
+        current_user=current_user,
+    )
+    try:
+        setting = AIProviderPolicyService.upsert(
+            db,
+            organization_id=payload.organization_id,
+            external_ai_enabled=payload.external_ai_enabled,
+            allowed_providers=payload.allowed_providers,
+            preferred_provider=payload.preferred_provider,
+            preferred_model=payload.preferred_model,
+            consent_text=payload.consent_text,
+            current_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return AIExternalProviderSettingResponse(**AIProviderPolicyService.to_dict(setting))
+
+
+def _require_admin_user(current_user: User) -> None:
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 @router.post("/weekly-reports/generate", response_model=AIWeeklyManagerReportResponse)

@@ -23,6 +23,7 @@ from app.models.tenancy import Organization
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.ai_manager_service import AIManagerService
+from app.services.ai_provider_policy_service import AIProviderPolicyService
 from app.services.cloud_reconciliation_service import CloudReconciliationService
 
 
@@ -80,6 +81,7 @@ class AIWeeklyReportService:
             action_start=action_start,
             action_end=action_end,
         )
+        provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
         provider_result = AIManagerLLMProvider.generate_answer(
             prompt=AIWeeklyReportService._provider_prompt(
                 organization_id=organization_id,
@@ -93,6 +95,8 @@ class AIWeeklyReportService:
                 deterministic_summary=deterministic_summary,
             ),
             deterministic_answer=deterministic_summary,
+            provider=provider_policy["provider"],
+            model=provider_policy["model"],
         )
 
         report = AIWeeklyManagerReport(

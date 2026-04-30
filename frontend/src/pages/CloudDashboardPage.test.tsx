@@ -18,6 +18,8 @@ const apiMocks = vi.hoisted(() => ({
   getAIWeeklyReportDeliveries: vi.fn(),
   getAIWeeklyReportDeliverySetting: vi.fn(),
   updateAIWeeklyReportDeliverySetting: vi.fn(),
+  getAIExternalProviderSettings: vi.fn(),
+  updateAIExternalProviderSettings: vi.fn(),
   chatWithAIManager: vi.fn(),
 }))
 
@@ -319,6 +321,34 @@ describe('CloudDashboardPage', () => {
       created_at: '2026-05-03T18:00:00Z',
       updated_at: '2026-05-03T18:10:00Z',
     })
+    apiMocks.getAIExternalProviderSettings.mockResolvedValue({
+      id: null,
+      organization_id: 22,
+      external_ai_enabled: false,
+      allowed_providers: [],
+      preferred_provider: null,
+      preferred_model: null,
+      consent_text: null,
+      consented_by_user_id: null,
+      consented_at: null,
+      updated_by_user_id: null,
+      created_at: null,
+      updated_at: null,
+    })
+    apiMocks.updateAIExternalProviderSettings.mockResolvedValue({
+      id: 12,
+      organization_id: 22,
+      external_ai_enabled: true,
+      allowed_providers: ['groq'],
+      preferred_provider: 'groq',
+      preferred_model: 'llama-3.3-70b-versatile',
+      consent_text: 'Owner approved external AI for aggregate manager reporting.',
+      consented_by_user_id: 7,
+      consented_at: '2026-05-03T18:20:00Z',
+      updated_by_user_id: 7,
+      created_at: '2026-05-03T18:20:00Z',
+      updated_at: '2026-05-03T18:20:00Z',
+    })
     apiMocks.chatWithAIManager.mockResolvedValue({
       answer: 'Branch 2 is performing best from approved cloud report data.',
       data_scope: {
@@ -468,6 +498,41 @@ describe('CloudDashboardPage', () => {
       })
     })
     expect(await screen.findByText(/delivery settings saved/i)).toBeInTheDocument()
+  })
+
+  it('allows admins to manage tenant external AI provider policy', async () => {
+    authMock.user = {
+      ...authMock.user,
+      role: 'admin',
+    }
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    expect(await screen.findByRole('heading', { name: /external ai policy/i })).toBeInTheDocument()
+    expect(apiMocks.getAIExternalProviderSettings).toHaveBeenCalledWith({
+      organization_id: 22,
+    })
+
+    await user.click(screen.getByLabelText(/external ai enabled/i))
+    await user.click(screen.getByLabelText(/^groq$/i))
+    await user.selectOptions(screen.getByLabelText(/preferred provider/i), 'groq')
+    await user.type(screen.getByLabelText(/preferred model/i), 'llama-3.3-70b-versatile')
+    const consentRecord = screen.getByLabelText(/consent record/i)
+    await user.clear(consentRecord)
+    await user.type(consentRecord, 'Owner approved external AI for aggregate manager reporting.')
+    await user.click(screen.getByRole('button', { name: /save ai policy/i }))
+
+    await waitFor(() => {
+      expect(apiMocks.updateAIExternalProviderSettings).toHaveBeenCalledWith({
+        organization_id: 22,
+        external_ai_enabled: true,
+        allowed_providers: ['groq'],
+        preferred_provider: 'groq',
+        preferred_model: 'llama-3.3-70b-versatile',
+        consent_text: 'Owner approved external AI for aggregate manager reporting.',
+      })
+    })
+    expect(await screen.findByText(/external ai policy saved/i)).toBeInTheDocument()
   })
 
   it('sends scoped AI manager chat requests and renders provider metadata', async () => {

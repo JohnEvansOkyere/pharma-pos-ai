@@ -208,6 +208,29 @@ interface DeliverySettingsFormState {
   is_active: boolean
 }
 
+interface AIExternalProviderSetting {
+  id: number | null
+  organization_id: number
+  external_ai_enabled: boolean
+  allowed_providers: string[]
+  preferred_provider: string | null
+  preferred_model: string | null
+  consent_text: string | null
+  consented_by_user_id: number | null
+  consented_at: string | null
+  updated_by_user_id: number | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+interface AIExternalProviderFormState {
+  external_ai_enabled: boolean
+  allowed_providers: string[]
+  preferred_provider: string
+  preferred_model: string
+  consent_text: string
+}
+
 interface AIManagerChatResponse {
   answer: string
   data_scope: {
@@ -247,6 +270,16 @@ const emptyDeliverySettingsForm: DeliverySettingsFormState = {
   telegram_enabled: false,
   telegram_chat_ids: '',
   is_active: true,
+}
+
+const defaultAIConsentText = 'The pharmacy administrator enabled external AI processing for aggregate business reporting. Prompts must not include patient-identifiable, prescription-sensitive, or controlled-drug dispensing details.'
+
+const emptyAIExternalProviderForm: AIExternalProviderFormState = {
+  external_ai_enabled: false,
+  allowed_providers: [],
+  preferred_provider: 'groq',
+  preferred_model: '',
+  consent_text: defaultAIConsentText,
 }
 
 function formatCurrency(value: number) {
@@ -292,6 +325,16 @@ function deliveryFormFromSetting(setting: AIWeeklyReportDeliverySetting): Delive
   }
 }
 
+function aiProviderFormFromSetting(setting: AIExternalProviderSetting): AIExternalProviderFormState {
+  return {
+    external_ai_enabled: setting.external_ai_enabled,
+    allowed_providers: setting.allowed_providers ?? [],
+    preferred_provider: setting.preferred_provider ?? 'groq',
+    preferred_model: setting.preferred_model ?? '',
+    consent_text: setting.consent_text ?? defaultAIConsentText,
+  }
+}
+
 export default function CloudDashboardPage() {
   const { user } = useAuthStore()
   const defaultOrganizationId = user?.organization_id ? String(user.organization_id) : ''
@@ -324,6 +367,12 @@ export default function CloudDashboardPage() {
   const [deliverySettingsError, setDeliverySettingsError] = useState<string | null>(null)
   const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null)
   const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false)
+  const [aiProviderSetting, setAIProviderSetting] = useState<AIExternalProviderSetting | null>(null)
+  const [aiProviderForm, setAIProviderForm] = useState<AIExternalProviderFormState>(emptyAIExternalProviderForm)
+  const [aiProviderState, setAIProviderState] = useState<LoadState>('idle')
+  const [aiProviderError, setAIProviderError] = useState<string | null>(null)
+  const [aiProviderMessage, setAIProviderMessage] = useState<string | null>(null)
+  const [isSavingAIProvider, setIsSavingAIProvider] = useState(false)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
   const [chatInput, setChatInput] = useState('')
@@ -370,10 +419,14 @@ export default function CloudDashboardPage() {
       setDeliverySettings(null)
       setDeliveryForm(emptyDeliverySettingsForm)
       setDeliverySettingsState('idle')
+      setAIProviderSetting(null)
+      setAIProviderForm(emptyAIExternalProviderForm)
+      setAIProviderState('idle')
       return
     }
 
     loadDeliverySettings()
+    loadAIProviderSettings()
   }, [isAdmin, organizationInput, selectedBranchId])
 
   useEffect(() => {
@@ -647,6 +700,49 @@ export default function CloudDashboardPage() {
       setDeliverySettingsError('Delivery settings could not be saved.')
     } finally {
       setIsSavingDeliverySettings(false)
+    }
+  }
+
+  const loadAIProviderSettings = async () => {
+    setAIProviderState('loading')
+    setAIProviderError(null)
+    setAIProviderMessage(null)
+    try {
+      const setting: AIExternalProviderSetting = await api.getAIExternalProviderSettings({
+        organization_id: organizationId,
+      })
+      setAIProviderSetting(setting)
+      setAIProviderForm(aiProviderFormFromSetting(setting))
+    } catch (error) {
+      setAIProviderError('External AI settings could not be loaded.')
+    } finally {
+      setAIProviderState('loaded')
+    }
+  }
+
+  const saveAIProviderSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!hasValidOrganization || isSavingAIProvider) return
+
+    setIsSavingAIProvider(true)
+    setAIProviderError(null)
+    setAIProviderMessage(null)
+    try {
+      const setting: AIExternalProviderSetting = await api.updateAIExternalProviderSettings({
+        organization_id: organizationId,
+        external_ai_enabled: aiProviderForm.external_ai_enabled,
+        allowed_providers: aiProviderForm.allowed_providers,
+        preferred_provider: aiProviderForm.preferred_provider,
+        preferred_model: aiProviderForm.preferred_model,
+        consent_text: aiProviderForm.consent_text,
+      })
+      setAIProviderSetting(setting)
+      setAIProviderForm(aiProviderFormFromSetting(setting))
+      setAIProviderMessage('External AI policy saved.')
+    } catch (error) {
+      setAIProviderError('External AI policy could not be saved.')
+    } finally {
+      setIsSavingAIProvider(false)
     }
   }
 
@@ -934,17 +1030,30 @@ export default function CloudDashboardPage() {
       </div>
 
       {isAdmin && (
-        <DeliverySettingsPanel
-          form={deliveryForm}
-          setting={deliverySettings}
-          state={deliverySettingsState}
-          error={deliverySettingsError}
-          message={deliverySettingsMessage}
-          disabled={!hasValidOrganization || isSavingDeliverySettings}
-          isSaving={isSavingDeliverySettings}
-          onSubmit={saveDeliverySettings}
-          onChange={setDeliveryForm}
-        />
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <DeliverySettingsPanel
+            form={deliveryForm}
+            setting={deliverySettings}
+            state={deliverySettingsState}
+            error={deliverySettingsError}
+            message={deliverySettingsMessage}
+            disabled={!hasValidOrganization || isSavingDeliverySettings}
+            isSaving={isSavingDeliverySettings}
+            onSubmit={saveDeliverySettings}
+            onChange={setDeliveryForm}
+          />
+          <AIExternalProviderPanel
+            form={aiProviderForm}
+            setting={aiProviderSetting}
+            state={aiProviderState}
+            error={aiProviderError}
+            message={aiProviderMessage}
+            disabled={!hasValidOrganization || isSavingAIProvider}
+            isSaving={isSavingAIProvider}
+            onSubmit={saveAIProviderSettings}
+            onChange={setAIProviderForm}
+          />
+        </div>
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
@@ -1563,6 +1672,162 @@ function DeliverySettingsPanel({
           >
             <FiCheckCircle className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
             Save settings
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+const aiProviderOptions = [
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'groq', label: 'Groq' },
+]
+
+function AIExternalProviderPanel({
+  form,
+  setting,
+  state,
+  error,
+  message,
+  disabled,
+  isSaving,
+  onSubmit,
+  onChange,
+}: {
+  form: AIExternalProviderFormState
+  setting: AIExternalProviderSetting | null
+  state: LoadState
+  error: string | null
+  message: string | null
+  disabled: boolean
+  isSaving: boolean
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onChange: (next: AIExternalProviderFormState) => void
+}) {
+  const isLoading = state === 'loading'
+  const toggleAllowedProvider = (provider: string, enabled: boolean) => {
+    const allowed = enabled
+      ? Array.from(new Set([...form.allowed_providers, provider]))
+      : form.allowed_providers.filter((item) => item !== provider)
+    onChange({ ...form, allowed_providers: allowed })
+  }
+
+  return (
+    <div className="card p-6">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FiShield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            External AI Policy
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Tenant-level provider control for AI reports and chat
+          </p>
+        </div>
+        <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+          {setting?.consented_at
+            ? `Consented: ${formatDateTime(setting.consented_at)}`
+            : 'External AI disabled'}
+        </div>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100">
+          <FiCheckCircle className="h-4 w-4" />
+          {message}
+        </div>
+      )}
+
+      <form onSubmit={onSubmit} className="space-y-5">
+        <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+          <input
+            type="checkbox"
+            checked={form.external_ai_enabled}
+            onChange={(event) => onChange({ ...form, external_ai_enabled: event.target.checked })}
+            disabled={disabled || isLoading}
+            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+          />
+          <span className="text-sm font-medium text-gray-800 dark:text-gray-100">External AI enabled</span>
+        </label>
+
+        <div>
+          <span className="label">Allowed providers</span>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {aiProviderOptions.map((provider) => (
+              <label key={provider.value} className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <input
+                  type="checkbox"
+                  checked={form.allowed_providers.includes(provider.value)}
+                  onChange={(event) => toggleAllowedProvider(provider.value, event.target.checked)}
+                  disabled={disabled || isLoading}
+                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{provider.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <label className="block">
+            <span className="label">Preferred provider</span>
+            <select
+              className="input h-10 w-full"
+              value={form.preferred_provider}
+              onChange={(event) => onChange({ ...form, preferred_provider: event.target.value })}
+              disabled={disabled || isLoading}
+            >
+              {aiProviderOptions.map((provider) => (
+                <option key={provider.value} value={provider.value}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="label">Preferred model</span>
+            <input
+              className="input h-10 w-full"
+              value={form.preferred_model}
+              onChange={(event) => onChange({ ...form, preferred_model: event.target.value })}
+              disabled={disabled || isLoading}
+            />
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="label">Consent record</span>
+          <textarea
+            className="input min-h-28 resize-y"
+            value={form.consent_text}
+            onChange={(event) => onChange({ ...form, consent_text: event.target.value })}
+            disabled={disabled || isLoading}
+          />
+        </label>
+
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="text-xs text-gray-500 dark:text-gray-400">
+            {setting?.updated_by_user_id
+              ? `Last updated by user ${setting.updated_by_user_id}`
+              : 'No saved external AI policy'}
+          </div>
+
+          <button
+            type="submit"
+            disabled={disabled || isLoading}
+            className="btn-primary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <FiCheckCircle className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
+            Save AI policy
           </button>
         </div>
       </form>

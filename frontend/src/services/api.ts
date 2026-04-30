@@ -398,6 +398,18 @@ class ApiClient {
     return response.data
   }
 
+  async getAIExternalProviderSettings(params: any) {
+    const response = await this.client.get('/ai-manager/external-provider-settings', {
+      params,
+    })
+    return response.data
+  }
+
+  async updateAIExternalProviderSettings(payload: any) {
+    const response = await this.client.put('/ai-manager/external-provider-settings', payload)
+    return response.data
+  }
+
   // Notification endpoints
   async getNotifications(params?: any) {
     const response = await this.client.get('/notifications', { params })

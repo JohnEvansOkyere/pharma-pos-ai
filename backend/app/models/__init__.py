@@ -15,7 +15,12 @@ from app.models.inventory_movement import InventoryMovement
 from app.models.stock_take import StockTake, StockTakeItem
 from app.models.sync_event import SyncEvent, SyncEventCounter
 from app.models.sync_ingestion import IngestedSyncEvent
-from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
+from app.models.ai_report import (
+    AIExternalProviderSetting,
+    AIWeeklyManagerReport,
+    AIWeeklyReportDelivery,
+    AIWeeklyReportDeliverySetting,
+)
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -47,6 +52,7 @@ __all__ = [
     "AIWeeklyManagerReport",
     "AIWeeklyReportDelivery",
     "AIWeeklyReportDeliverySetting",
+    "AIExternalProviderSetting",
     "CloudSaleFact",
     "CloudInventoryMovementFact",
     "CloudProductSnapshot",

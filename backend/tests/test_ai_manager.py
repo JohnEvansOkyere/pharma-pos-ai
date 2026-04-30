@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from fastapi import HTTPException
 
-from app.api.endpoints.ai_manager import chat_with_ai_manager
+from app.api.endpoints.ai_manager import chat_with_ai_manager, get_external_provider_settings, upsert_external_provider_settings
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
@@ -20,7 +20,7 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
-from app.schemas.ai_manager import AIManagerChatRequest
+from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIManagerChatRequest
 
 
 def _tenant(db_session):
@@ -60,6 +60,21 @@ def _manager(db_session, organization_id: int, *, branch_id=None, username="ai-m
         permissions=[UserPermission.VIEW_REPORTS.value],
         organization_id=organization_id,
         branch_id=branch_id,
+        is_active=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    return user
+
+
+def _admin(db_session, organization_id: int, *, username="ai-admin"):
+    user = User(
+        username=username,
+        email=f"{username}@example.com",
+        hashed_password=get_password_hash("admin-secret"),
+        full_name="AI Admin",
+        role=UserRole.ADMIN,
+        organization_id=organization_id,
         is_active=True,
     )
     db_session.add(user)
@@ -323,15 +338,12 @@ def test_ai_manager_answers_reconciliation_questions_from_cloud_checks(db_sessio
 
 
 @pytest.mark.parametrize("provider", ["openai", "claude", "groq"])
-def test_ai_manager_supports_configured_external_providers_with_fallback(monkeypatch, db_session, provider):
+def test_ai_manager_uses_deterministic_without_tenant_external_ai_consent(monkeypatch, db_session, provider):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
     manager = _manager(db_session, organization.id, username=f"{provider}-manager")
     monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", provider)
-    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", None)
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
-    monkeypatch.setattr(settings, "GROQ_API_KEY", None)
+    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", "external-model")
 
     response = chat_with_ai_manager(
         AIManagerChatRequest(
@@ -342,7 +354,91 @@ def test_ai_manager_supports_configured_external_providers_with_fallback(monkeyp
         current_user=manager,
     )
 
-    assert response.provider == provider
+    assert response.provider == "deterministic"
     assert response.model is None
-    assert response.fallback_used is True
+    assert response.fallback_used is False
     assert response.tool_results["sales_summary"]["total_revenue"] == 400.0
+
+
+def test_admin_can_manage_tenant_external_ai_settings(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    admin = _admin(db_session, organization.id)
+
+    default_setting = get_external_provider_settings(
+        organization_id=organization.id,
+        db=db_session,
+        current_user=admin,
+    )
+    saved = upsert_external_provider_settings(
+        AIExternalProviderSettingUpsert(
+            organization_id=organization.id,
+            external_ai_enabled=True,
+            allowed_providers=["openai", "groq"],
+            preferred_provider="groq",
+            preferred_model="llama-3.3-70b-versatile",
+            consent_text="Owner approved external AI summaries.",
+        ),
+        db=db_session,
+        current_user=admin,
+    )
+
+    assert default_setting.external_ai_enabled is False
+    assert saved.external_ai_enabled is True
+    assert saved.allowed_providers == ["openai", "groq"]
+    assert saved.preferred_provider == "groq"
+    assert saved.preferred_model == "llama-3.3-70b-versatile"
+    assert saved.consented_by_user_id == admin.id
+    assert saved.consented_at is not None
+
+
+def test_enabled_tenant_external_ai_uses_allowed_provider_fallback(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    admin = _admin(db_session, organization.id)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", None)
+
+    upsert_external_provider_settings(
+        AIExternalProviderSettingUpsert(
+            organization_id=organization.id,
+            external_ai_enabled=True,
+            allowed_providers=["groq"],
+            preferred_provider="groq",
+            preferred_model="llama-3.3-70b-versatile",
+        ),
+        db=db_session,
+        current_user=admin,
+    )
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Summarize sales",
+            organization_id=organization.id,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.provider == "groq"
+    assert response.model == "llama-3.3-70b-versatile"
+    assert response.fallback_used is True
+
+
+def test_branch_manager_cannot_change_tenant_external_ai_settings(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    branch_manager = _manager(db_session, organization.id, branch_id=branch_a.id, username="branch-ai-policy")
+
+    with pytest.raises(HTTPException) as exc:
+        upsert_external_provider_settings(
+            AIExternalProviderSettingUpsert(
+                organization_id=organization.id,
+                external_ai_enabled=True,
+                allowed_providers=["openai"],
+                preferred_provider="openai",
+                preferred_model="gpt-4o-mini",
+            ),
+            db=db_session,
+            current_user=branch_manager,
+        )
+
+    assert exc.value.status_code == 403
