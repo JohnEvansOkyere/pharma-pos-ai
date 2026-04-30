@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   getCloudReconciliation: vi.fn(),
   getAIWeeklyReports: vi.fn(),
   generateAIWeeklyReport: vi.fn(),
+  reviewAIWeeklyReport: vi.fn(),
   deliverAIWeeklyReport: vi.fn(),
   getAIWeeklyReportDeliveries: vi.fn(),
   getAIWeeklyReportDeliverySetting: vi.fn(),
@@ -200,6 +201,9 @@ describe('CloudDashboardPage', () => {
         provider: 'groq',
         model: 'llama-3.3-70b-versatile',
         fallback_used: false,
+        reviewed_by_user_id: null,
+        reviewed_at: null,
+        review_notes: null,
         generated_at: '2026-05-03T19:00:00Z',
       },
     ])
@@ -222,6 +226,33 @@ describe('CloudDashboardPage', () => {
       provider: 'groq',
       model: null,
       fallback_used: false,
+      reviewed_by_user_id: null,
+      reviewed_at: null,
+      review_notes: null,
+      generated_at: '2026-05-03T19:00:00Z',
+    })
+    apiMocks.reviewAIWeeklyReport.mockResolvedValue({
+      id: 55,
+      organization_id: 22,
+      branch_id: null,
+      generated_by_user_id: 7,
+      performance_period_start: '2026-04-26T19:00:00Z',
+      performance_period_end: '2026-05-03T19:00:00Z',
+      action_period_start: '2026-05-04',
+      action_period_end: '2026-05-10',
+      title: 'Weekly Manager Report: 2026-04-26 to 2026-05-03 | Action Plan 2026-05-04 to 2026-05-10',
+      executive_summary: 'Weekly summary with coming week action priorities.',
+      sections: {
+        coming_week_action_plan: { risk_counts: { out_of_stock_count: 1, low_stock_count: 1 } },
+        sync_and_data_quality: { reconciliation: { issue_count: 2 } },
+      },
+      safety_notes: ['Read-only assistant.'],
+      provider: 'groq',
+      model: null,
+      fallback_used: false,
+      reviewed_by_user_id: 7,
+      reviewed_at: '2026-05-03T20:00:00Z',
+      review_notes: 'Check expiry shelf Monday morning.',
       generated_at: '2026-05-03T19:00:00Z',
     })
     apiMocks.deliverAIWeeklyReport.mockResolvedValue([
@@ -375,6 +406,25 @@ describe('CloudDashboardPage', () => {
 
     await waitFor(() => {
       expect(apiMocks.deliverAIWeeklyReport).toHaveBeenCalledWith(55, {})
+    })
+  })
+
+  it('marks a weekly report reviewed with manager notes', async () => {
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    expect(await screen.findByText(/pending review/i)).toBeInTheDocument()
+    const reviewNotes = await screen.findByLabelText(/review notes/i)
+    await user.type(reviewNotes, 'Check expiry shelf Monday morning.')
+    await user.click(screen.getByRole('button', { name: /mark reviewed/i }))
+
+    expect(await screen.findByText(/report marked as reviewed/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^reviewed$/i)).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(apiMocks.reviewAIWeeklyReport).toHaveBeenCalledWith(55, {
+        review_notes: 'Check expiry shelf Monday morning.',
+      })
     })
   })
 

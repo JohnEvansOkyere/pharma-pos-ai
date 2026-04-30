@@ -162,6 +162,9 @@ interface AIWeeklyManagerReport {
   provider: string
   model: string | null
   fallback_used: boolean
+  reviewed_by_user_id: number | null
+  reviewed_at: string | null
+  review_notes: string | null
   generated_at: string
 }
 
@@ -303,6 +306,10 @@ export default function CloudDashboardPage() {
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null)
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
   const [reportError, setReportError] = useState<string | null>(null)
+  const [reviewNotes, setReviewNotes] = useState('')
+  const [isReviewingReport, setIsReviewingReport] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null)
   const [isDeliveringReport, setIsDeliveringReport] = useState(false)
   const [deliveryAttempts, setDeliveryAttempts] = useState<AIWeeklyReportDelivery[]>([])
   const [deliveryHistoryState, setDeliveryHistoryState] = useState<LoadState>('idle')
@@ -369,9 +376,13 @@ export default function CloudDashboardPage() {
     if (!selectedReport?.id) {
       setDeliveryAttempts([])
       setDeliveryHistoryState('idle')
+      setReviewNotes('')
       return
     }
 
+    setReviewNotes(selectedReport.review_notes ?? '')
+    setReviewError(null)
+    setReviewMessage(null)
     loadReportDeliveries(selectedReport.id)
   }, [selectedReport?.id])
 
@@ -526,6 +537,27 @@ export default function CloudDashboardPage() {
       setReportError('Weekly report generation failed.')
     } finally {
       setIsGeneratingReport(false)
+    }
+  }
+
+  const reviewSelectedReport = async () => {
+    if (!selectedReport || isReviewingReport) return
+    setIsReviewingReport(true)
+    setReviewError(null)
+    setReviewMessage(null)
+    try {
+      const reviewedReport: AIWeeklyManagerReport = await api.reviewAIWeeklyReport(selectedReport.id, {
+        review_notes: reviewNotes,
+      })
+      setWeeklyReports((current) => current.map((report) => (
+        report.id === reviewedReport.id ? reviewedReport : report
+      )))
+      setReviewNotes(reviewedReport.review_notes ?? '')
+      setReviewMessage('Report marked as reviewed.')
+    } catch (error) {
+      setReviewError('Report review could not be saved.')
+    } finally {
+      setIsReviewingReport(false)
     }
   }
 
@@ -880,10 +912,16 @@ export default function CloudDashboardPage() {
           selectedReportId={selectedReportId}
           onSelectReport={setSelectedReportId}
           onGenerate={generateWeeklyReport}
+          onReview={reviewSelectedReport}
           onDeliver={deliverSelectedReport}
           isGenerating={isGeneratingReport}
+          isReviewing={isReviewingReport}
           isDelivering={isDeliveringReport}
           error={reportError}
+          reviewNotes={reviewNotes}
+          reviewError={reviewError}
+          reviewMessage={reviewMessage}
+          onReviewNotesChange={setReviewNotes}
           deliveryError={deliveryError}
           deliveryAttempts={deliveryAttempts}
           deliveryHistoryState={deliveryHistoryState}
@@ -1161,10 +1199,16 @@ function WeeklyReportsPanel({
   selectedReportId,
   onSelectReport,
   onGenerate,
+  onReview,
   onDeliver,
   isGenerating,
+  isReviewing,
   isDelivering,
   error,
+  reviewNotes,
+  reviewError,
+  reviewMessage,
+  onReviewNotesChange,
   deliveryError,
   deliveryAttempts,
   deliveryHistoryState,
@@ -1175,10 +1219,16 @@ function WeeklyReportsPanel({
   selectedReportId: number | null
   onSelectReport: (id: number) => void
   onGenerate: () => void
+  onReview: () => void
   onDeliver: () => void
   isGenerating: boolean
+  isReviewing: boolean
   isDelivering: boolean
   error: string | null
+  reviewNotes: string
+  reviewError: string | null
+  reviewMessage: string | null
+  onReviewNotesChange: (value: string) => void
   deliveryError: string | null
   deliveryAttempts: AIWeeklyReportDelivery[]
   deliveryHistoryState: LoadState
@@ -1231,6 +1281,19 @@ function WeeklyReportsPanel({
         </div>
       )}
 
+      {reviewError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {reviewError}
+        </div>
+      )}
+
+      {reviewMessage && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100">
+          <FiCheckCircle className="h-4 w-4" />
+          {reviewMessage}
+        </div>
+      )}
+
       {deliveryError && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
           {deliveryError}
@@ -1278,6 +1341,47 @@ function WeeklyReportsPanel({
 
           <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-300">
             Provider: {selectedReport.provider} · Model: {selectedReport.model || 'not configured'} · Fallback: {selectedReport.fallback_used ? 'yes' : 'no'} · Generated: {formatDateTime(selectedReport.generated_at)}
+          </div>
+
+          <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  Manager Review
+                </h4>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {selectedReport.reviewed_at
+                    ? `Reviewed ${formatDateTime(selectedReport.reviewed_at)} by user ${selectedReport.reviewed_by_user_id ?? '-'}`
+                    : 'Not reviewed yet'}
+                </p>
+              </div>
+              <span className={`w-fit rounded-lg px-2 py-1 text-xs font-semibold ${
+                selectedReport.reviewed_at
+                  ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                  : 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300'
+              }`}>
+                {selectedReport.reviewed_at ? 'Reviewed' : 'Pending review'}
+              </span>
+            </div>
+
+            <textarea
+              aria-label="Review notes"
+              className="input min-h-24 resize-y"
+              value={reviewNotes}
+              onChange={(event) => onReviewNotesChange(event.target.value)}
+              disabled={disabled || isReviewing}
+            />
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={onReview}
+                disabled={disabled || !selectedReport || isReviewing}
+                className="btn-primary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <FiCheckCircle className={`h-4 w-4 ${isReviewing ? 'animate-pulse' : ''}`} />
+                Mark reviewed
+              </button>
+            </div>
           </div>
 
           <div>

@@ -54,6 +54,10 @@ class AIWeeklyReportDeliverRequest(BaseModel):
         return normalized
 
 
+class AIWeeklyReportReviewRequest(BaseModel):
+    review_notes: Optional[str] = Field(None, max_length=2000)
+
+
 class AIWeeklyManagerReportResponse(BaseModel):
     id: int
     organization_id: int
@@ -71,6 +75,9 @@ class AIWeeklyManagerReportResponse(BaseModel):
     provider: str
     model: Optional[str] = None
     fallback_used: bool = False
+    reviewed_by_user_id: Optional[int] = None
+    reviewed_at: Optional[datetime] = None
+    review_notes: Optional[str] = None
     generated_at: datetime
     created_at: datetime
 

@@ -364,6 +364,11 @@ class ApiClient {
     return response.data
   }
 
+  async reviewAIWeeklyReport(reportId: number, payload: any) {
+    const response = await this.client.post(`/ai-manager/weekly-reports/${reportId}/review`, payload)
+    return response.data
+  }
+
   async deliverAIWeeklyReport(reportId: number, payload: any = {}) {
     const response = await this.client.post(`/ai-manager/weekly-reports/${reportId}/deliver`, payload)
     return response.data

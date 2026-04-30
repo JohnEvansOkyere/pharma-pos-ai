@@ -1956,10 +1956,32 @@ Current scope:
 
 - delivery history is read-only
 - retry/backoff scheduling is not implemented yet
-- acknowledgement/review workflow is not implemented yet
 
 Next foundation:
 
-- add report acknowledgement/review workflow for managers
+22. Report acknowledgement and manager review
+
+Status: implemented for first manager review workflow.
+
+Implemented:
+
+- added persisted weekly report review fields: `reviewed_by_user_id`, `reviewed_at`, and `review_notes`
+- added Alembic migration for report review fields and indexes
+- added `POST /ai-manager/weekly-reports/{report_id}/review`
+- review endpoint uses the same organization and branch authorization rules as saved report fetch/delivery
+- weekly report responses include review metadata and manager notes
+- weekly report panel shows pending/reviewed status, reviewer user id, review timestamp, and notes
+- managers can mark the selected report reviewed with optional notes
+- backend regression tests for review persistence and branch-scope denial
+- frontend regression test for marking a report reviewed from the cloud dashboard
+
+Current scope:
+
+- review is a simple acknowledgement with notes, not a multi-step approval workflow
+- review edits overwrite the current report review metadata
+- no separate review event table exists yet
+
+Next foundation:
+
 - add delivery retry/backoff for transient email and Telegram failures
 - add tenant-level external AI provider consent/configuration

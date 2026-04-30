@@ -13,6 +13,7 @@ from app.api.endpoints.ai_manager import (
     get_weekly_manager_report,
     list_weekly_report_deliveries,
     list_weekly_manager_reports,
+    review_weekly_manager_report,
     upsert_weekly_report_delivery_setting,
 )
 from app.core.config import settings
@@ -33,6 +34,7 @@ from app.schemas.ai_manager import (
     AIWeeklyReportDeliverRequest,
     AIWeeklyReportDeliverySettingUpsert,
     AIWeeklyReportGenerateRequest,
+    AIWeeklyReportReviewRequest,
 )
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
@@ -334,6 +336,32 @@ def test_weekly_report_endpoint_persists_report_and_lists_it(monkeypatch, db_ses
     assert fetched.sections["coming_week_action_plan"]["risk_counts"]["out_of_stock_count"] == 1
 
 
+def test_manager_can_mark_weekly_report_reviewed(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+
+    reviewed = review_weekly_manager_report(
+        report.id,
+        AIWeeklyReportReviewRequest(review_notes="  Check branch expiry shelf today.  "),
+        db=db_session,
+        current_user=manager,
+    )
+    fetched = get_weekly_manager_report(report.id, db=db_session, current_user=manager)
+
+    assert reviewed.reviewed_by_user_id == manager.id
+    assert reviewed.reviewed_at is not None
+    assert reviewed.review_notes == "Check branch expiry shelf today."
+    assert fetched.reviewed_by_user_id == manager.id
+    assert fetched.review_notes == "Check branch expiry shelf today."
+
+
 def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
@@ -507,6 +535,34 @@ def test_branch_manager_cannot_view_cross_branch_delivery_history(db_session):
         list_weekly_report_deliveries(
             report.id,
             limit=20,
+            db=db_session,
+            current_user=branch_manager,
+        )
+
+    assert exc.value.status_code == 403
+    assert "Branch access denied" in exc.value.detail
+
+
+def test_branch_manager_cannot_review_cross_branch_report(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    branch_manager = _manager(
+        db_session,
+        organization.id,
+        branch_id=branch_a.id,
+        username="branch-review-manager",
+    )
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_b.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        review_weekly_manager_report(
+            report.id,
+            AIWeeklyReportReviewRequest(review_notes="Cross branch review"),
             db=db_session,
             current_user=branch_manager,
         )

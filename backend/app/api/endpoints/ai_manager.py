@@ -1,6 +1,7 @@
 """
 Read-only AI manager assistant endpoints.
 """
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,6 +20,7 @@ from app.schemas.ai_manager import (
     AIWeeklyReportDeliverySettingResponse,
     AIWeeklyReportDeliverySettingUpsert,
     AIWeeklyReportGenerateRequest,
+    AIWeeklyReportReviewRequest,
 )
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_manager_service import AIManagerService
@@ -125,6 +127,33 @@ def get_weekly_manager_report(
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+    return _report_response(report)
+
+
+@router.post("/weekly-reports/{report_id}/review", response_model=AIWeeklyManagerReportResponse)
+def review_weekly_manager_report(
+    report_id: int,
+    payload: AIWeeklyReportReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """Mark a saved weekly manager report as reviewed with optional manager notes."""
+    report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+    require_organization_access(
+        organization_id=report.organization_id,
+        branch_id=report.branch_id,
+        current_user=current_user,
+    )
+    if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+
+    report.reviewed_by_user_id = current_user.id
+    report.reviewed_at = datetime.now(timezone.utc)
+    report.review_notes = payload.review_notes.strip() if payload.review_notes else None
+    db.commit()
+    db.refresh(report)
     return _report_response(report)
 
 
@@ -266,6 +295,9 @@ def _report_response(report: AIWeeklyManagerReport) -> AIWeeklyManagerReportResp
         provider=report.provider,
         model=report.model,
         fallback_used=report.fallback_used,
+        reviewed_by_user_id=report.reviewed_by_user_id,
+        reviewed_at=report.reviewed_at,
+        review_notes=report.review_notes,
         generated_at=report.generated_at,
         created_at=report.created_at,
     )

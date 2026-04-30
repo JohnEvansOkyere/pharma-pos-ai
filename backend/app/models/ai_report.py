@@ -38,6 +38,9 @@ class AIWeeklyManagerReport(Base):
     provider = Column(String(50), nullable=False)
     model = Column(String(100), nullable=True)
     fallback_used = Column(Boolean, nullable=False, default=False)
+    reviewed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    review_notes = Column(Text, nullable=True)
     generated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
