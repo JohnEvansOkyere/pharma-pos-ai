@@ -1,24 +1,22 @@
 # Recommended Next Improvements
 
-## 1. Tamper-Evident Audit Logs
+## 1. Audit Integrity Operations
 
-Add hash chaining for critical audit events.
+Hash chaining for new audit events is implemented. The next improvement is operationalizing it.
 
 Why:
 
 - pharmacy systems need strong accountability
 - admin repair, stock, sale reversal, and AI policy actions must be defensible
-- ordinary audit rows can be silently edited by direct database access
+- broken chains must have a clear response process
 
 Expected scope:
 
-- previous hash
-- current hash
-- canonical event payload
-- verifier service
-- admin endpoint
-- dashboard status
-- tests for broken chain detection
+- scheduled integrity verification
+- dashboard alerting when verification fails
+- incident checklist linked from the UI
+- optional off-database hash anchoring
+- restore/forensics playbook
 
 ## 2. Prescription And Controlled-Drug Enforcement
 

@@ -20,6 +20,7 @@ from app.db.base import SessionLocal, engine, get_db
 from app.models.activity_log import ActivityLog
 from app.models.user import User, UserRole
 from app.schemas.system import (
+    AuditIntegrityStatus,
     AuditLogEntry,
     AuditLogListResponse,
     BackupStatus,
@@ -28,6 +29,7 @@ from app.schemas.system import (
     SyncStatus,
     SystemDiagnostics,
 )
+from app.services.audit_service import AuditService
 from app.services.scheduler import scheduler
 from app.services.sync_upload_service import SyncUploadService
 
@@ -327,6 +329,9 @@ def export_audit_logs_csv(
             "description",
             "extra_data",
             "ip_address",
+            "hash_version",
+            "previous_hash",
+            "current_hash",
         ]
     )
     for entry in entries:
@@ -344,6 +349,9 @@ def export_audit_logs_csv(
                 entry.description or "",
                 json.dumps(entry.extra_data or {}, sort_keys=True),
                 entry.ip_address or "",
+                entry.hash_version or "",
+                entry.previous_hash or "",
+                entry.current_hash or "",
             ]
         )
 
@@ -351,6 +359,28 @@ def export_audit_logs_csv(
         content=output.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="audit-logs.csv"'},
+    )
+
+
+@router.get("/audit-integrity", response_model=AuditIntegrityStatus)
+def get_audit_integrity(
+    organization_id: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Verify tamper-evident hash chains for audit logs."""
+    _require_admin_user(current_user)
+    effective_organization_id = organization_id
+    if current_user.organization_id is not None:
+        if organization_id is not None and organization_id != current_user.organization_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization access denied")
+        effective_organization_id = current_user.organization_id
+
+    return AuditIntegrityStatus(
+        **AuditService.verify_integrity(
+            db,
+            organization_id=effective_organization_id,
+        )
     )
 
 
@@ -416,5 +446,8 @@ def _audit_log_entry(entry: ActivityLog) -> AuditLogEntry:
         description=entry.description,
         extra_data=entry.extra_data,
         ip_address=entry.ip_address,
+        hash_version=entry.hash_version,
+        previous_hash=entry.previous_hash,
+        current_hash=entry.current_hash,
         created_at=entry.created_at,
     )

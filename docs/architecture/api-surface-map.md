@@ -158,5 +158,6 @@ Purpose:
 - sync status and manual sync
 - audit log listing
 - audit log export
+- audit hash-chain integrity verification
 
 Production rule: operational endpoints require appropriate permissions, and admin audit review must stay tenant-scoped.

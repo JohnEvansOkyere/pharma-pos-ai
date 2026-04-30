@@ -79,6 +79,9 @@ class AuditLogEntry(BaseModel):
     description: Optional[str] = None
     extra_data: Optional[Dict[str, Any]] = None
     ip_address: Optional[str] = None
+    hash_version: Optional[int] = None
+    previous_hash: Optional[str] = None
+    current_hash: Optional[str] = None
     created_at: datetime
 
 
@@ -87,3 +90,26 @@ class AuditLogListResponse(BaseModel):
     limit: int
     offset: int
     items: List[AuditLogEntry]
+
+
+class AuditIntegrityIssue(BaseModel):
+    log_id: Optional[int] = None
+    organization_id: Optional[int] = None
+    issue_type: str
+    message: str
+
+
+class AuditIntegrityStatus(BaseModel):
+    scope: str
+    organization_id: Optional[int] = None
+    checked_at: datetime
+    valid: bool
+    total_count: int
+    sealed_count: int
+    unsealed_count: int
+    unsealed_after_chain_count: int
+    invalid_count: int
+    first_invalid_log_id: Optional[int] = None
+    latest_log_id: Optional[int] = None
+    latest_hash: Optional[str] = None
+    issues: List[AuditIntegrityIssue]

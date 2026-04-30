@@ -66,7 +66,7 @@ Sales:
 Operational:
 
 - `notifications`
-- `activity_logs`
+- `activity_logs`, including hash-chain fields for new tamper-evident audit rows
 
 Hybrid sync:
 

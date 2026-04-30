@@ -24,6 +24,9 @@ class ActivityLog(Base):
     description = Column(Text)
     extra_data = Column(JSON)  # Additional contextual data (renamed from metadata)
     ip_address = Column(String(50))
+    hash_version = Column(Integer, nullable=True)
+    previous_hash = Column(String(64), nullable=True, index=True)
+    current_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships

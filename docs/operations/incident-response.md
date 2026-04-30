@@ -68,12 +68,20 @@ Actions:
 
 ## Audit Integrity Incident
 
-Tamper-evident audit chaining is not yet implemented. Until it exists, treat suspicious audit gaps as high risk.
+The system now seals new `AuditService.log` audit rows with a per-organization hash chain. The Audit Logs page and `/system/audit-integrity` endpoint can verify the chain.
 
-Recommended handling:
+Treat these as high-risk:
+
+- invalid hash
+- broken previous hash
+- unsealed audit row after the organization chain started
+
+Handling:
 
 1. Export current audit logs.
 2. Preserve database backup.
 3. Review database access history where available.
 4. Compare sales, stock movements, and sync events.
 5. Document findings.
+6. Do not manually edit audit rows to make the chain pass.
+7. Restore from backup only after management approval and documented impact review.

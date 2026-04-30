@@ -60,7 +60,7 @@ Manager reporting experience
 - Dispensing stock should be batch-aware and FEFO by default.
 - Cloud reporting is a derived read model, not the source of truth for local dispensing.
 - AI must be read-only and must not approve dispensing, alter stock, or provide clinical advice.
-- Sensitive operations must be auditable.
+- Sensitive operations must be auditable, and new audit rows are tamper-evident through per-organization hash chaining.
 - Admin repair tooling must be scoped and controlled.
 - Environment secrets must remain outside the repository.
 
@@ -89,5 +89,5 @@ Cloud reporting read models must never silently overwrite local branch dispensin
 - True offline-first browser storage is not implemented; the frontend requires a reachable local backend.
 - Cloud sync is event-upload based and currently focused on reporting projections, not full bidirectional operational sync.
 - AI external providers are optional and fall back to deterministic responses when unavailable.
-- Audit logging exists, but tamper-evident hash chaining is still planned.
+- Audit logging now has tamper-evident hash chaining for new `AuditService.log` entries; legacy rows remain unsealed.
 - Controlled-drug and prescription safety fields exist in the product and sale model, but deeper server-side enforcement remains a hardening priority.

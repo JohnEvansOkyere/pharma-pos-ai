@@ -15,7 +15,31 @@ interface AuditLogEntry {
   description: string | null
   extra_data: Record<string, unknown> | null
   ip_address: string | null
+  hash_version: number | null
+  previous_hash: string | null
+  current_hash: string | null
   created_at: string
+}
+
+interface AuditIntegrityStatus {
+  scope: string
+  organization_id: number | null
+  checked_at: string
+  valid: boolean
+  total_count: number
+  sealed_count: number
+  unsealed_count: number
+  unsealed_after_chain_count: number
+  invalid_count: number
+  first_invalid_log_id: number | null
+  latest_log_id: number | null
+  latest_hash: string | null
+  issues: Array<{
+    log_id: number | null
+    organization_id: number | null
+    issue_type: string
+    message: string
+  }>
 }
 
 interface AuditLogResponse {
@@ -83,7 +107,9 @@ export default function AuditLogsPage() {
     branch_id: user?.branch_id ? String(user.branch_id) : '',
   })
   const [data, setData] = useState<AuditLogResponse>({ total: 0, limit: 100, offset: 0, items: [] })
+  const [integrity, setIntegrity] = useState<AuditIntegrityStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isCheckingIntegrity, setIsCheckingIntegrity] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -92,6 +118,7 @@ export default function AuditLogsPage() {
 
   useEffect(() => {
     loadAuditLogs()
+    loadAuditIntegrity()
   }, [])
 
   const loadAuditLogs = async (nextOffset = 0) => {
@@ -107,9 +134,24 @@ export default function AuditLogsPage() {
     }
   }
 
+  const loadAuditIntegrity = async () => {
+    setIsCheckingIntegrity(true)
+    setError(null)
+    try {
+      const params = filters.organization_id ? { organization_id: Number(filters.organization_id) } : undefined
+      const response: AuditIntegrityStatus = await api.getAuditIntegrity(params)
+      setIntegrity(response)
+    } catch (error) {
+      setError('Audit integrity status could not be loaded.')
+    } finally {
+      setIsCheckingIntegrity(false)
+    }
+  }
+
   const submitFilters = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     loadAuditLogs(0)
+    loadAuditIntegrity()
   }
 
   const exportCsv = async () => {
@@ -151,11 +193,14 @@ export default function AuditLogsPage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => loadAuditLogs(data.offset)}
-            disabled={isLoading}
+            onClick={() => {
+              loadAuditLogs(data.offset)
+              loadAuditIntegrity()
+            }}
+            disabled={isLoading || isCheckingIntegrity}
             className="btn-secondary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <FiRefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <FiRefreshCw className={`h-4 w-4 ${isLoading || isCheckingIntegrity ? 'animate-spin' : ''}`} />
             Refresh
           </button>
           <button
@@ -254,6 +299,41 @@ export default function AuditLogsPage() {
         </div>
       )}
 
+      <div
+        className={`rounded-lg border p-4 ${
+          integrity?.valid
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-100'
+            : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-100'
+        }`}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">
+              Audit integrity: {isCheckingIntegrity ? 'Checking...' : integrity?.valid ? 'Verified' : 'Attention needed'}
+            </h2>
+            <p className="mt-1 text-sm">
+              {integrity
+                ? `${integrity.sealed_count.toLocaleString()} sealed, ${integrity.unsealed_count.toLocaleString()} unsealed, ${integrity.invalid_count.toLocaleString()} invalid`
+                : 'No integrity result loaded yet.'}
+            </p>
+            {integrity?.issues?.[0] && (
+              <p className="mt-1 text-xs">
+                First issue: {formatAction(integrity.issues[0].issue_type)}
+                {integrity.issues[0].log_id ? ` at log #${integrity.issues[0].log_id}` : ''}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={loadAuditIntegrity}
+            disabled={isCheckingIntegrity}
+            className="btn-secondary h-10 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Verify chain
+          </button>
+        </div>
+      </div>
+
       <div className="card overflow-hidden">
         <div className="flex flex-col gap-2 border-b border-gray-200 p-4 dark:border-gray-700 md:flex-row md:items-center md:justify-between">
           <div>
@@ -309,6 +389,11 @@ export default function AuditLogsPage() {
                     </td>
                     <td className="max-w-md px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
                       <span className="line-clamp-3 break-words">{formatExtraData(entry.extra_data)}</span>
+                      {entry.current_hash && (
+                        <span className="mt-1 block font-mono text-[11px]">
+                          hash {entry.current_hash.slice(0, 12)}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))

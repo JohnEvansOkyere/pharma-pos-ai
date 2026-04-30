@@ -510,6 +510,11 @@ class ApiClient {
     return response.data
   }
 
+  async getAuditIntegrity(params?: any) {
+    const response = await this.client.get('/system/audit-integrity', { params })
+    return response.data
+  }
+
   async exportAuditLogsCsv(params?: any) {
     const response = await this.client.get('/system/audit-logs/export', {
       params,

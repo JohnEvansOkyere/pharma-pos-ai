@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const apiMocks = vi.hoisted(() => ({
   getAuditLogs: vi.fn(),
+  getAuditIntegrity: vi.fn(),
   exportAuditLogsCsv: vi.fn(),
 }))
 
@@ -48,9 +49,27 @@ describe('AuditLogsPage', () => {
           description: 'Updated tenant external AI provider policy',
           extra_data: { external_ai_enabled: true, preferred_provider: 'groq' },
           ip_address: null,
+          hash_version: 1,
+          previous_hash: '0'.repeat(64),
+          current_hash: 'a'.repeat(64),
           created_at: '2026-05-03T18:20:00Z',
         },
       ],
+    })
+    apiMocks.getAuditIntegrity.mockResolvedValue({
+      scope: '22',
+      organization_id: 22,
+      checked_at: '2026-05-03T18:21:00Z',
+      valid: true,
+      total_count: 1,
+      sealed_count: 1,
+      unsealed_count: 0,
+      unsealed_after_chain_count: 0,
+      invalid_count: 0,
+      first_invalid_log_id: null,
+      latest_log_id: 101,
+      latest_hash: 'a'.repeat(64),
+      issues: [],
     })
     apiMocks.exportAuditLogsCsv.mockResolvedValue(new Blob(['id,action\n101,update_ai_external_provider_policy']))
     vi.stubGlobal('URL', {
@@ -64,6 +83,7 @@ describe('AuditLogsPage', () => {
     render(<AuditLogsPage />)
 
     expect(await screen.findByText(/audit logs/i)).toBeInTheDocument()
+    expect(await screen.findByText(/audit integrity: verified/i)).toBeInTheDocument()
     expect(await screen.findByText(/update ai external provider policy/i)).toBeInTheDocument()
     expect(await screen.findByText(/Org 22 · Branch 3/i)).toBeInTheDocument()
 
@@ -71,6 +91,7 @@ describe('AuditLogsPage', () => {
       expect(apiMocks.getAuditLogs).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, limit: 100, offset: 0 })
       )
+      expect(apiMocks.getAuditIntegrity).toHaveBeenCalledWith({ organization_id: 22 })
     })
   })
 
