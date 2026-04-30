@@ -489,6 +489,19 @@ class ApiClient {
     const response = await this.client.get('/system/diagnostics')
     return response.data
   }
+
+  async getAuditLogs(params?: any) {
+    const response = await this.client.get('/system/audit-logs', { params })
+    return response.data
+  }
+
+  async exportAuditLogsCsv(params?: any) {
+    const response = await this.client.get('/system/audit-logs/export', {
+      params,
+      responseType: 'blob',
+    })
+    return response.data
+  }
 }
 
 export const api = new ApiClient()

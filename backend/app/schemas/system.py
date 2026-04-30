@@ -1,7 +1,8 @@
 """
 Schemas for local system operations such as backup status and diagnostics.
 """
-from typing import Optional
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 
@@ -64,3 +65,25 @@ class SyncRunResult(BaseModel):
     failed: int
     skipped: int
     message: str
+
+
+class AuditLogEntry(BaseModel):
+    id: int
+    organization_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    source_device_id: Optional[int] = None
+    user_id: Optional[int] = None
+    action: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[int] = None
+    description: Optional[str] = None
+    extra_data: Optional[Dict[str, Any]] = None
+    ip_address: Optional[str] = None
+    created_at: datetime
+
+
+class AuditLogListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: List[AuditLogEntry]

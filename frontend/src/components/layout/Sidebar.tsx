@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import {
   FiChevronLeft,
+  FiClipboard,
   FiCloud,
   FiHome,
   FiPackage,
@@ -16,6 +17,7 @@ import { useAuthStore } from '../../stores/authStore'
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: FiHome, adminOnly: true },
   { name: 'Cloud Dashboard', href: '/cloud-dashboard', icon: FiCloud, adminOrManager: true },
+  { name: 'Audit Logs', href: '/audit-logs', icon: FiClipboard, adminOnly: true },
   { name: 'Products', href: '/products', icon: FiPackage },
   { name: 'POS', href: '/pos', icon: FiShoppingCart },
   { name: 'Sales', href: '/sales', icon: FiDollarSign },

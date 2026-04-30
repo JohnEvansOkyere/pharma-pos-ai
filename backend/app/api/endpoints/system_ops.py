@@ -3,18 +3,31 @@ System operations endpoints for local deployment support.
 """
 from datetime import datetime, timezone
 from pathlib import Path
+from io import StringIO
+import csv
+import json
 import os
 import platform
 import subprocess
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_trigger_backup
+from app.api.dependencies import require_admin, require_trigger_backup
 from app.core.config import settings
-from app.db.base import SessionLocal, engine
-from app.models.user import User
-from app.schemas.system import BackupStatus, BackupTriggerResult, SyncRunResult, SyncStatus, SystemDiagnostics
+from app.db.base import SessionLocal, engine, get_db
+from app.models.activity_log import ActivityLog
+from app.models.user import User, UserRole
+from app.schemas.system import (
+    AuditLogEntry,
+    AuditLogListResponse,
+    BackupStatus,
+    BackupTriggerResult,
+    SyncRunResult,
+    SyncStatus,
+    SystemDiagnostics,
+)
 from app.services.scheduler import scheduler
 from app.services.sync_upload_service import SyncUploadService
 
@@ -222,3 +235,186 @@ def trigger_sync_now(
         return SyncRunResult(**SyncUploadService.upload_pending(db))
     finally:
         db.close()
+
+
+@router.get("/audit-logs", response_model=AuditLogListResponse)
+def list_audit_logs(
+    organization_id: int | None = None,
+    branch_id: int | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    user_id: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """List tenant-scoped audit log entries for admin operational review."""
+    _require_admin_user(current_user)
+    query = _audit_log_query(
+        db,
+        current_user=current_user,
+        organization_id=organization_id,
+        branch_id=branch_id,
+        action=action,
+        entity_type=entity_type,
+        user_id=user_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    total = query.count()
+    entries = (
+        query.order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AuditLogListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        items=[_audit_log_entry(entry) for entry in entries],
+    )
+
+
+@router.get("/audit-logs/export")
+def export_audit_logs_csv(
+    organization_id: int | None = None,
+    branch_id: int | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    user_id: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    limit: int = Query(5000, ge=1, le=20000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    """Export tenant-scoped audit log entries as CSV for support and review."""
+    _require_admin_user(current_user)
+    entries = (
+        _audit_log_query(
+            db,
+            current_user=current_user,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            action=action,
+            entity_type=entity_type,
+            user_id=user_id,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "id",
+            "created_at",
+            "organization_id",
+            "branch_id",
+            "source_device_id",
+            "user_id",
+            "action",
+            "entity_type",
+            "entity_id",
+            "description",
+            "extra_data",
+            "ip_address",
+        ]
+    )
+    for entry in entries:
+        writer.writerow(
+            [
+                entry.id,
+                entry.created_at.isoformat() if entry.created_at else "",
+                entry.organization_id or "",
+                entry.branch_id or "",
+                entry.source_device_id or "",
+                entry.user_id or "",
+                entry.action,
+                entry.entity_type or "",
+                entry.entity_id or "",
+                entry.description or "",
+                json.dumps(entry.extra_data or {}, sort_keys=True),
+                entry.ip_address or "",
+            ]
+        )
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="audit-logs.csv"'},
+    )
+
+
+def _require_admin_user(current_user: User) -> None:
+    if current_user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+
+
+def _audit_log_query(
+    db: Session,
+    *,
+    current_user: User,
+    organization_id: int | None,
+    branch_id: int | None,
+    action: str | None,
+    entity_type: str | None,
+    user_id: int | None,
+    start_at: datetime | None,
+    end_at: datetime | None,
+):
+    query = db.query(ActivityLog)
+    effective_organization_id = organization_id
+    effective_branch_id = branch_id
+
+    if current_user.organization_id is not None:
+        if organization_id is not None and organization_id != current_user.organization_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization access denied")
+        effective_organization_id = current_user.organization_id
+
+    if current_user.branch_id is not None:
+        if branch_id is not None and branch_id != current_user.branch_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        effective_branch_id = current_user.branch_id
+
+    if effective_organization_id is not None:
+        query = query.filter(ActivityLog.organization_id == effective_organization_id)
+    if effective_branch_id is not None:
+        query = query.filter(ActivityLog.branch_id == effective_branch_id)
+    if action:
+        query = query.filter(ActivityLog.action == action.strip())
+    if entity_type:
+        query = query.filter(ActivityLog.entity_type == entity_type.strip())
+    if user_id is not None:
+        query = query.filter(ActivityLog.user_id == user_id)
+    if start_at is not None:
+        query = query.filter(ActivityLog.created_at >= start_at)
+    if end_at is not None:
+        query = query.filter(ActivityLog.created_at <= end_at)
+
+    return query
+
+
+def _audit_log_entry(entry: ActivityLog) -> AuditLogEntry:
+    return AuditLogEntry(
+        id=entry.id,
+        organization_id=entry.organization_id,
+        branch_id=entry.branch_id,
+        source_device_id=entry.source_device_id,
+        user_id=entry.user_id,
+        action=entry.action,
+        entity_type=entry.entity_type,
+        entity_id=entry.entity_id,
+        description=entry.description,
+        extra_data=entry.extra_data,
+        ip_address=entry.ip_address,
+        created_at=entry.created_at,
+    )

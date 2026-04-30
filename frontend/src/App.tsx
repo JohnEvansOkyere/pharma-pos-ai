@@ -7,6 +7,7 @@ import { useAuthStore } from './stores/authStore'
 const LoginPage = lazy(() => import('./pages/LoginPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const CloudDashboardPage = lazy(() => import('./pages/CloudDashboardPage'))
+const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'))
 const ProductsPage = lazy(() => import('./pages/ProductsPage'))
 const POSPage = lazy(() => import('./pages/POSPage'))
 const SalesPage = lazy(() => import('./pages/SalesPage'))
@@ -100,6 +101,11 @@ function App() {
               <AdminOrManagerRoute>
                 <CloudDashboardPage />
               </AdminOrManagerRoute>
+            } />
+            <Route path="audit-logs" element={
+              <AdminRoute>
+                <AuditLogsPage />
+              </AdminRoute>
             } />
             <Route path="products" element={<ProductsPage />} />
             <Route path="pos" element={<POSPage />} />

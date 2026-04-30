@@ -2056,4 +2056,27 @@ Current scope:
 
 Next foundation:
 
-- expose an admin audit-log viewer/export for tenant-scoped operational support
+26. Admin audit log viewer and export
+
+Status: implemented for tenant-scoped operational support.
+
+Implemented:
+
+- added admin-only `GET /system/audit-logs` endpoint for paginated audit log review
+- added admin-only `GET /system/audit-logs/export` endpoint for CSV export
+- audit listing and export support organization, branch, action, entity type, user, and date-range filters
+- organization-assigned admins are automatically constrained to their own tenant, and branch-assigned admins are constrained to their branch
+- added a dedicated frontend Audit Logs page with filters, pagination controls, and CSV export
+- added sidebar and route wiring for admin-only audit log access
+- backend regression coverage verifies tenant isolation, admin-only access, filters, and CSV export
+- frontend regression coverage verifies loading, filtering, and export calls
+
+Current scope:
+
+- audit export is CSV only
+- audit records remain append-only through existing write paths, but tamper-evident hashing/signing is not implemented
+- the viewer shows user ids rather than resolving full user names
+
+Next foundation:
+
+- add cloud reconciliation acknowledgement and resolution workflow
