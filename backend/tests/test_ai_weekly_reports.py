@@ -391,6 +391,125 @@ def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch,
     assert {delivery.recipient for delivery in deliveries} == {"owner@example.com", "12345"}
 
 
+def test_transient_failed_weekly_report_delivery_is_retried(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    _delivery_setting(db_session, organization.id, branch_id=branch_a.id)
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "reports@example.com")
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_DELIVERY_MAX_ATTEMPTS", 3)
+    attempts = {"count": 0}
+
+    def flaky_email(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise TimeoutError("temporary smtp timeout")
+
+    monkeypatch.setattr(AIReportDeliveryService, "_send_email", flaky_email)
+
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(channels=["email"]),
+        db=db_session,
+        current_user=manager,
+    )
+    failed = deliveries[0]
+    failed.next_retry_at = datetime(2026, 5, 3, 19, 1, tzinfo=timezone.utc)
+    db_session.commit()
+
+    retried = AIReportDeliveryService.retry_due(
+        db_session,
+        now=datetime(2026, 5, 3, 19, 2, tzinfo=timezone.utc),
+    )
+
+    assert len(retried) == 1
+    assert retried[0].status == "sent"
+    assert retried[0].attempt_count == 2
+    assert retried[0].retryable is False
+    assert retried[0].next_retry_at is None
+
+
+def test_permanent_delivery_configuration_failure_is_not_retried(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    _delivery_setting(db_session, organization.id, branch_id=branch_a.id)
+    monkeypatch.setattr(settings, "SMTP_HOST", None)
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", None)
+
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(channels=["email"]),
+        db=db_session,
+        current_user=manager,
+    )
+    failed = deliveries[0]
+    retried = AIReportDeliveryService.retry_due(
+        db_session,
+        now=datetime(2026, 5, 3, 19, 2, tzinfo=timezone.utc),
+    )
+
+    assert failed.status == "failed"
+    assert failed.retryable is False
+    assert failed.next_retry_at is None
+    assert retried == []
+
+
+def test_retry_stops_at_max_attempts(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    _delivery_setting(db_session, organization.id, branch_id=branch_a.id)
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "reports@example.com")
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_DELIVERY_MAX_ATTEMPTS", 2)
+
+    def always_fail_email(**kwargs):
+        raise TimeoutError("still down")
+
+    monkeypatch.setattr(AIReportDeliveryService, "_send_email", always_fail_email)
+
+    deliveries = deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(channels=["email"]),
+        db=db_session,
+        current_user=manager,
+    )
+    failed = deliveries[0]
+    failed.next_retry_at = datetime(2026, 5, 3, 19, 1, tzinfo=timezone.utc)
+    db_session.commit()
+
+    retried = AIReportDeliveryService.retry_due(
+        db_session,
+        now=datetime(2026, 5, 3, 19, 2, tzinfo=timezone.utc),
+    )
+
+    assert len(retried) == 1
+    assert retried[0].status == "failed"
+    assert retried[0].attempt_count == 2
+    assert retried[0].retryable is False
+    assert retried[0].next_retry_at is None
+
+
 def test_weekly_report_delivery_history_lists_persisted_attempts(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
@@ -584,5 +703,20 @@ def test_weekly_report_scheduler_job_is_registered_when_enabled(monkeypatch):
         job = scheduler_service.scheduler.get_job("generate_weekly_ai_reports")
         assert job is not None
         assert job.name == "Generate weekly AI manager reports"
+    finally:
+        scheduler_service.stop()
+
+
+def test_weekly_report_delivery_retry_scheduler_job_is_registered(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_BACKGROUND_SCHEDULER", True)
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_DELIVERY_RETRY_ENABLED", True)
+    monkeypatch.setattr(settings, "AI_WEEKLY_REPORT_DELIVERY_RETRY_INTERVAL_MINUTES", 5)
+
+    scheduler_service = SchedulerService()
+    scheduler_service.start()
+    try:
+        job = scheduler_service.scheduler.get_job("retry_weekly_ai_report_deliveries")
+        assert job is not None
+        assert job.name == "Retry failed weekly AI report deliveries"
     finally:
         scheduler_service.stop()

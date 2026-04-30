@@ -93,6 +93,10 @@ class AIWeeklyReportDeliveryResponse(BaseModel):
     attempt_count: int
     error_message: Optional[str] = None
     provider_response: Optional[Dict[str, Any]] = None
+    retryable: bool = False
+    last_attempted_at: Optional[datetime] = None
+    next_retry_at: Optional[datetime] = None
+    max_attempts: int = 3
     sent_at: Optional[datetime] = None
     created_at: datetime
 

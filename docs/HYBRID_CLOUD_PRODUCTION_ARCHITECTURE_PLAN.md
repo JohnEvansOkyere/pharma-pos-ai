@@ -1983,5 +1983,30 @@ Current scope:
 
 Next foundation:
 
-- add delivery retry/backoff for transient email and Telegram failures
+23. Weekly report delivery retry and backoff
+
+Status: implemented for transient provider failures.
+
+Implemented:
+
+- added delivery retry fields: `retryable`, `last_attempted_at`, `next_retry_at`, and `max_attempts`
+- added Alembic migration for retry metadata and indexes
+- transient provider send exceptions are marked retryable with exponential backoff
+- permanent configuration failures and skipped tenant settings are not retried
+- retry processing updates the existing delivery record in place with attempt count, final status, provider response, and retry schedule
+- retry processing stops after configured max attempts
+- added scheduler job `retry_weekly_ai_report_deliveries`
+- added backend settings for retry enablement, interval, batch size, base delay, max delay, and max attempts
+- delivery history UI shows next retry time and retry-limit exhaustion
+- backend regression tests for transient retry success, permanent non-retry, max-attempt exhaustion, and scheduler registration
+- frontend regression coverage keeps delivery history rendering compatible with retry metadata
+
+Current scope:
+
+- retries apply to provider send exceptions only
+- delivery retry updates the existing delivery row; it does not create one row per retry attempt
+- manual retry controls are not implemented yet
+
+Next foundation:
+
 - add tenant-level external AI provider consent/configuration

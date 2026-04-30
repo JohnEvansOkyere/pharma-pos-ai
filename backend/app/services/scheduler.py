@@ -9,6 +9,7 @@ from pytz import timezone
 from sqlalchemy.orm import Session
 
 from app.db.base import SessionLocal
+from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.notification_service import NotificationService
 from app.services.sync_upload_service import SyncUploadService
@@ -100,6 +101,16 @@ class SchedulerService:
                 ),
                 id="generate_weekly_ai_reports",
                 name="Generate weekly AI manager reports",
+                replace_existing=True,
+            )
+
+        if settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_ENABLED:
+            self.scheduler.add_job(
+                self.retry_weekly_ai_report_deliveries,
+                "interval",
+                minutes=settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_INTERVAL_MINUTES,
+                id="retry_weekly_ai_report_deliveries",
+                name="Retry failed weekly AI report deliveries",
                 replace_existing=True,
             )
 
@@ -214,6 +225,19 @@ class SchedulerService:
             logger.info("Generated %s weekly AI manager report(s)", len(reports))
         except Exception as e:
             logger.error(f"Error in weekly AI manager report task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def retry_weekly_ai_report_deliveries():
+        """Task to retry transient failed weekly report deliveries."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running weekly AI report delivery retry task")
+            deliveries = AIReportDeliveryService.retry_due(db)
+            logger.info("Retried %s weekly AI report delivery record(s)", len(deliveries))
+        except Exception as e:
+            logger.error(f"Error in weekly AI report delivery retry task: {str(e)}")
         finally:
             db.close()
 

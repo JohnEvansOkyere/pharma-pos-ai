@@ -3,7 +3,7 @@ Delivery channels for saved AI weekly manager reports.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 import smtplib
 from typing import Any, Dict, List, Optional
@@ -147,6 +147,7 @@ class AIReportDeliveryService:
                         recipient=recipient,
                         status=AIReportDeliveryService.FAILED,
                         error_message=str(exc),
+                        retryable=True,
                     )
                 )
         return deliveries
@@ -232,9 +233,102 @@ class AIReportDeliveryService:
                         recipient=chat_id,
                         status=AIReportDeliveryService.FAILED,
                         error_message=str(exc),
+                        retryable=True,
                     )
                 )
         return deliveries
+
+    @staticmethod
+    def retry_due(
+        db: Session,
+        *,
+        limit: Optional[int] = None,
+        now: Optional[datetime] = None,
+    ) -> List[AIWeeklyReportDelivery]:
+        """Retry failed delivery records that are explicitly marked retryable and due."""
+        effective_now = now or datetime.now(timezone.utc)
+        batch_size = limit or settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_BATCH_SIZE
+        deliveries = (
+            db.query(AIWeeklyReportDelivery)
+            .filter(
+                AIWeeklyReportDelivery.status == AIReportDeliveryService.FAILED,
+                AIWeeklyReportDelivery.retryable.is_(True),
+                AIWeeklyReportDelivery.next_retry_at.isnot(None),
+                AIWeeklyReportDelivery.next_retry_at <= effective_now,
+                AIWeeklyReportDelivery.attempt_count < AIWeeklyReportDelivery.max_attempts,
+            )
+            .order_by(AIWeeklyReportDelivery.next_retry_at.asc(), AIWeeklyReportDelivery.id.asc())
+            .limit(batch_size)
+            .all()
+        )
+        return [
+            AIReportDeliveryService.retry_delivery(db, delivery, now=effective_now)
+            for delivery in deliveries
+        ]
+
+    @staticmethod
+    def retry_delivery(
+        db: Session,
+        delivery: AIWeeklyReportDelivery,
+        *,
+        now: Optional[datetime] = None,
+    ) -> AIWeeklyReportDelivery:
+        """Retry one failed delivery record in place."""
+        effective_now = now or datetime.now(timezone.utc)
+        report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == delivery.report_id).first()
+        delivery.last_attempted_at = effective_now
+
+        if report is None:
+            delivery.status = AIReportDeliveryService.FAILED
+            delivery.retryable = False
+            delivery.next_retry_at = None
+            delivery.error_message = "Weekly manager report no longer exists."
+            db.commit()
+            db.refresh(delivery)
+            return delivery
+
+        if delivery.attempt_count >= delivery.max_attempts:
+            delivery.retryable = False
+            delivery.next_retry_at = None
+            db.commit()
+            db.refresh(delivery)
+            return delivery
+
+        delivery.attempt_count += 1
+        try:
+            if delivery.channel == AIReportDeliveryService.EMAIL:
+                AIReportDeliveryService._send_email(recipient=delivery.recipient, report=report)
+                provider_response = None
+            elif delivery.channel == AIReportDeliveryService.TELEGRAM:
+                provider_response = AIReportDeliveryService._send_telegram(chat_id=delivery.recipient, report=report)
+            else:
+                delivery.status = AIReportDeliveryService.FAILED
+                delivery.retryable = False
+                delivery.next_retry_at = None
+                delivery.error_message = f"Unsupported delivery channel: {delivery.channel}"
+                db.commit()
+                db.refresh(delivery)
+                return delivery
+
+            delivery.status = AIReportDeliveryService.SENT
+            delivery.retryable = False
+            delivery.next_retry_at = None
+            delivery.error_message = None
+            delivery.provider_response = provider_response
+            delivery.sent_at = effective_now
+        except Exception as exc:
+            delivery.status = AIReportDeliveryService.FAILED
+            delivery.error_message = str(exc)
+            if delivery.attempt_count >= delivery.max_attempts:
+                delivery.retryable = False
+                delivery.next_retry_at = None
+            else:
+                delivery.retryable = True
+                delivery.next_retry_at = AIReportDeliveryService._next_retry_at(effective_now, delivery.attempt_count)
+
+        db.commit()
+        db.refresh(delivery)
+        return delivery
 
     @staticmethod
     def _send_email(*, recipient: str, report: AIWeeklyManagerReport) -> None:
@@ -293,7 +387,11 @@ class AIReportDeliveryService:
         error_message: Optional[str] = None,
         provider_response: Optional[Dict[str, Any]] = None,
         sent_at: Optional[datetime] = None,
+        retryable: bool = False,
     ) -> AIWeeklyReportDelivery:
+        now = datetime.now(timezone.utc)
+        max_attempts = AIReportDeliveryService._max_attempts()
+        should_retry = status == AIReportDeliveryService.FAILED and retryable and max_attempts > 1
         delivery = AIWeeklyReportDelivery(
             report_id=report.id,
             organization_id=report.organization_id,
@@ -304,12 +402,27 @@ class AIReportDeliveryService:
             attempt_count=1,
             error_message=error_message,
             provider_response=provider_response,
+            retryable=should_retry,
+            last_attempted_at=now,
+            next_retry_at=AIReportDeliveryService._next_retry_at(now, 1) if should_retry else None,
+            max_attempts=max_attempts,
             sent_at=sent_at,
         )
         db.add(delivery)
         db.commit()
         db.refresh(delivery)
         return delivery
+
+    @staticmethod
+    def _max_attempts() -> int:
+        return max(1, settings.AI_WEEKLY_REPORT_DELIVERY_MAX_ATTEMPTS)
+
+    @staticmethod
+    def _next_retry_at(now: datetime, attempt_count: int) -> datetime:
+        base_delay = max(1, settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_BASE_DELAY_MINUTES)
+        max_delay = max(base_delay, settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_MAX_DELAY_MINUTES)
+        delay_minutes = min(max_delay, base_delay * (2 ** max(0, attempt_count - 1)))
+        return now + timedelta(minutes=delay_minutes)
 
     @staticmethod
     def _email_body(report: AIWeeklyManagerReport) -> str:

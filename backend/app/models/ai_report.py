@@ -60,6 +60,10 @@ class AIWeeklyReportDelivery(Base):
     attempt_count = Column(Integer, nullable=False, default=1)
     error_message = Column(Text, nullable=True)
     provider_response = Column(JSON, nullable=True)
+    retryable = Column(Boolean, nullable=False, default=False, index=True)
+    last_attempted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    next_retry_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    max_attempts = Column(Integer, nullable=False, default=3)
     sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

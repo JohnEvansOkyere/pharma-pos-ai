@@ -178,6 +178,10 @@ interface AIWeeklyReportDelivery {
   status: string
   attempt_count: number
   error_message: string | null
+  retryable: boolean
+  last_attempted_at: string | null
+  next_retry_at: string | null
+  max_attempts: number
   sent_at: string | null
   created_at: string
 }
@@ -1409,6 +1413,16 @@ function WeeklyReportsPanel({
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Attempts: {delivery.attempt_count} · {delivery.error_message || (delivery.sent_at ? `Sent ${formatDateTime(delivery.sent_at)}` : `Recorded ${formatDateTime(delivery.created_at)}`)}
                       </p>
+                      {delivery.retryable && delivery.next_retry_at && (
+                        <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                          Next retry: {formatDateTime(delivery.next_retry_at)}
+                        </p>
+                      )}
+                      {!delivery.retryable && delivery.status === 'failed' && delivery.attempt_count >= delivery.max_attempts && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+                          Retry limit reached
+                        </p>
+                      )}
                     </div>
                     <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
                       delivery.status === 'sent'

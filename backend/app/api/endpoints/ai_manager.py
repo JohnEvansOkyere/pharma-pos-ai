@@ -315,6 +315,10 @@ def _delivery_response(delivery) -> AIWeeklyReportDeliveryResponse:
         attempt_count=delivery.attempt_count,
         error_message=delivery.error_message,
         provider_response=delivery.provider_response,
+        retryable=delivery.retryable,
+        last_attempted_at=delivery.last_attempted_at,
+        next_retry_at=delivery.next_retry_at,
+        max_attempts=delivery.max_attempts,
         sent_at=delivery.sent_at,
         created_at=delivery.created_at,
     )
