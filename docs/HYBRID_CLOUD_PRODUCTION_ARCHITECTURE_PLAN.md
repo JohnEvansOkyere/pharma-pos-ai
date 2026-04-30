@@ -2034,4 +2034,26 @@ Current scope:
 
 Next foundation:
 
-- add audit-event logging for AI policy changes and weekly report delivery/review actions
+25. AI policy and report action audit events
+
+Status: implemented for current AI manager administration and weekly report actions.
+
+Implemented:
+
+- extended `AuditService.log` so audit records can carry organization, branch, and source-device scope
+- AI external provider policy updates now write an `update_ai_external_provider_policy` activity log in the same transaction as the policy change
+- weekly AI report reviews now write a `review_ai_weekly_report` activity log with report scope and review-note presence
+- weekly AI report delivery setting changes now write an `update_ai_weekly_report_delivery_setting` activity log with recipient counts and activation state
+- weekly AI report delivery attempts now write `create_ai_weekly_report_delivery` activity logs for sent, failed, and skipped outcomes
+- weekly AI report delivery retries now write `retry_ai_weekly_report_delivery` activity logs with attempt count, retry state, and final outcome
+- backend regression coverage verifies audit actor, tenant, branch, action name, and key metadata for AI policy, review, delivery setting, delivery attempt, and retry paths
+
+Current scope:
+
+- audit records use the existing `activity_logs` table
+- retry audit actor is `null` because retries are scheduler/system initiated
+- audit metadata avoids recording full report content, provider responses, or external API credentials
+
+Next foundation:
+
+- expose an admin audit-log viewer/export for tenant-scoped operational support

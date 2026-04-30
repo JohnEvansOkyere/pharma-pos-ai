@@ -28,6 +28,7 @@ from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_manager_service import AIManagerService
 from app.services.ai_provider_policy_service import AIProviderPolicyService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
+from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/ai-manager", tags=["AI Manager Assistant"])
 
@@ -207,6 +208,22 @@ def review_weekly_manager_report(
     report.reviewed_by_user_id = current_user.id
     report.reviewed_at = datetime.now(timezone.utc)
     report.review_notes = payload.review_notes.strip() if payload.review_notes else None
+    AuditService.log(
+        db,
+        action="review_ai_weekly_report",
+        user_id=current_user.id,
+        organization_id=report.organization_id,
+        branch_id=report.branch_id,
+        entity_type="ai_weekly_manager_report",
+        entity_id=report.id,
+        description=f"Reviewed weekly AI manager report {report.id}",
+        extra_data={
+            "report_id": report.id,
+            "review_notes_present": bool(report.review_notes),
+            "action_period_start": report.action_period_start.isoformat(),
+            "action_period_end": report.action_period_end.isoformat(),
+        },
+    )
     db.commit()
     db.refresh(report)
     return _report_response(report)
@@ -230,7 +247,12 @@ def deliver_weekly_manager_report(
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
-    deliveries = AIReportDeliveryService.deliver(db, report, channels=payload.channels)
+    deliveries = AIReportDeliveryService.deliver(
+        db,
+        report,
+        channels=payload.channels,
+        performed_by_user_id=current_user.id,
+    )
     return [_delivery_response(delivery) for delivery in deliveries]
 
 
@@ -319,6 +341,25 @@ def upsert_weekly_report_delivery_setting(
     setting.telegram_chat_ids = _clean_list(payload.telegram_chat_ids)
     setting.is_active = payload.is_active
     setting.updated_by_user_id = current_user.id
+    db.flush()
+    AuditService.log(
+        db,
+        action="update_ai_weekly_report_delivery_setting",
+        user_id=current_user.id,
+        organization_id=setting.organization_id,
+        branch_id=setting.branch_id,
+        entity_type="ai_weekly_report_delivery_setting",
+        entity_id=setting.id,
+        description="Updated weekly AI report delivery setting",
+        extra_data={
+            "report_scope_key": setting.report_scope_key,
+            "email_enabled": setting.email_enabled,
+            "email_recipient_count": len(setting.email_recipients or []),
+            "telegram_enabled": setting.telegram_enabled,
+            "telegram_chat_count": len(setting.telegram_chat_ids or []),
+            "is_active": setting.is_active,
+        },
+    )
     db.commit()
     db.refresh(setting)
     return _delivery_setting_response(setting)

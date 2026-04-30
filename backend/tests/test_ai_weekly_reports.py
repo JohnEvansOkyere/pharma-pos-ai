@@ -19,6 +19,7 @@ from app.api.endpoints.ai_manager import (
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
+from app.models.activity_log import ActivityLog
 from app.models.ai_report import AIWeeklyReportDeliverySetting
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
@@ -361,6 +362,21 @@ def test_manager_can_mark_weekly_report_reviewed(db_session):
     assert fetched.reviewed_by_user_id == manager.id
     assert fetched.review_notes == "Check branch expiry shelf today."
 
+    audit_entry = (
+        db_session.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "review_ai_weekly_report",
+            ActivityLog.entity_id == report.id,
+        )
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch_a.id
+    assert audit_entry.user_id == manager.id
+    assert audit_entry.extra_data["review_notes_present"] is True
+
 
 def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
@@ -389,6 +405,21 @@ def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch,
     assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
     assert all(delivery.status == "sent" for delivery in deliveries)
     assert {delivery.recipient for delivery in deliveries} == {"owner@example.com", "12345"}
+
+    audit_entries = (
+        db_session.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "create_ai_weekly_report_delivery",
+            ActivityLog.entity_type == "ai_weekly_report_delivery",
+        )
+        .order_by(ActivityLog.id.asc())
+        .all()
+    )
+    assert len(audit_entries) == 2
+    assert {entry.extra_data["channel"] for entry in audit_entries} == {"email", "telegram"}
+    assert all(entry.organization_id == organization.id for entry in audit_entries)
+    assert all(entry.branch_id == branch_a.id for entry in audit_entries)
+    assert all(entry.user_id == manager.id for entry in audit_entries)
 
 
 def test_transient_failed_weekly_report_delivery_is_retried(monkeypatch, db_session):
@@ -434,6 +465,20 @@ def test_transient_failed_weekly_report_delivery_is_retried(monkeypatch, db_sess
     assert retried[0].attempt_count == 2
     assert retried[0].retryable is False
     assert retried[0].next_retry_at is None
+
+    retry_audit = (
+        db_session.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "retry_ai_weekly_report_delivery",
+            ActivityLog.entity_id == failed.id,
+        )
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+    assert retry_audit is not None
+    assert retry_audit.user_id is None
+    assert retry_audit.extra_data["status"] == "sent"
+    assert retry_audit.extra_data["attempt_count"] == 2
 
 
 def test_permanent_delivery_configuration_failure_is_not_retried(monkeypatch, db_session):
@@ -573,6 +618,22 @@ def test_admin_can_manage_tenant_scoped_delivery_settings(db_session):
     assert fetched.email_recipients == ["owner@example.com"]
     assert fetched.telegram_chat_ids == ["12345"]
 
+    audit_entry = (
+        db_session.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "update_ai_weekly_report_delivery_setting",
+            ActivityLog.entity_id == saved.id,
+        )
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert audit_entry.user_id == admin.id
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch_a.id
+    assert audit_entry.extra_data["email_recipient_count"] == 1
+    assert audit_entry.extra_data["telegram_chat_count"] == 1
+
 
 def test_weekly_report_delivery_does_not_use_global_recipients_without_tenant_setting(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
@@ -616,6 +677,15 @@ def test_weekly_report_delivery_is_audited_when_channels_are_disabled(db_session
     assert {delivery.channel for delivery in deliveries} == {"email", "telegram"}
     assert all(delivery.status == "skipped" for delivery in deliveries)
     assert all(delivery.error_message for delivery in deliveries)
+
+    audit_entries = (
+        db_session.query(ActivityLog)
+        .filter(ActivityLog.action == "create_ai_weekly_report_delivery")
+        .order_by(ActivityLog.id.asc())
+        .all()
+    )
+    assert len(audit_entries) == 2
+    assert {entry.extra_data["status"] for entry in audit_entries} == {"skipped"}
 
 
 def test_branch_manager_cannot_generate_cross_branch_report(db_session):

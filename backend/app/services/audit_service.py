@@ -32,9 +32,15 @@ class AuditService:
         entity_id: Optional[int],
         description: str,
         extra_data: Optional[dict[str, Any]] = None,
+        organization_id: Optional[int] = None,
+        branch_id: Optional[int] = None,
+        source_device_id: Optional[int] = None,
         ip_address: Optional[str] = None,
     ) -> ActivityLog:
         entry = ActivityLog(
+            organization_id=organization_id,
+            branch_id=branch_id,
+            source_device_id=source_device_id,
             user_id=user_id,
             action=action,
             entity_type=entity_type,

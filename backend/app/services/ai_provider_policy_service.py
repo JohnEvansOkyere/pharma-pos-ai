@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_report import AIExternalProviderSetting
+from app.services.audit_service import AuditService
 
 
 class AIProviderPolicyService:
@@ -81,6 +82,7 @@ class AIProviderPolicyService:
         if setting is None:
             setting = AIExternalProviderSetting(organization_id=organization_id)
             db.add(setting)
+            db.flush()
 
         setting.external_ai_enabled = external_ai_enabled
         setting.allowed_providers = normalized_allowed
@@ -94,6 +96,23 @@ class AIProviderPolicyService:
         else:
             setting.consented_by_user_id = None
             setting.consented_at = None
+
+        AuditService.log(
+            db,
+            action="update_ai_external_provider_policy",
+            user_id=current_user_id,
+            organization_id=organization_id,
+            entity_type="ai_external_provider_setting",
+            entity_id=setting.id,
+            description="Updated tenant external AI provider policy",
+            extra_data={
+                "external_ai_enabled": external_ai_enabled,
+                "allowed_providers": normalized_allowed,
+                "preferred_provider": normalized_provider,
+                "preferred_model": normalized_model,
+                "consent_recorded": external_ai_enabled,
+            },
+        )
 
         db.commit()
         db.refresh(setting)

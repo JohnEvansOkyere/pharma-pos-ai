@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
+from app.services.audit_service import AuditService
 
 
 class AIReportDeliveryService:
@@ -30,15 +31,30 @@ class AIReportDeliveryService:
         report: AIWeeklyManagerReport,
         *,
         channels: Optional[List[str]] = None,
+        performed_by_user_id: Optional[int] = None,
     ) -> List[AIWeeklyReportDelivery]:
         requested_channels = channels or [AIReportDeliveryService.EMAIL, AIReportDeliveryService.TELEGRAM]
         delivery_setting = AIReportDeliveryService.get_effective_setting(db, report)
         deliveries: List[AIWeeklyReportDelivery] = []
 
         if AIReportDeliveryService.EMAIL in requested_channels:
-            deliveries.extend(AIReportDeliveryService._deliver_email(db, report, delivery_setting))
+            deliveries.extend(
+                AIReportDeliveryService._deliver_email(
+                    db,
+                    report,
+                    delivery_setting,
+                    performed_by_user_id=performed_by_user_id,
+                )
+            )
         if AIReportDeliveryService.TELEGRAM in requested_channels:
-            deliveries.extend(AIReportDeliveryService._deliver_telegram(db, report, delivery_setting))
+            deliveries.extend(
+                AIReportDeliveryService._deliver_telegram(
+                    db,
+                    report,
+                    delivery_setting,
+                    performed_by_user_id=performed_by_user_id,
+                )
+            )
 
         return deliveries
 
@@ -72,6 +88,8 @@ class AIReportDeliveryService:
         db: Session,
         report: AIWeeklyManagerReport,
         delivery_setting: Optional[AIWeeklyReportDeliverySetting],
+        *,
+        performed_by_user_id: Optional[int],
     ) -> List[AIWeeklyReportDelivery]:
         if delivery_setting is None:
             return [
@@ -82,6 +100,7 @@ class AIReportDeliveryService:
                     recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="No active tenant delivery setting exists for this report scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
 
@@ -99,6 +118,7 @@ class AIReportDeliveryService:
                     recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="Email weekly report delivery is disabled for this tenant scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
         if not recipients:
@@ -110,6 +130,7 @@ class AIReportDeliveryService:
                     recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="No tenant email recipients configured for this report scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
         if not settings.SMTP_HOST or not settings.SMTP_FROM_EMAIL:
@@ -121,6 +142,7 @@ class AIReportDeliveryService:
                     recipient="tenant-email-recipients",
                     status=AIReportDeliveryService.FAILED,
                     error_message="SMTP_HOST and SMTP_FROM_EMAIL are required for email delivery.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
 
@@ -136,6 +158,7 @@ class AIReportDeliveryService:
                         recipient=recipient,
                         status=AIReportDeliveryService.SENT,
                         sent_at=datetime.now(timezone.utc),
+                        performed_by_user_id=performed_by_user_id,
                     )
                 )
             except Exception as exc:
@@ -148,6 +171,7 @@ class AIReportDeliveryService:
                         status=AIReportDeliveryService.FAILED,
                         error_message=str(exc),
                         retryable=True,
+                        performed_by_user_id=performed_by_user_id,
                     )
                 )
         return deliveries
@@ -157,6 +181,8 @@ class AIReportDeliveryService:
         db: Session,
         report: AIWeeklyManagerReport,
         delivery_setting: Optional[AIWeeklyReportDeliverySetting],
+        *,
+        performed_by_user_id: Optional[int],
     ) -> List[AIWeeklyReportDelivery]:
         if delivery_setting is None:
             return [
@@ -167,6 +193,7 @@ class AIReportDeliveryService:
                     recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="No active tenant delivery setting exists for this report scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
 
@@ -184,6 +211,7 @@ class AIReportDeliveryService:
                     recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="Telegram weekly report delivery is disabled for this tenant scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
         if not chat_ids:
@@ -195,6 +223,7 @@ class AIReportDeliveryService:
                     recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.SKIPPED,
                     error_message="No tenant Telegram chat IDs configured for this report scope.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
         if not settings.TELEGRAM_BOT_TOKEN:
@@ -206,6 +235,7 @@ class AIReportDeliveryService:
                     recipient="tenant-telegram-chats",
                     status=AIReportDeliveryService.FAILED,
                     error_message="TELEGRAM_BOT_TOKEN is required for Telegram delivery.",
+                    performed_by_user_id=performed_by_user_id,
                 )
             ]
 
@@ -222,6 +252,7 @@ class AIReportDeliveryService:
                         status=AIReportDeliveryService.SENT,
                         provider_response=response_payload,
                         sent_at=datetime.now(timezone.utc),
+                        performed_by_user_id=performed_by_user_id,
                     )
                 )
             except Exception as exc:
@@ -234,6 +265,7 @@ class AIReportDeliveryService:
                         status=AIReportDeliveryService.FAILED,
                         error_message=str(exc),
                         retryable=True,
+                        performed_by_user_id=performed_by_user_id,
                     )
                 )
         return deliveries
@@ -306,6 +338,7 @@ class AIReportDeliveryService:
                 delivery.retryable = False
                 delivery.next_retry_at = None
                 delivery.error_message = f"Unsupported delivery channel: {delivery.channel}"
+                AIReportDeliveryService._audit_retry(db, report, delivery)
                 db.commit()
                 db.refresh(delivery)
                 return delivery
@@ -326,6 +359,7 @@ class AIReportDeliveryService:
                 delivery.retryable = True
                 delivery.next_retry_at = AIReportDeliveryService._next_retry_at(effective_now, delivery.attempt_count)
 
+        AIReportDeliveryService._audit_retry(db, report, delivery)
         db.commit()
         db.refresh(delivery)
         return delivery
@@ -388,6 +422,7 @@ class AIReportDeliveryService:
         provider_response: Optional[Dict[str, Any]] = None,
         sent_at: Optional[datetime] = None,
         retryable: bool = False,
+        performed_by_user_id: Optional[int] = None,
     ) -> AIWeeklyReportDelivery:
         now = datetime.now(timezone.utc)
         max_attempts = AIReportDeliveryService._max_attempts()
@@ -409,9 +444,58 @@ class AIReportDeliveryService:
             sent_at=sent_at,
         )
         db.add(delivery)
+        db.flush()
+        AuditService.log(
+            db,
+            action="create_ai_weekly_report_delivery",
+            user_id=performed_by_user_id,
+            organization_id=report.organization_id,
+            branch_id=report.branch_id,
+            entity_type="ai_weekly_report_delivery",
+            entity_id=delivery.id,
+            description=f"Recorded {channel} weekly AI report delivery as {status}",
+            extra_data={
+                "report_id": report.id,
+                "channel": channel,
+                "recipient": recipient,
+                "status": status,
+                "retryable": should_retry,
+                "attempt_count": delivery.attempt_count,
+                "max_attempts": delivery.max_attempts,
+                "error_message": error_message,
+            },
+        )
         db.commit()
         db.refresh(delivery)
         return delivery
+
+    @staticmethod
+    def _audit_retry(
+        db: Session,
+        report: AIWeeklyManagerReport,
+        delivery: AIWeeklyReportDelivery,
+    ) -> None:
+        AuditService.log(
+            db,
+            action="retry_ai_weekly_report_delivery",
+            user_id=None,
+            organization_id=report.organization_id,
+            branch_id=report.branch_id,
+            entity_type="ai_weekly_report_delivery",
+            entity_id=delivery.id,
+            description=f"Retried {delivery.channel} weekly AI report delivery as {delivery.status}",
+            extra_data={
+                "report_id": report.id,
+                "channel": delivery.channel,
+                "recipient": delivery.recipient,
+                "status": delivery.status,
+                "retryable": delivery.retryable,
+                "attempt_count": delivery.attempt_count,
+                "max_attempts": delivery.max_attempts,
+                "next_retry_at": delivery.next_retry_at.isoformat() if delivery.next_retry_at else None,
+                "error_message": delivery.error_message,
+            },
+        )
 
     @staticmethod
     def _max_attempts() -> int:

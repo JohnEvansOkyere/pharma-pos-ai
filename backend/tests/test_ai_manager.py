@@ -10,6 +10,7 @@ from app.api.endpoints.ai_manager import chat_with_ai_manager, get_external_prov
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
+from app.models.activity_log import ActivityLog
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -389,6 +390,21 @@ def test_admin_can_manage_tenant_external_ai_settings(db_session):
     assert saved.preferred_model == "llama-3.3-70b-versatile"
     assert saved.consented_by_user_id == admin.id
     assert saved.consented_at is not None
+
+    audit_entry = (
+        db_session.query(ActivityLog)
+        .filter(
+            ActivityLog.action == "update_ai_external_provider_policy",
+            ActivityLog.organization_id == organization.id,
+            ActivityLog.entity_id == saved.id,
+        )
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+    assert audit_entry is not None
+    assert audit_entry.user_id == admin.id
+    assert audit_entry.extra_data["external_ai_enabled"] is True
+    assert audit_entry.extra_data["allowed_providers"] == ["openai", "groq"]
 
 
 def test_enabled_tenant_external_ai_uses_allowed_provider_fallback(monkeypatch, db_session):
