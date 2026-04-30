@@ -1,7 +1,7 @@
 """
 Cloud reporting projection models built from ingested sync events.
 """
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -96,5 +96,30 @@ class CloudBatchSnapshot(Base):
     is_quarantined = Column(Boolean, nullable=False, default=False, index=True)
     last_source_event_id = Column(Integer, ForeignKey("ingested_sync_events.id"), nullable=False, index=True)
     payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CloudReconciliationAcknowledgement(Base):
+    """Manager workflow state for generated cloud reconciliation issues."""
+
+    __tablename__ = "cloud_reconciliation_acknowledgements"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "issue_key", name="uq_cloud_reconciliation_ack_org_issue"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    issue_key = Column(String(64), nullable=False, index=True)
+    issue_type = Column(String(100), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="acknowledged", index=True)
+    notes = Column(Text, nullable=True)
+    acknowledged_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    resolution_notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

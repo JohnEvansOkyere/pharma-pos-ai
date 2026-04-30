@@ -4,11 +4,11 @@ Cloud reporting endpoints backed by projected sync facts.
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_organization_access
+from app.api.dependencies import require_organization_access, require_view_reports
 from app.db.base import get_db
 from app.models.user import User
 from app.models.cloud_projection import (
@@ -23,6 +23,8 @@ from app.schemas.cloud_reports import (
     CloudExpiryRiskItem,
     CloudInventoryMovementSummary,
     CloudLowStockItem,
+    CloudReconciliationAcknowledgementResponse,
+    CloudReconciliationIssueActionRequest,
     CloudReconciliationSummary,
     CloudSalesSummary,
     CloudStockRiskSummary,
@@ -328,3 +330,75 @@ def get_cloud_reconciliation(
         limit=limit,
     )
     return CloudReconciliationSummary(**result)
+
+
+@router.post("/reconciliation/acknowledge", response_model=CloudReconciliationAcknowledgementResponse)
+def acknowledge_cloud_reconciliation_issue(
+    payload: CloudReconciliationIssueActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    require_organization_access(
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+        current_user=current_user,
+    )
+    effective_branch_id = _resolve_branch_scope(current_user, payload.branch_id)
+    try:
+        acknowledgement = CloudReconciliationService.acknowledge_issue(
+            db,
+            organization_id=payload.organization_id,
+            branch_id=effective_branch_id,
+            issue_key=payload.issue_key,
+            notes=payload.notes,
+            current_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return _acknowledgement_response(acknowledgement)
+
+
+@router.post("/reconciliation/resolve", response_model=CloudReconciliationAcknowledgementResponse)
+def resolve_cloud_reconciliation_issue(
+    payload: CloudReconciliationIssueActionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    require_organization_access(
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+        current_user=current_user,
+    )
+    effective_branch_id = _resolve_branch_scope(current_user, payload.branch_id)
+    try:
+        acknowledgement = CloudReconciliationService.resolve_issue(
+            db,
+            organization_id=payload.organization_id,
+            branch_id=effective_branch_id,
+            issue_key=payload.issue_key,
+            notes=payload.notes,
+            current_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return _acknowledgement_response(acknowledgement)
+
+
+def _acknowledgement_response(acknowledgement) -> CloudReconciliationAcknowledgementResponse:
+    return CloudReconciliationAcknowledgementResponse(
+        id=acknowledgement.id,
+        organization_id=acknowledgement.organization_id,
+        branch_id=acknowledgement.branch_id,
+        issue_key=acknowledgement.issue_key,
+        issue_type=acknowledgement.issue_type,
+        severity=acknowledgement.severity,
+        status=acknowledgement.status,
+        notes=acknowledgement.notes,
+        acknowledged_by_user_id=acknowledgement.acknowledged_by_user_id,
+        acknowledged_at=acknowledgement.acknowledged_at,
+        resolved_by_user_id=acknowledgement.resolved_by_user_id,
+        resolved_at=acknowledgement.resolved_at,
+        resolution_notes=acknowledgement.resolution_notes,
+        created_at=acknowledgement.created_at,
+        updated_at=acknowledgement.updated_at,
+    )

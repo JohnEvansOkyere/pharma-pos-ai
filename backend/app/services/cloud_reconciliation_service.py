@@ -4,12 +4,21 @@ Reconciliation checks for cloud reporting projections.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
+import hashlib
+import json
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from app.models.cloud_projection import CloudBatchSnapshot, CloudInventoryMovementFact, CloudProductSnapshot
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudInventoryMovementFact,
+    CloudProductSnapshot,
+    CloudReconciliationAcknowledgement,
+)
 from app.models.sync_ingestion import IngestedSyncEvent
+from app.services.audit_service import AuditService
 
 
 class CloudReconciliationService:
@@ -143,6 +152,10 @@ class CloudReconciliationService:
                 )
             )
 
+        for issue in issues:
+            issue["issue_key"] = CloudReconciliationService.issue_key(issue)
+        CloudReconciliationService._apply_acknowledgements(db, organization_id=organization_id, issues=issues)
+
         issue_count = len(issues)
         limited_issues = issues[:limit]
         return {
@@ -156,8 +169,206 @@ class CloudReconciliationService:
             "critical_issue_count": sum(1 for issue in issues if issue["severity"] == "critical"),
             "high_issue_count": sum(1 for issue in issues if issue["severity"] == "high"),
             "medium_issue_count": sum(1 for issue in issues if issue["severity"] == "medium"),
+            "acknowledged_issue_count": sum(1 for issue in issues if issue.get("acknowledgement_status") == "acknowledged"),
+            "resolved_issue_count": sum(1 for issue in issues if issue.get("acknowledgement_status") == "resolved"),
             "issues": limited_issues,
         }
+
+    @staticmethod
+    def acknowledge_issue(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        issue_key: str,
+        notes: Optional[str],
+        current_user_id: int,
+    ) -> CloudReconciliationAcknowledgement:
+        issue = CloudReconciliationService.find_active_issue(
+            db,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            issue_key=issue_key,
+        )
+        if issue is None:
+            raise ValueError("Active reconciliation issue not found")
+
+        now = datetime.now(timezone.utc)
+        acknowledgement = CloudReconciliationService._get_acknowledgement(
+            db,
+            organization_id=organization_id,
+            issue_key=issue_key,
+        )
+        if acknowledgement is None:
+            acknowledgement = CloudReconciliationAcknowledgement(
+                organization_id=organization_id,
+                issue_key=issue_key,
+            )
+            db.add(acknowledgement)
+
+        acknowledgement.branch_id = issue.get("branch_id")
+        acknowledgement.issue_type = issue["issue_type"]
+        acknowledgement.severity = issue["severity"]
+        acknowledgement.status = "acknowledged"
+        acknowledgement.notes = notes.strip() if notes else None
+        acknowledgement.acknowledged_by_user_id = current_user_id
+        acknowledgement.acknowledged_at = now
+        acknowledgement.resolved_by_user_id = None
+        acknowledgement.resolved_at = None
+        acknowledgement.resolution_notes = None
+        db.flush()
+        AuditService.log(
+            db,
+            action="acknowledge_cloud_reconciliation_issue",
+            user_id=current_user_id,
+            organization_id=organization_id,
+            branch_id=acknowledgement.branch_id,
+            entity_type="cloud_reconciliation_issue",
+            entity_id=acknowledgement.id,
+            description="Acknowledged cloud reconciliation issue",
+            extra_data={
+                "issue_key": issue_key,
+                "issue_type": issue["issue_type"],
+                "severity": issue["severity"],
+                "notes_present": bool(acknowledgement.notes),
+            },
+        )
+        db.commit()
+        db.refresh(acknowledgement)
+        return acknowledgement
+
+    @staticmethod
+    def resolve_issue(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        issue_key: str,
+        notes: Optional[str],
+        current_user_id: int,
+    ) -> CloudReconciliationAcknowledgement:
+        issue = CloudReconciliationService.find_active_issue(
+            db,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            issue_key=issue_key,
+        )
+        acknowledgement = CloudReconciliationService._get_acknowledgement(
+            db,
+            organization_id=organization_id,
+            issue_key=issue_key,
+        )
+        if acknowledgement is not None and branch_id is not None and acknowledgement.branch_id != branch_id:
+            raise ValueError("Active reconciliation issue not found")
+        if acknowledgement is None and issue is None:
+            raise ValueError("Active reconciliation issue not found")
+        if acknowledgement is None:
+            acknowledgement = CloudReconciliationAcknowledgement(
+                organization_id=organization_id,
+                issue_key=issue_key,
+                branch_id=issue.get("branch_id") if issue else branch_id,
+                issue_type=issue["issue_type"] if issue else "unknown",
+                severity=issue["severity"] if issue else "unknown",
+                acknowledged_by_user_id=current_user_id,
+                acknowledged_at=datetime.now(timezone.utc),
+            )
+            db.add(acknowledgement)
+            db.flush()
+
+        acknowledgement.status = "resolved"
+        acknowledgement.resolved_by_user_id = current_user_id
+        acknowledgement.resolved_at = datetime.now(timezone.utc)
+        acknowledgement.resolution_notes = notes.strip() if notes else None
+        if issue is not None:
+            acknowledgement.branch_id = issue.get("branch_id")
+            acknowledgement.issue_type = issue["issue_type"]
+            acknowledgement.severity = issue["severity"]
+        db.flush()
+        AuditService.log(
+            db,
+            action="resolve_cloud_reconciliation_issue",
+            user_id=current_user_id,
+            organization_id=organization_id,
+            branch_id=acknowledgement.branch_id,
+            entity_type="cloud_reconciliation_issue",
+            entity_id=acknowledgement.id,
+            description="Marked cloud reconciliation issue workflow as resolved",
+            extra_data={
+                "issue_key": issue_key,
+                "issue_type": acknowledgement.issue_type,
+                "severity": acknowledgement.severity,
+                "notes_present": bool(acknowledgement.resolution_notes),
+            },
+        )
+        db.commit()
+        db.refresh(acknowledgement)
+        return acknowledgement
+
+    @staticmethod
+    def find_active_issue(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        issue_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        result = CloudReconciliationService.reconcile(
+            db,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            limit=500,
+        )
+        return next((issue for issue in result["issues"] if issue["issue_key"] == issue_key), None)
+
+    @staticmethod
+    def issue_key(issue: Dict[str, Any]) -> str:
+        scope = {
+            "issue_type": issue.get("issue_type"),
+            "branch_id": issue.get("branch_id"),
+            "product_id": issue.get("product_id"),
+            "batch_id": issue.get("batch_id"),
+        }
+        return hashlib.sha256(json.dumps(scope, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _apply_acknowledgements(db: Session, *, organization_id: int, issues: List[Dict[str, Any]]) -> None:
+        issue_keys = [issue["issue_key"] for issue in issues]
+        if not issue_keys:
+            return
+        acknowledgements = (
+            db.query(CloudReconciliationAcknowledgement)
+            .filter(
+                CloudReconciliationAcknowledgement.organization_id == organization_id,
+                CloudReconciliationAcknowledgement.issue_key.in_(issue_keys),
+            )
+            .all()
+        )
+        by_key = {ack.issue_key: ack for ack in acknowledgements}
+        for issue in issues:
+            acknowledgement = by_key.get(issue["issue_key"])
+            issue["acknowledgement_status"] = acknowledgement.status if acknowledgement else None
+            issue["acknowledgement_notes"] = acknowledgement.notes if acknowledgement else None
+            issue["acknowledged_by_user_id"] = acknowledgement.acknowledged_by_user_id if acknowledgement else None
+            issue["acknowledged_at"] = acknowledgement.acknowledged_at if acknowledgement else None
+            issue["resolved_by_user_id"] = acknowledgement.resolved_by_user_id if acknowledgement else None
+            issue["resolved_at"] = acknowledgement.resolved_at if acknowledgement else None
+            issue["resolution_notes"] = acknowledgement.resolution_notes if acknowledgement else None
+
+    @staticmethod
+    def _get_acknowledgement(
+        db: Session,
+        *,
+        organization_id: int,
+        issue_key: str,
+    ) -> Optional[CloudReconciliationAcknowledgement]:
+        return (
+            db.query(CloudReconciliationAcknowledgement)
+            .filter(
+                CloudReconciliationAcknowledgement.organization_id == organization_id,
+                CloudReconciliationAcknowledgement.issue_key == issue_key,
+            )
+            .first()
+        )
 
     @staticmethod
     def _latest_stock_after_by_product(query) -> Dict[Tuple[int, int], int]:

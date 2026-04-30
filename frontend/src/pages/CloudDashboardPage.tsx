@@ -100,6 +100,7 @@ interface CloudExpiryRiskItem {
 }
 
 interface CloudReconciliationIssue {
+  issue_key: string
   severity: string
   issue_type: string
   branch_id: number | null
@@ -111,6 +112,13 @@ interface CloudReconciliationIssue {
   actual_quantity: number | null
   delta: number | null
   message: string
+  acknowledgement_status: string | null
+  acknowledgement_notes: string | null
+  acknowledged_by_user_id: number | null
+  acknowledged_at: string | null
+  resolved_by_user_id: number | null
+  resolved_at: string | null
+  resolution_notes: string | null
 }
 
 interface CloudReconciliationSummary {
@@ -124,6 +132,8 @@ interface CloudReconciliationSummary {
   critical_issue_count: number
   high_issue_count: number
   medium_issue_count: number
+  acknowledged_issue_count: number
+  resolved_issue_count: number
   issues: CloudReconciliationIssue[]
 }
 
@@ -375,6 +385,9 @@ export default function CloudDashboardPage() {
   const [isSavingAIProvider, setIsSavingAIProvider] = useState(false)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
+  const [reconciliationActionError, setReconciliationActionError] = useState<string | null>(null)
+  const [reconciliationActionMessage, setReconciliationActionMessage] = useState<string | null>(null)
+  const [reconciliationActionKey, setReconciliationActionKey] = useState<string | null>(null)
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isChatLoading, setIsChatLoading] = useState(false)
@@ -746,6 +759,37 @@ export default function CloudDashboardPage() {
     }
   }
 
+  const updateReconciliationIssue = async (
+    issue: CloudReconciliationIssue,
+    action: 'acknowledge' | 'resolve',
+    notes: string,
+  ) => {
+    if (!hasValidOrganization || reconciliationActionKey) return
+    setReconciliationActionKey(issue.issue_key)
+    setReconciliationActionError(null)
+    setReconciliationActionMessage(null)
+    try {
+      const payload = {
+        organization_id: organizationId,
+        branch_id: issue.branch_id ?? branchId ?? null,
+        issue_key: issue.issue_key,
+        notes,
+      }
+      if (action === 'acknowledge') {
+        await api.acknowledgeCloudReconciliationIssue(payload)
+        setReconciliationActionMessage('Reconciliation issue acknowledged.')
+      } else {
+        await api.resolveCloudReconciliationIssue(payload)
+        setReconciliationActionMessage('Reconciliation issue marked resolved.')
+      }
+      await loadCloudReports()
+    } catch (error) {
+      setReconciliationActionError('Reconciliation workflow update failed.')
+    } finally {
+      setReconciliationActionKey(null)
+    }
+  }
+
   const sendAIMessage = async (message: string) => {
     const trimmedMessage = message.trim()
     if (!trimmedMessage || !hasValidOrganization || isChatLoading) return
@@ -1005,7 +1049,14 @@ export default function CloudDashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ReconciliationPanel reconciliation={reconciliationSummary} />
+        <ReconciliationPanel
+          reconciliation={reconciliationSummary}
+          actionKey={reconciliationActionKey}
+          error={reconciliationActionError}
+          message={reconciliationActionMessage}
+          onAcknowledge={(issue, notes) => updateReconciliationIssue(issue, 'acknowledge', notes)}
+          onResolve={(issue, notes) => updateReconciliationIssue(issue, 'resolve', notes)}
+        />
         <WeeklyReportsPanel
           reports={weeklyReports}
           selectedReport={selectedReport}
@@ -1239,9 +1290,24 @@ function formatIssueType(value: string) {
   return value.replace(/_/g, ' ')
 }
 
-function ReconciliationPanel({ reconciliation }: { reconciliation: CloudReconciliationSummary | null }) {
+function ReconciliationPanel({
+  reconciliation,
+  actionKey,
+  error,
+  message,
+  onAcknowledge,
+  onResolve,
+}: {
+  reconciliation: CloudReconciliationSummary | null
+  actionKey: string | null
+  error: string | null
+  message: string | null
+  onAcknowledge: (issue: CloudReconciliationIssue, notes: string) => void
+  onResolve: (issue: CloudReconciliationIssue, notes: string) => void
+}) {
   const issues = reconciliation?.issues ?? []
   const hasHighRisk = (reconciliation?.critical_issue_count ?? 0) > 0 || (reconciliation?.high_issue_count ?? 0) > 0
+  const [notesByIssue, setNotesByIssue] = useState<Record<string, string>>({})
 
   return (
     <div className="card p-6">
@@ -1270,6 +1336,25 @@ function ReconciliationPanel({ reconciliation }: { reconciliation: CloudReconcil
         <MiniStat label="Medium" value={reconciliation?.medium_issue_count ?? 0} tone="slate" />
       </div>
 
+      {(reconciliation?.acknowledged_issue_count || reconciliation?.resolved_issue_count) ? (
+        <div className="mb-4 rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-300">
+          Acknowledged: {reconciliation?.acknowledged_issue_count ?? 0} · Resolved workflow: {reconciliation?.resolved_issue_count ?? 0}
+        </div>
+      ) : null}
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+          {error}
+        </div>
+      )}
+
+      {message && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100">
+          <FiCheckCircle className="h-4 w-4" />
+          {message}
+        </div>
+      )}
+
       {issues.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
           No reconciliation issues in the current scope
@@ -1287,6 +1372,23 @@ function ReconciliationPanel({ reconciliation }: { reconciliation: CloudReconcil
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     Branch {issue.branch_id ?? '-'} · Product {issue.product_id ?? '-'} · Batch {issue.batch_id ?? '-'}
                   </p>
+                  {issue.acknowledgement_status && (
+                    <p className="mt-1 text-xs text-primary-700 dark:text-primary-300">
+                      Workflow: {issue.acknowledgement_status}
+                      {issue.acknowledged_by_user_id ? ` · User ${issue.acknowledged_by_user_id}` : ''}
+                      {issue.acknowledged_at ? ` · ${formatDateTime(issue.acknowledged_at)}` : ''}
+                    </p>
+                  )}
+                  {issue.acknowledgement_notes && (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Note: {issue.acknowledgement_notes}
+                    </p>
+                  )}
+                  {issue.resolution_notes && (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Resolution: {issue.resolution_notes}
+                    </p>
+                  )}
                 </div>
                 <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
                   issue.severity === 'critical'
@@ -1297,6 +1399,34 @@ function ReconciliationPanel({ reconciliation }: { reconciliation: CloudReconcil
                 }`}>
                   {issue.severity}
                 </span>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
+                <input
+                  className="input h-10"
+                  aria-label={`Reconciliation notes ${issue.issue_key}`}
+                  value={notesByIssue[issue.issue_key] ?? ''}
+                  onChange={(event) => setNotesByIssue({
+                    ...notesByIssue,
+                    [issue.issue_key]: event.target.value,
+                  })}
+                  disabled={actionKey === issue.issue_key}
+                />
+                <button
+                  type="button"
+                  onClick={() => onAcknowledge(issue, notesByIssue[issue.issue_key] ?? '')}
+                  disabled={actionKey === issue.issue_key}
+                  className="btn-secondary h-10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Acknowledge
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onResolve(issue, notesByIssue[issue.issue_key] ?? '')}
+                  disabled={actionKey === issue.issue_key}
+                  className="btn-primary h-10 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Resolve
+                </button>
               </div>
             </div>
           ))}

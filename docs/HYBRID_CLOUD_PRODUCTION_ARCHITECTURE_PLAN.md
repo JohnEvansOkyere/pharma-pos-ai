@@ -2079,4 +2079,29 @@ Current scope:
 
 Next foundation:
 
-- add cloud reconciliation acknowledgement and resolution workflow
+27. Cloud reconciliation acknowledgement and resolution workflow
+
+Status: implemented for generated reconciliation issues.
+
+Implemented:
+
+- added persisted `cloud_reconciliation_acknowledgements` workflow table keyed by tenant and deterministic issue key
+- reconciliation issues now include stable `issue_key` values derived from issue type and entity scope
+- reconciliation summaries now include acknowledgement and resolved-workflow counts
+- active reconciliation issues are annotated with acknowledgement status, notes, reviewer user id, and timestamps
+- added `POST /cloud-reports/reconciliation/acknowledge` for manager/admin acknowledgement with notes
+- added `POST /cloud-reports/reconciliation/resolve` for manager/admin workflow resolution notes
+- acknowledgement and resolution actions are tenant/branch scoped and write audit events
+- Cloud Dashboard reconciliation panel now supports notes, acknowledge, and resolve actions
+- backend regression coverage verifies issue keys, acknowledgement, resolution, unknown issue handling, and audit records
+- frontend regression coverage verifies dashboard acknowledgement calls and success feedback
+
+Current scope:
+
+- acknowledgement/resolution is workflow state; it does not mutate projected cloud stock or source branch data
+- active issues remain visible until the underlying projection inconsistency disappears
+- workflow state is keyed to generated issue scope, not to a persisted issue row
+
+Next foundation:
+
+- add controlled cloud reconciliation repair tooling for projection failures and stale snapshots

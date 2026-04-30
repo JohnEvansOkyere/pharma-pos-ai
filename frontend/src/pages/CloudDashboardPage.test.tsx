@@ -11,6 +11,8 @@ const apiMocks = vi.hoisted(() => ({
   getCloudLowStock: vi.fn(),
   getCloudExpiryRisk: vi.fn(),
   getCloudReconciliation: vi.fn(),
+  acknowledgeCloudReconciliationIssue: vi.fn(),
+  resolveCloudReconciliationIssue: vi.fn(),
   getAIWeeklyReports: vi.fn(),
   generateAIWeeklyReport: vi.fn(),
   reviewAIWeeklyReport: vi.fn(),
@@ -152,8 +154,11 @@ describe('CloudDashboardPage', () => {
       critical_issue_count: 1,
       high_issue_count: 1,
       medium_issue_count: 0,
+      acknowledged_issue_count: 0,
+      resolved_issue_count: 0,
       issues: [
         {
+          issue_key: 'issue-negative-stock',
           severity: 'critical',
           issue_type: 'negative_product_stock',
           branch_id: 1,
@@ -165,8 +170,49 @@ describe('CloudDashboardPage', () => {
           actual_quantity: -1,
           delta: null,
           message: 'Product snapshot total stock is negative.',
+          acknowledgement_status: null,
+          acknowledgement_notes: null,
+          acknowledged_by_user_id: null,
+          acknowledged_at: null,
+          resolved_by_user_id: null,
+          resolved_at: null,
+          resolution_notes: null,
         },
       ],
+    })
+    apiMocks.acknowledgeCloudReconciliationIssue.mockResolvedValue({
+      id: 201,
+      organization_id: 22,
+      branch_id: 1,
+      issue_key: 'issue-negative-stock',
+      issue_type: 'negative_product_stock',
+      severity: 'critical',
+      status: 'acknowledged',
+      notes: 'Branch manager will count this product.',
+      acknowledged_by_user_id: 7,
+      acknowledged_at: '2026-05-03T18:20:00Z',
+      resolved_by_user_id: null,
+      resolved_at: null,
+      resolution_notes: null,
+      created_at: '2026-05-03T18:20:00Z',
+      updated_at: '2026-05-03T18:20:00Z',
+    })
+    apiMocks.resolveCloudReconciliationIssue.mockResolvedValue({
+      id: 201,
+      organization_id: 22,
+      branch_id: 1,
+      issue_key: 'issue-negative-stock',
+      issue_type: 'negative_product_stock',
+      severity: 'critical',
+      status: 'resolved',
+      notes: 'Branch manager will count this product.',
+      acknowledged_by_user_id: 7,
+      acknowledged_at: '2026-05-03T18:20:00Z',
+      resolved_by_user_id: 7,
+      resolved_at: '2026-05-03T18:30:00Z',
+      resolution_notes: 'Count correction queued.',
+      created_at: '2026-05-03T18:20:00Z',
+      updated_at: '2026-05-03T18:30:00Z',
     })
     apiMocks.getAIWeeklyReports.mockResolvedValue([
       {
@@ -445,6 +491,28 @@ describe('CloudDashboardPage', () => {
     await waitFor(() => {
       expect(apiMocks.deliverAIWeeklyReport).toHaveBeenCalledWith(55, {})
     })
+  })
+
+  it('acknowledges cloud reconciliation issues from the dashboard', async () => {
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    expect(await screen.findByText(/negative product stock/i)).toBeInTheDocument()
+    await user.type(
+      screen.getByLabelText(/reconciliation notes issue-negative-stock/i),
+      'Branch manager will count this product.'
+    )
+    await user.click(screen.getByRole('button', { name: /^acknowledge$/i }))
+
+    await waitFor(() => {
+      expect(apiMocks.acknowledgeCloudReconciliationIssue).toHaveBeenCalledWith({
+        organization_id: 22,
+        branch_id: 1,
+        issue_key: 'issue-negative-stock',
+        notes: 'Branch manager will count this product.',
+      })
+    })
+    expect(await screen.findByText(/reconciliation issue acknowledged/i)).toBeInTheDocument()
   })
 
   it('marks a weekly report reviewed with manager notes', async () => {

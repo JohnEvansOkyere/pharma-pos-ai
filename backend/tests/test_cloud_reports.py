@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.api.dependencies.auth import require_organization_access
 from app.api.endpoints.cloud_reports import (
+    acknowledge_cloud_reconciliation_issue,
     get_cloud_branch_sales,
     get_cloud_expiry_risk,
     get_cloud_inventory_movement_summary,
@@ -16,8 +17,10 @@ from app.api.endpoints.cloud_reports import (
     get_cloud_sales_summary,
     get_cloud_stock_risk_summary,
     get_cloud_sync_health,
+    resolve_cloud_reconciliation_issue,
 )
 from app.models import Branch, Device, Organization
+from app.models.activity_log import ActivityLog
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -29,6 +32,7 @@ from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
 from app.core.security import get_password_hash
+from app.schemas.cloud_reports import CloudReconciliationIssueActionRequest
 
 
 def _tenant(db_session, *, name: str, branch_code: str):
@@ -85,6 +89,36 @@ def _ingested(db_session, organization, branch, device, *, event_id: str, sequen
     db_session.add(event)
     db_session.commit()
     return event
+
+
+def _seed_reconciliation_issue(db_session):
+    org, branch, device = _tenant(db_session, name="Reconcile Workflow Org", branch_code="RWK")
+    event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="99999999-9999-9999-9999-999999999991",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_CREATED,
+    )
+    db_session.add(
+        CloudProductSnapshot(
+            organization_id=org.id,
+            branch_id=branch.id,
+            local_product_id=10,
+            name="Workflow Mismatch Tabs",
+            sku="WMM-10",
+            total_stock=-2,
+            low_stock_threshold=2,
+            is_active=True,
+            last_source_event_id=event.id,
+            payload={},
+        )
+    )
+    db_session.commit()
+    user = _report_user(db_session, org.id, branch_id=branch.id, username="reconcile-workflow-user")
+    return org, branch, user
 
 
 def test_cloud_sales_summary_filters_by_organization_and_branch(db_session):
@@ -546,3 +580,87 @@ def test_cloud_reconciliation_flags_projection_and_snapshot_inconsistencies(db_s
     assert "negative_batch_quantity" in issue_types
     assert "orphan_batch_snapshot" in issue_types
     assert "projection_failures_present" in issue_types
+    assert all(issue.issue_key for issue in summary.issues)
+
+
+def test_manager_can_acknowledge_and_resolve_cloud_reconciliation_issue(db_session):
+    org, branch, user = _seed_reconciliation_issue(db_session)
+    summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=user,
+    )
+    issue = summary.issues[0]
+
+    acknowledged = acknowledge_cloud_reconciliation_issue(
+        CloudReconciliationIssueActionRequest(
+            organization_id=org.id,
+            branch_id=branch.id,
+            issue_key=issue.issue_key,
+            notes="Inventory count scheduled before trading.",
+        ),
+        db=db_session,
+        current_user=user,
+    )
+    acknowledged_summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=user,
+    )
+    acknowledged_issue = next(item for item in acknowledged_summary.issues if item.issue_key == issue.issue_key)
+
+    assert acknowledged.status == "acknowledged"
+    assert acknowledged.issue_key == issue.issue_key
+    assert acknowledged_issue.acknowledgement_status == "acknowledged"
+    assert acknowledged_issue.acknowledged_by_user_id == user.id
+    assert acknowledged_issue.acknowledgement_notes == "Inventory count scheduled before trading."
+
+    resolved = resolve_cloud_reconciliation_issue(
+        CloudReconciliationIssueActionRequest(
+            organization_id=org.id,
+            branch_id=branch.id,
+            issue_key=issue.issue_key,
+            notes="Branch manager confirmed correction plan.",
+        ),
+        db=db_session,
+        current_user=user,
+    )
+    resolved_summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=user,
+    )
+    resolved_issue = next(item for item in resolved_summary.issues if item.issue_key == issue.issue_key)
+    audit_actions = {
+        entry.action
+        for entry in db_session.query(ActivityLog)
+        .filter(ActivityLog.entity_type == "cloud_reconciliation_issue")
+        .all()
+    }
+
+    assert resolved.status == "resolved"
+    assert resolved_issue.acknowledgement_status == "resolved"
+    assert resolved_issue.resolved_by_user_id == user.id
+    assert resolved_issue.resolution_notes == "Branch manager confirmed correction plan."
+    assert "acknowledge_cloud_reconciliation_issue" in audit_actions
+    assert "resolve_cloud_reconciliation_issue" in audit_actions
+
+
+def test_acknowledging_unknown_cloud_reconciliation_issue_returns_404(db_session):
+    org, branch, user = _seed_reconciliation_issue(db_session)
+
+    with pytest.raises(HTTPException) as exc:
+        acknowledge_cloud_reconciliation_issue(
+            CloudReconciliationIssueActionRequest(
+                organization_id=org.id,
+                branch_id=branch.id,
+                issue_key="missing",
+            ),
+            db=db_session,
+            current_user=user,
+        )
+
+    assert exc.value.status_code == 404

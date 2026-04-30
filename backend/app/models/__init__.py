@@ -25,6 +25,7 @@ from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
     CloudProductSnapshot,
+    CloudReconciliationAcknowledgement,
     CloudSaleFact,
 )
 
@@ -57,4 +58,5 @@ __all__ = [
     "CloudInventoryMovementFact",
     "CloudProductSnapshot",
     "CloudBatchSnapshot",
+    "CloudReconciliationAcknowledgement",
 ]

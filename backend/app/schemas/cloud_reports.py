@@ -81,6 +81,7 @@ class CloudExpiryRiskItem(BaseModel):
 
 
 class CloudReconciliationIssue(BaseModel):
+    issue_key: str
     severity: str
     issue_type: str
     branch_id: Optional[int] = None
@@ -92,6 +93,13 @@ class CloudReconciliationIssue(BaseModel):
     actual_quantity: Optional[int] = None
     delta: Optional[int] = None
     message: str
+    acknowledgement_status: Optional[str] = None
+    acknowledgement_notes: Optional[str] = None
+    acknowledged_by_user_id: Optional[int] = None
+    acknowledged_at: Optional[datetime] = None
+    resolved_by_user_id: Optional[int] = None
+    resolved_at: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
 
 
 class CloudReconciliationSummary(BaseModel):
@@ -105,4 +113,31 @@ class CloudReconciliationSummary(BaseModel):
     critical_issue_count: int
     high_issue_count: int
     medium_issue_count: int
+    acknowledged_issue_count: int = 0
+    resolved_issue_count: int = 0
     issues: List[CloudReconciliationIssue]
+
+
+class CloudReconciliationIssueActionRequest(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    issue_key: str
+    notes: Optional[str] = None
+
+
+class CloudReconciliationAcknowledgementResponse(BaseModel):
+    id: int
+    organization_id: int
+    branch_id: Optional[int] = None
+    issue_key: str
+    issue_type: str
+    severity: str
+    status: str
+    notes: Optional[str] = None
+    acknowledged_by_user_id: Optional[int] = None
+    acknowledged_at: Optional[datetime] = None
+    resolved_by_user_id: Optional[int] = None
+    resolved_at: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
