@@ -761,7 +761,7 @@ export default function CloudDashboardPage() {
 
   const updateReconciliationIssue = async (
     issue: CloudReconciliationIssue,
-    action: 'acknowledge' | 'resolve',
+    action: 'acknowledge' | 'resolve' | 'repair',
     notes: string,
   ) => {
     if (!hasValidOrganization || reconciliationActionKey) return
@@ -778,9 +778,16 @@ export default function CloudDashboardPage() {
       if (action === 'acknowledge') {
         await api.acknowledgeCloudReconciliationIssue(payload)
         setReconciliationActionMessage('Reconciliation issue acknowledged.')
-      } else {
+      } else if (action === 'resolve') {
         await api.resolveCloudReconciliationIssue(payload)
         setReconciliationActionMessage('Reconciliation issue marked resolved.')
+      } else {
+        await api.repairCloudReconciliationIssue({
+          ...payload,
+          repair_type: repairTypeForIssue(issue),
+          limit: 100,
+        })
+        setReconciliationActionMessage('Reconciliation repair completed.')
       }
       await loadCloudReports()
     } catch (error) {
@@ -1054,8 +1061,10 @@ export default function CloudDashboardPage() {
           actionKey={reconciliationActionKey}
           error={reconciliationActionError}
           message={reconciliationActionMessage}
+          canRunRepairs={isAdmin}
           onAcknowledge={(issue, notes) => updateReconciliationIssue(issue, 'acknowledge', notes)}
           onResolve={(issue, notes) => updateReconciliationIssue(issue, 'resolve', notes)}
+          onRepair={(issue, notes) => updateReconciliationIssue(issue, 'repair', notes)}
         />
         <WeeklyReportsPanel
           reports={weeklyReports}
@@ -1290,20 +1299,33 @@ function formatIssueType(value: string) {
   return value.replace(/_/g, ' ')
 }
 
+function repairTypeForIssue(issue: CloudReconciliationIssue) {
+  if (issue.issue_type === 'projection_failures_present') return 'retry_failed_projections'
+  return 'rebuild_product_stock_total'
+}
+
+function canRepairIssue(issue: CloudReconciliationIssue) {
+  return issue.issue_type === 'projection_failures_present' || issue.issue_type === 'product_batch_quantity_mismatch'
+}
+
 function ReconciliationPanel({
   reconciliation,
   actionKey,
   error,
   message,
+  canRunRepairs,
   onAcknowledge,
   onResolve,
+  onRepair,
 }: {
   reconciliation: CloudReconciliationSummary | null
   actionKey: string | null
   error: string | null
   message: string | null
+  canRunRepairs: boolean
   onAcknowledge: (issue: CloudReconciliationIssue, notes: string) => void
   onResolve: (issue: CloudReconciliationIssue, notes: string) => void
+  onRepair: (issue: CloudReconciliationIssue, notes: string) => void
 }) {
   const issues = reconciliation?.issues ?? []
   const hasHighRisk = (reconciliation?.critical_issue_count ?? 0) > 0 || (reconciliation?.high_issue_count ?? 0) > 0
@@ -1400,7 +1422,7 @@ function ReconciliationPanel({
                   {issue.severity}
                 </span>
               </div>
-              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto]">
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto_auto]">
                 <input
                   className="input h-10"
                   aria-label={`Reconciliation notes ${issue.issue_key}`}
@@ -1427,6 +1449,16 @@ function ReconciliationPanel({
                 >
                   Resolve
                 </button>
+                {canRunRepairs && canRepairIssue(issue) && (
+                  <button
+                    type="button"
+                    onClick={() => onRepair(issue, notesByIssue[issue.issue_key] ?? '')}
+                    disabled={actionKey === issue.issue_key}
+                    className="btn-secondary h-10 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Repair
+                  </button>
+                )}
               </div>
             </div>
           ))}

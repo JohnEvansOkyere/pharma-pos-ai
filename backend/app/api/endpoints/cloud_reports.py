@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_organization_access, require_view_reports
+from app.api.dependencies import require_admin, require_organization_access, require_view_reports
 from app.db.base import get_db
 from app.models.user import User
 from app.models.cloud_projection import (
@@ -25,6 +25,8 @@ from app.schemas.cloud_reports import (
     CloudLowStockItem,
     CloudReconciliationAcknowledgementResponse,
     CloudReconciliationIssueActionRequest,
+    CloudReconciliationRepairRequest,
+    CloudReconciliationRepairResponse,
     CloudReconciliationSummary,
     CloudSalesSummary,
     CloudStockRiskSummary,
@@ -382,6 +384,34 @@ def resolve_cloud_reconciliation_issue(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return _acknowledgement_response(acknowledgement)
+
+
+@router.post("/reconciliation/repair", response_model=CloudReconciliationRepairResponse)
+def repair_cloud_reconciliation_issue(
+    payload: CloudReconciliationRepairRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    require_organization_access(
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+        current_user=current_user,
+    )
+    effective_branch_id = _resolve_branch_scope(current_user, payload.branch_id)
+    try:
+        result = CloudReconciliationService.repair_issue(
+            db,
+            organization_id=payload.organization_id,
+            branch_id=effective_branch_id,
+            issue_key=payload.issue_key,
+            repair_type=payload.repair_type,
+            notes=payload.notes,
+            limit=payload.limit,
+            current_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    return CloudReconciliationRepairResponse(**result)
 
 
 def _acknowledgement_response(acknowledgement) -> CloudReconciliationAcknowledgementResponse:

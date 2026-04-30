@@ -17,6 +17,7 @@ from app.api.endpoints.cloud_reports import (
     get_cloud_sales_summary,
     get_cloud_stock_risk_summary,
     get_cloud_sync_health,
+    repair_cloud_reconciliation_issue,
     resolve_cloud_reconciliation_issue,
 )
 from app.models import Branch, Device, Organization
@@ -32,7 +33,7 @@ from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
 from app.core.security import get_password_hash
-from app.schemas.cloud_reports import CloudReconciliationIssueActionRequest
+from app.schemas.cloud_reports import CloudReconciliationIssueActionRequest, CloudReconciliationRepairRequest
 
 
 def _tenant(db_session, *, name: str, branch_code: str):
@@ -54,13 +55,20 @@ def _tenant(db_session, *, name: str, branch_code: str):
     return organization, branch, device
 
 
-def _report_user(db_session, organization_id: int, *, branch_id=None, username: str = "report-user"):
+def _report_user(
+    db_session,
+    organization_id: int,
+    *,
+    branch_id=None,
+    username: str = "report-user",
+    role: UserRole = UserRole.MANAGER,
+):
     user = User(
         username=username,
         email=f"{username}@example.com",
         hashed_password=get_password_hash("report-secret"),
         full_name="Report User",
-        role=UserRole.MANAGER,
+        role=role,
         permissions=[UserPermission.VIEW_REPORTS.value],
         organization_id=organization_id,
         branch_id=branch_id,
@@ -664,3 +672,140 @@ def test_acknowledging_unknown_cloud_reconciliation_issue_returns_404(db_session
         )
 
     assert exc.value.status_code == 404
+
+
+def test_admin_can_repair_product_stock_total_mismatch(db_session):
+    org, branch, device = _tenant(db_session, name="Repair Mismatch Org", branch_code="RMO")
+    event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="99999999-9999-9999-9999-999999999992",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_CREATED,
+    )
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=44,
+                name="Repair Stock Tabs",
+                sku="RST-44",
+                total_stock=9,
+                low_stock_threshold=2,
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudBatchSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=44,
+                local_batch_id=440,
+                batch_number="RST-440",
+                quantity=4,
+                expiry_date=date.today() + timedelta(days=100),
+                is_quarantined=False,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+        ]
+    )
+    db_session.commit()
+    user = _report_user(
+        db_session,
+        org.id,
+        branch_id=branch.id,
+        username="repair-mismatch-user",
+        role=UserRole.ADMIN,
+    )
+    summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=user,
+    )
+    issue = next(item for item in summary.issues if item.issue_type == "product_batch_quantity_mismatch")
+
+    result = repair_cloud_reconciliation_issue(
+        CloudReconciliationRepairRequest(
+            organization_id=org.id,
+            branch_id=branch.id,
+            issue_key=issue.issue_key,
+            repair_type="rebuild_product_stock_total",
+            notes="Rebuild cloud read model from batches.",
+        ),
+        db=db_session,
+        current_user=user,
+    )
+    product = db_session.query(CloudProductSnapshot).filter_by(local_product_id=44).one()
+    repaired_summary = get_cloud_reconciliation(
+        organization_id=org.id,
+        limit=50,
+        db=db_session,
+        current_user=user,
+    )
+    audit_entry = (
+        db_session.query(ActivityLog)
+        .filter(ActivityLog.action == "repair_cloud_reconciliation_issue")
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+
+    assert result.repaired == 1
+    assert product.total_stock == 4
+    assert "product_batch_quantity_mismatch" not in {item.issue_type for item in repaired_summary.issues}
+    assert audit_entry is not None
+    assert audit_entry.extra_data["repair_type"] == "rebuild_product_stock_total"
+
+
+def test_admin_can_retry_failed_projection_repair(db_session):
+    org, branch, device = _tenant(db_session, name="Repair Projection Org", branch_code="RPO")
+    event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="99999999-9999-9999-9999-999999999993",
+        sequence=1,
+        event_type=SyncEventType.PRODUCT_CREATED,
+    )
+    event.projection_error = "temporary projection failure"
+    event.payload = {
+        "product_id": 72,
+        "name": "Projection Repair Tabs",
+        "sku": "PRT-72",
+        "total_stock": 6,
+        "low_stock_threshold": 2,
+        "is_active": True,
+    }
+    db_session.commit()
+    user = _report_user(
+        db_session,
+        org.id,
+        branch_id=branch.id,
+        username="repair-projection-user",
+        role=UserRole.ADMIN,
+    )
+
+    result = repair_cloud_reconciliation_issue(
+        CloudReconciliationRepairRequest(
+            organization_id=org.id,
+            branch_id=branch.id,
+            repair_type="retry_failed_projections",
+            notes="Retry after projector fix.",
+            limit=10,
+        ),
+        db=db_session,
+        current_user=user,
+    )
+    db_session.refresh(event)
+    product = db_session.query(CloudProductSnapshot).filter_by(local_product_id=72).one()
+
+    assert result.attempted == 1
+    assert result.repaired == 1
+    assert event.projected_at is not None
+    assert event.projection_error is None
+    assert product.name == "Projection Repair Tabs"

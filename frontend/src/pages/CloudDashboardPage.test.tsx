@@ -13,6 +13,7 @@ const apiMocks = vi.hoisted(() => ({
   getCloudReconciliation: vi.fn(),
   acknowledgeCloudReconciliationIssue: vi.fn(),
   resolveCloudReconciliationIssue: vi.fn(),
+  repairCloudReconciliationIssue: vi.fn(),
   getAIWeeklyReports: vi.fn(),
   generateAIWeeklyReport: vi.fn(),
   reviewAIWeeklyReport: vi.fn(),
@@ -213,6 +214,18 @@ describe('CloudDashboardPage', () => {
       resolution_notes: 'Count correction queued.',
       created_at: '2026-05-03T18:20:00Z',
       updated_at: '2026-05-03T18:30:00Z',
+    })
+    apiMocks.repairCloudReconciliationIssue.mockResolvedValue({
+      organization_id: 22,
+      branch_id: 1,
+      repair_type: 'rebuild_product_stock_total',
+      issue_key: 'issue-negative-stock',
+      attempted: 1,
+      repaired: 1,
+      failed: 0,
+      skipped: 0,
+      message: 'Product stock total rebuilt from batch snapshots',
+      details: [],
     })
     apiMocks.getAIWeeklyReports.mockResolvedValue([
       {
@@ -513,6 +526,71 @@ describe('CloudDashboardPage', () => {
       })
     })
     expect(await screen.findByText(/reconciliation issue acknowledged/i)).toBeInTheDocument()
+  })
+
+  it('runs controlled reconciliation repairs from the dashboard', async () => {
+    authMock.user = {
+      ...authMock.user,
+      role: 'admin',
+    }
+    apiMocks.getCloudReconciliation.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      product_snapshot_count: 1,
+      batch_snapshot_count: 1,
+      movement_fact_count: 0,
+      projection_failed_count: 0,
+      issue_count: 1,
+      critical_issue_count: 0,
+      high_issue_count: 1,
+      medium_issue_count: 0,
+      acknowledged_issue_count: 0,
+      resolved_issue_count: 0,
+      issues: [
+        {
+          issue_key: 'issue-stock-mismatch',
+          severity: 'high',
+          issue_type: 'product_batch_quantity_mismatch',
+          branch_id: 1,
+          product_id: 8,
+          batch_id: null,
+          product_name: 'Mismatch Tablets',
+          batch_number: null,
+          expected_quantity: 4,
+          actual_quantity: 9,
+          delta: 5,
+          message: 'Product total stock does not equal the sum of non-quarantined batch quantities.',
+          acknowledgement_status: null,
+          acknowledgement_notes: null,
+          acknowledged_by_user_id: null,
+          acknowledged_at: null,
+          resolved_by_user_id: null,
+          resolved_at: null,
+          resolution_notes: null,
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    render(<CloudDashboardPage />)
+
+    expect(await screen.findByText(/product batch quantity mismatch/i)).toBeInTheDocument()
+    await user.type(
+      screen.getByLabelText(/reconciliation notes issue-stock-mismatch/i),
+      'Repair cloud total from batches.'
+    )
+    await user.click(screen.getByRole('button', { name: /^repair$/i }))
+
+    await waitFor(() => {
+      expect(apiMocks.repairCloudReconciliationIssue).toHaveBeenCalledWith({
+        organization_id: 22,
+        branch_id: 1,
+        issue_key: 'issue-stock-mismatch',
+        notes: 'Repair cloud total from batches.',
+        repair_type: 'rebuild_product_stock_total',
+        limit: 100,
+      })
+    })
+    expect(await screen.findByText(/reconciliation repair completed/i)).toBeInTheDocument()
   })
 
   it('marks a weekly report reviewed with manager notes', async () => {

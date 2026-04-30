@@ -4,7 +4,7 @@ Schemas for cloud reporting endpoints.
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CloudSalesSummary(BaseModel):
@@ -123,6 +123,28 @@ class CloudReconciliationIssueActionRequest(BaseModel):
     branch_id: Optional[int] = None
     issue_key: str
     notes: Optional[str] = None
+
+
+class CloudReconciliationRepairRequest(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    issue_key: Optional[str] = None
+    repair_type: str
+    notes: Optional[str] = None
+    limit: int = 100
+
+
+class CloudReconciliationRepairResponse(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    repair_type: str
+    issue_key: Optional[str] = None
+    attempted: int
+    repaired: int
+    failed: int
+    skipped: int
+    message: str
+    details: List[dict] = Field(default_factory=list)
 
 
 class CloudReconciliationAcknowledgementResponse(BaseModel):

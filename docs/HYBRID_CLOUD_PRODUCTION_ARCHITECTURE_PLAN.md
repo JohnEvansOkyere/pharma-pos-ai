@@ -2104,4 +2104,28 @@ Current scope:
 
 Next foundation:
 
-- add controlled cloud reconciliation repair tooling for projection failures and stale snapshots
+28. Controlled cloud reconciliation repair tooling
+
+Status: implemented for failed projection retry and product stock-total rebuild.
+
+Implemented:
+
+- added `POST /cloud-reports/reconciliation/repair`
+- repair type `retry_failed_projections` retries failed ingested sync-event projection in tenant/branch scope
+- repair type `rebuild_product_stock_total` rebuilds a stale product snapshot total from non-quarantined batch snapshots for an active mismatch issue
+- repair actions require admin role and remain branch/tenant scoped
+- repair actions write `repair_cloud_reconciliation_issue` audit events with repair type, issue key, counts, and note presence
+- Cloud Dashboard shows a Repair action only for repairable reconciliation issue types
+- backend regression coverage verifies product-total repair, projection retry repair, and audit logging
+- frontend regression coverage verifies dashboard repair calls and success feedback
+
+Current scope:
+
+- repairs affect cloud reporting read models only; source branch data is not changed
+- product stock-total rebuild is limited to `product_batch_quantity_mismatch`
+- projection retry uses the existing projection service and does not bypass idempotency checks
+- orphan batches, negative batch quantities, and clinical/dispensing data issues are still manual investigation items
+
+Next foundation:
+
+- add tamper-evident audit log chaining for critical regulated events

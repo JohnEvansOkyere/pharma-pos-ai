@@ -362,6 +362,11 @@ class ApiClient {
     return response.data
   }
 
+  async repairCloudReconciliationIssue(payload: any) {
+    const response = await this.client.post('/cloud-reports/reconciliation/repair', payload)
+    return response.data
+  }
+
   async getAIWeeklyReports(params: any) {
     const response = await this.client.get('/ai-manager/weekly-reports', {
       params,

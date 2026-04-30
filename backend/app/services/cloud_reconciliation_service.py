@@ -18,6 +18,7 @@ from app.models.cloud_projection import (
     CloudReconciliationAcknowledgement,
 )
 from app.models.sync_ingestion import IngestedSyncEvent
+from app.services.cloud_projection_service import CloudProjectionService
 from app.services.audit_service import AuditService
 
 
@@ -305,6 +306,75 @@ class CloudReconciliationService:
         return acknowledgement
 
     @staticmethod
+    def repair_issue(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        issue_key: Optional[str],
+        repair_type: str,
+        notes: Optional[str],
+        limit: int,
+        current_user_id: int,
+    ) -> Dict[str, Any]:
+        normalized_type = repair_type.strip().lower()
+        if normalized_type == "retry_failed_projections":
+            result = CloudReconciliationService._retry_failed_projections(
+                db,
+                organization_id=organization_id,
+                branch_id=branch_id,
+                limit=limit,
+            )
+        elif normalized_type == "rebuild_product_stock_total":
+            if not issue_key:
+                raise ValueError("issue_key is required for product stock total rebuild")
+            issue = CloudReconciliationService.find_active_issue(
+                db,
+                organization_id=organization_id,
+                branch_id=branch_id,
+                issue_key=issue_key,
+            )
+            if issue is None:
+                raise ValueError("Active reconciliation issue not found")
+            if issue["issue_type"] != "product_batch_quantity_mismatch":
+                raise ValueError("Only product_batch_quantity_mismatch can rebuild product stock total")
+            result = CloudReconciliationService._rebuild_product_stock_total(
+                db,
+                organization_id=organization_id,
+                issue=issue,
+            )
+        else:
+            raise ValueError("Unsupported reconciliation repair type")
+
+        AuditService.log(
+            db,
+            action="repair_cloud_reconciliation_issue",
+            user_id=current_user_id,
+            organization_id=organization_id,
+            branch_id=branch_id,
+            entity_type="cloud_reconciliation_repair",
+            entity_id=None,
+            description="Ran controlled cloud reconciliation repair",
+            extra_data={
+                "repair_type": normalized_type,
+                "issue_key": issue_key,
+                "attempted": result["attempted"],
+                "repaired": result["repaired"],
+                "failed": result["failed"],
+                "skipped": result["skipped"],
+                "notes_present": bool(notes and notes.strip()),
+            },
+        )
+        db.commit()
+        return {
+            "organization_id": organization_id,
+            "branch_id": branch_id,
+            "repair_type": normalized_type,
+            "issue_key": issue_key,
+            **result,
+        }
+
+    @staticmethod
     def find_active_issue(
         db: Session,
         *,
@@ -319,6 +389,114 @@ class CloudReconciliationService:
             limit=500,
         )
         return next((issue for issue in result["issues"] if issue["issue_key"] == issue_key), None)
+
+    @staticmethod
+    def _retry_failed_projections(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        limit: int,
+    ) -> Dict[str, Any]:
+        query = db.query(IngestedSyncEvent).filter(
+            IngestedSyncEvent.organization_id == organization_id,
+            IngestedSyncEvent.projection_error.is_not(None),
+        )
+        if branch_id is not None:
+            query = query.filter(IngestedSyncEvent.branch_id == branch_id)
+        events = query.order_by(IngestedSyncEvent.received_at.asc(), IngestedSyncEvent.id.asc()).limit(limit).all()
+
+        attempted = repaired = failed = skipped = 0
+        details: List[dict] = []
+        for event in events:
+            attempted += 1
+            event_id = event.id
+            try:
+                event.projected_at = None
+                was_projected = CloudProjectionService.project_event(db, event)
+                event.projected_at = datetime.now(timezone.utc)
+                event.projection_error = None
+                if was_projected:
+                    repaired += 1
+                else:
+                    skipped += 1
+                details.append({"event_id": event.event_id, "status": "projected" if was_projected else "skipped"})
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                failed += 1
+                failed_event = db.query(IngestedSyncEvent).filter(IngestedSyncEvent.id == event_id).one()
+                failed_event.projection_error = str(exc)
+                details.append({"event_id": failed_event.event_id, "status": "failed", "error": str(exc)})
+                db.commit()
+
+        return {
+            "attempted": attempted,
+            "repaired": repaired,
+            "failed": failed,
+            "skipped": skipped,
+            "message": "Failed projection retry complete",
+            "details": details,
+        }
+
+    @staticmethod
+    def _rebuild_product_stock_total(
+        db: Session,
+        *,
+        organization_id: int,
+        issue: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        branch_id = issue.get("branch_id")
+        product_id = issue.get("product_id")
+        if branch_id is None or product_id is None:
+            return {
+                "attempted": 1,
+                "repaired": 0,
+                "failed": 0,
+                "skipped": 1,
+                "message": "Issue is missing product scope",
+                "details": [],
+            }
+
+        product = (
+            db.query(CloudProductSnapshot)
+            .filter(
+                CloudProductSnapshot.organization_id == organization_id,
+                CloudProductSnapshot.branch_id == branch_id,
+                CloudProductSnapshot.local_product_id == product_id,
+            )
+            .first()
+        )
+        if product is None:
+            return {
+                "attempted": 1,
+                "repaired": 0,
+                "failed": 0,
+                "skipped": 1,
+                "message": "Product snapshot no longer exists",
+                "details": [],
+            }
+
+        expected_quantity = int(issue.get("expected_quantity") or 0)
+        old_quantity = product.total_stock
+        product.total_stock = expected_quantity
+        product.updated_at = datetime.now(timezone.utc)
+        db.flush()
+        return {
+            "attempted": 1,
+            "repaired": 1,
+            "failed": 0,
+            "skipped": 0,
+            "message": "Product stock total rebuilt from batch snapshots",
+            "details": [
+                {
+                    "branch_id": branch_id,
+                    "product_id": product_id,
+                    "old_total_stock": old_quantity,
+                    "new_total_stock": expected_quantity,
+                }
+            ],
+        }
 
     @staticmethod
     def issue_key(issue: Dict[str, Any]) -> str:
