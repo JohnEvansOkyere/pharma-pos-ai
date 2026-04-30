@@ -369,6 +369,13 @@ class ApiClient {
     return response.data
   }
 
+  async getAIWeeklyReportDeliveries(reportId: number, params?: any) {
+    const response = await this.client.get(`/ai-manager/weekly-reports/${reportId}/deliveries`, {
+      params,
+    })
+    return response.data
+  }
+
   async getAIWeeklyReportDeliverySetting(params: any) {
     const response = await this.client.get('/ai-manager/weekly-report-delivery-settings', {
       params,

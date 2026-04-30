@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
   getAIWeeklyReports: vi.fn(),
   generateAIWeeklyReport: vi.fn(),
   deliverAIWeeklyReport: vi.fn(),
+  getAIWeeklyReportDeliveries: vi.fn(),
   getAIWeeklyReportDeliverySetting: vi.fn(),
   updateAIWeeklyReportDeliverySetting: vi.fn(),
   chatWithAIManager: vi.fn(),
@@ -238,6 +239,21 @@ describe('CloudDashboardPage', () => {
         created_at: '2026-05-03T19:05:00Z',
       },
     ])
+    apiMocks.getAIWeeklyReportDeliveries.mockResolvedValue([
+      {
+        id: 88,
+        report_id: 55,
+        organization_id: 22,
+        branch_id: null,
+        channel: 'telegram',
+        recipient: '12345',
+        status: 'skipped',
+        attempt_count: 1,
+        error_message: 'Telegram weekly report delivery is disabled for this tenant scope.',
+        sent_at: null,
+        created_at: '2026-05-03T19:01:00Z',
+      },
+    ])
     apiMocks.getAIWeeklyReportDeliverySetting.mockResolvedValue({
       id: 10,
       organization_id: 22,
@@ -324,6 +340,9 @@ describe('CloudDashboardPage', () => {
       expect(apiMocks.getAIWeeklyReports).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, limit: 5 })
       )
+      expect(apiMocks.getAIWeeklyReportDeliveries).toHaveBeenCalledWith(55, {
+        limit: 20,
+      })
     })
   })
 
@@ -341,11 +360,14 @@ describe('CloudDashboardPage', () => {
     })
   })
 
-  it('delivers a saved weekly manager report and shows delivery status', async () => {
+  it('loads and updates persisted weekly report delivery history', async () => {
     const user = userEvent.setup()
     render(<CloudDashboardPage />)
 
     await screen.findByText(/weekly ai reports/i)
+    expect(await screen.findByText(/telegram · 12345/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^skipped$/i)).toBeInTheDocument()
+
     await user.click(screen.getByRole('button', { name: /^deliver$/i }))
 
     expect(await screen.findByText(/email · owner@example.com/i)).toBeInTheDocument()

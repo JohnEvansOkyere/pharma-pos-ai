@@ -304,7 +304,8 @@ export default function CloudDashboardPage() {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false)
   const [reportError, setReportError] = useState<string | null>(null)
   const [isDeliveringReport, setIsDeliveringReport] = useState(false)
-  const [deliveryResults, setDeliveryResults] = useState<AIWeeklyReportDelivery[]>([])
+  const [deliveryAttempts, setDeliveryAttempts] = useState<AIWeeklyReportDelivery[]>([])
+  const [deliveryHistoryState, setDeliveryHistoryState] = useState<LoadState>('idle')
   const [deliveryError, setDeliveryError] = useState<string | null>(null)
   const [deliverySettings, setDeliverySettings] = useState<AIWeeklyReportDeliverySetting | null>(null)
   const [deliveryForm, setDeliveryForm] = useState<DeliverySettingsFormState>(emptyDeliverySettingsForm)
@@ -331,6 +332,7 @@ export default function CloudDashboardPage() {
     if (user?.branch_id != null) ids.add(user.branch_id)
     return Array.from(ids).sort((a, b) => a - b)
   }, [branchSales, user?.branch_id])
+  const selectedReport = weeklyReports.find((report) => report.id === selectedReportId) ?? weeklyReports[0] ?? null
 
   useEffect(() => {
     if (defaultOrganizationId) {
@@ -362,6 +364,16 @@ export default function CloudDashboardPage() {
 
     loadDeliverySettings()
   }, [isAdmin, organizationInput, selectedBranchId])
+
+  useEffect(() => {
+    if (!selectedReport?.id) {
+      setDeliveryAttempts([])
+      setDeliveryHistoryState('idle')
+      return
+    }
+
+    loadReportDeliveries(selectedReport.id)
+  }, [selectedReport?.id])
 
   const loadCloudReports = async () => {
     setLoadState('loading')
@@ -496,7 +508,6 @@ export default function CloudDashboardPage() {
     revenue: row.total_revenue,
     sales: row.sales_count,
   }))
-  const selectedReport = weeklyReports.find((report) => report.id === selectedReportId) ?? weeklyReports[0] ?? null
   const hasCriticalReconciliation =
     (reconciliationSummary?.critical_issue_count ?? 0) > 0 || (reconciliationSummary?.high_issue_count ?? 0) > 0
 
@@ -522,14 +533,32 @@ export default function CloudDashboardPage() {
     if (!selectedReport || isDeliveringReport) return
     setIsDeliveringReport(true)
     setDeliveryError(null)
-    setDeliveryResults([])
     try {
       const deliveries: AIWeeklyReportDelivery[] = await api.deliverAIWeeklyReport(selectedReport.id, {})
-      setDeliveryResults(deliveries)
+      setDeliveryAttempts((current) => [
+        ...deliveries,
+        ...current.filter((existing) => !deliveries.some((delivery) => delivery.id === existing.id)),
+      ].slice(0, 20))
     } catch (error) {
       setDeliveryError('Weekly report delivery failed.')
     } finally {
       setIsDeliveringReport(false)
+    }
+  }
+
+  const loadReportDeliveries = async (reportId: number) => {
+    setDeliveryHistoryState('loading')
+    setDeliveryError(null)
+    try {
+      const deliveries: AIWeeklyReportDelivery[] = await api.getAIWeeklyReportDeliveries(reportId, {
+        limit: 20,
+      })
+      setDeliveryAttempts(deliveries)
+    } catch (error) {
+      setDeliveryAttempts([])
+      setDeliveryError('Delivery history could not be loaded.')
+    } finally {
+      setDeliveryHistoryState('loaded')
     }
   }
 
@@ -856,7 +885,8 @@ export default function CloudDashboardPage() {
           isDelivering={isDeliveringReport}
           error={reportError}
           deliveryError={deliveryError}
-          deliveryResults={deliveryResults}
+          deliveryAttempts={deliveryAttempts}
+          deliveryHistoryState={deliveryHistoryState}
           disabled={!hasValidOrganization}
         />
       </div>
@@ -1136,7 +1166,8 @@ function WeeklyReportsPanel({
   isDelivering,
   error,
   deliveryError,
-  deliveryResults,
+  deliveryAttempts,
+  deliveryHistoryState,
   disabled,
 }: {
   reports: AIWeeklyManagerReport[]
@@ -1149,7 +1180,8 @@ function WeeklyReportsPanel({
   isDelivering: boolean
   error: string | null
   deliveryError: string | null
-  deliveryResults: AIWeeklyReportDelivery[]
+  deliveryAttempts: AIWeeklyReportDelivery[]
+  deliveryHistoryState: LoadState
   disabled: boolean
 }) {
   const riskCounts = selectedReport?.sections.coming_week_action_plan?.risk_counts
@@ -1205,32 +1237,6 @@ function WeeklyReportsPanel({
         </div>
       )}
 
-      {deliveryResults.length > 0 && (
-        <div className="mb-4 divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-700 dark:border-gray-700">
-          {deliveryResults.map((delivery) => (
-            <div key={delivery.id} className="flex items-start justify-between gap-3 p-3">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold capitalize text-gray-900 dark:text-gray-100">
-                  {delivery.channel} · {delivery.recipient}
-                </p>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Attempts: {delivery.attempt_count} · {delivery.error_message || (delivery.sent_at ? `Sent ${formatDateTime(delivery.sent_at)}` : 'No provider response')}
-                </p>
-              </div>
-              <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
-                delivery.status === 'sent'
-                  ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300'
-                  : delivery.status === 'failed'
-                    ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'
-                    : 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300'
-              }`}>
-                {delivery.status}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
       {reports.length > 0 && (
         <div className="mb-4">
           <label className="block">
@@ -1272,6 +1278,47 @@ function WeeklyReportsPanel({
 
           <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-300">
             Provider: {selectedReport.provider} · Model: {selectedReport.model || 'not configured'} · Fallback: {selectedReport.fallback_used ? 'yes' : 'no'} · Generated: {formatDateTime(selectedReport.generated_at)}
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                Delivery History
+              </h4>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {deliveryHistoryState === 'loading' ? 'Loading...' : `${deliveryAttempts.length} attempts`}
+              </span>
+            </div>
+
+            {deliveryAttempts.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                No delivery attempts recorded for this report
+              </div>
+            ) : (
+              <div className="max-h-64 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 dark:divide-gray-700 dark:border-gray-700">
+                {deliveryAttempts.map((delivery) => (
+                  <div key={delivery.id} className="flex items-start justify-between gap-3 p-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold capitalize text-gray-900 dark:text-gray-100">
+                        {delivery.channel} · {delivery.recipient}
+                      </p>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Attempts: {delivery.attempt_count} · {delivery.error_message || (delivery.sent_at ? `Sent ${formatDateTime(delivery.sent_at)}` : `Recorded ${formatDateTime(delivery.created_at)}`)}
+                      </p>
+                    </div>
+                    <span className={`rounded-lg px-2 py-1 text-xs font-semibold capitalize ${
+                      delivery.status === 'sent'
+                        ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-300'
+                        : delivery.status === 'failed'
+                          ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-300'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-900/30 dark:text-slate-300'
+                    }`}>
+                      {delivery.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

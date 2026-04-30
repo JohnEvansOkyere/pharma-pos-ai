@@ -1933,12 +1933,33 @@ Current scope:
 
 - delivery settings UI is available only to admin users
 - recipient secrets remain backend-side; frontend stores only tenant recipient targets through existing backend endpoints
-- delivery results shown in the UI are the results of the current manual delivery attempt
-- persisted historical delivery-attempt listing is not implemented yet
+- manual delivery result entries are folded into the saved report delivery history UI
 
 Next foundation:
 
-- expose persisted delivery status in the saved-report UI
+21. Persisted report delivery history
+
+Status: implemented for first report detail surface.
+
+Implemented:
+
+- added `GET /ai-manager/weekly-reports/{report_id}/deliveries`
+- delivery history endpoint uses the same organization and branch authorization rules as saved report fetch/delivery
+- delivery attempts are ordered newest first and capped by a bounded `limit` parameter
+- weekly report panel loads persisted delivery attempts whenever the selected report changes
+- manual delivery prepends the new attempt results into the visible delivery history
+- delivery history shows channel, recipient, status, attempt count, sent time, recorded time, or error message
+- backend regression tests for persisted delivery history and branch-scope denial
+- frontend regression tests for history loading and manual delivery updates
+
+Current scope:
+
+- delivery history is read-only
+- retry/backoff scheduling is not implemented yet
+- acknowledgement/review workflow is not implemented yet
+
+Next foundation:
+
 - add report acknowledgement/review workflow for managers
 - add delivery retry/backoff for transient email and Telegram failures
 - add tenant-level external AI provider consent/configuration

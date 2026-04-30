@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_admin, require_organization_access, require_view_reports
 from app.db.base import get_db
-from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDeliverySetting
+from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
 from app.models.user import User
 from app.schemas.ai_manager import (
     AIManagerChatRequest,
@@ -147,6 +147,35 @@ def deliver_weekly_manager_report(
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
     deliveries = AIReportDeliveryService.deliver(db, report, channels=payload.channels)
+    return [_delivery_response(delivery) for delivery in deliveries]
+
+
+@router.get("/weekly-reports/{report_id}/deliveries", response_model=List[AIWeeklyReportDeliveryResponse])
+def list_weekly_report_deliveries(
+    report_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """List persisted delivery attempts for a saved weekly manager report."""
+    report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+    require_organization_access(
+        organization_id=report.organization_id,
+        branch_id=report.branch_id,
+        current_user=current_user,
+    )
+    if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+
+    deliveries = (
+        db.query(AIWeeklyReportDelivery)
+        .filter(AIWeeklyReportDelivery.report_id == report.id)
+        .order_by(AIWeeklyReportDelivery.created_at.desc(), AIWeeklyReportDelivery.id.desc())
+        .limit(limit)
+        .all()
+    )
     return [_delivery_response(delivery) for delivery in deliveries]
 
 

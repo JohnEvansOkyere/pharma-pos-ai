@@ -11,6 +11,7 @@ from app.api.endpoints.ai_manager import (
     generate_weekly_manager_report,
     get_weekly_report_delivery_setting,
     get_weekly_manager_report,
+    list_weekly_report_deliveries,
     list_weekly_manager_reports,
     upsert_weekly_report_delivery_setting,
 )
@@ -362,6 +363,42 @@ def test_weekly_report_delivery_records_email_and_telegram_attempts(monkeypatch,
     assert {delivery.recipient for delivery in deliveries} == {"owner@example.com", "12345"}
 
 
+def test_weekly_report_delivery_history_lists_persisted_attempts(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+    _delivery_setting(db_session, organization.id, branch_id=branch_a.id)
+    monkeypatch.setattr(settings, "SMTP_HOST", "smtp.example.com")
+    monkeypatch.setattr(settings, "SMTP_FROM_EMAIL", "reports@example.com")
+    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", "telegram-token")
+    monkeypatch.setattr(AIReportDeliveryService, "_send_email", lambda **kwargs: None)
+    monkeypatch.setattr(AIReportDeliveryService, "_send_telegram", lambda **kwargs: {"ok": True})
+
+    deliver_weekly_manager_report(
+        report.id,
+        AIWeeklyReportDeliverRequest(),
+        db=db_session,
+        current_user=manager,
+    )
+
+    history = list_weekly_report_deliveries(
+        report.id,
+        limit=20,
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert len(history) == 2
+    assert {delivery.channel for delivery in history} == {"email", "telegram"}
+    assert all(delivery.report_id == report.id for delivery in history)
+
+
 def test_admin_can_manage_tenant_scoped_delivery_settings(db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     admin = _admin(db_session, organization.id)
@@ -444,6 +481,34 @@ def test_branch_manager_cannot_generate_cross_branch_report(db_session):
             AIWeeklyReportGenerateRequest(organization_id=organization.id, branch_id=branch_b.id),
             db=db_session,
             current_user=manager,
+        )
+
+    assert exc.value.status_code == 403
+    assert "Branch access denied" in exc.value.detail
+
+
+def test_branch_manager_cannot_view_cross_branch_delivery_history(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_report_data(db_session, organization, branch_a, branch_b, device_a, device_b)
+    branch_manager = _manager(
+        db_session,
+        organization.id,
+        branch_id=branch_a.id,
+        username="branch-delivery-history-manager",
+    )
+    report = AIWeeklyReportService.generate_for_organization(
+        db_session,
+        organization_id=organization.id,
+        branch_id=branch_b.id,
+        as_of=datetime(2026, 5, 3, 19, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        list_weekly_report_deliveries(
+            report.id,
+            limit=20,
+            db=db_session,
+            current_user=branch_manager,
         )
 
     assert exc.value.status_code == 403
