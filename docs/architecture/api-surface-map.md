@@ -154,6 +154,8 @@ Purpose:
 
 - backup status
 - manual backup trigger
+- restore drill readiness
+- restore drill recording
 - diagnostics
 - sync status and manual sync
 - audit log listing

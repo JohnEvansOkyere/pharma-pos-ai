@@ -28,6 +28,31 @@ interface BackupStatus {
   schedule_helper_available: boolean
 }
 
+interface RestoreDrillRecord {
+  id: number
+  status: string
+  backup_path: string
+  restore_target: string
+  notes?: string | null
+  tested_by_user_id: number
+  tested_at: string
+  created_at: string
+}
+
+interface RestoreDrillStatus {
+  backup: BackupStatus
+  last_drill?: RestoreDrillRecord | null
+  recovery_ready: boolean
+  latest_backup_tested: boolean
+  drill_max_age_days: number
+  checklist: Array<{
+    key: string
+    label: string
+    status: string
+    message: string
+  }>
+}
+
 interface SystemDiagnostics {
   platform: string
   app_version: string
@@ -50,9 +75,12 @@ export default function SettingsPage() {
   const { user: currentUser } = useAuthStore()
   const [users, setUsers] = useState<User[]>([])
   const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null)
+  const [restoreDrillStatus, setRestoreDrillStatus] = useState<RestoreDrillStatus | null>(null)
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingBackupStatus, setIsLoadingBackupStatus] = useState(false)
+  const [isLoadingRestoreDrill, setIsLoadingRestoreDrill] = useState(false)
+  const [isRecordingRestoreDrill, setIsRecordingRestoreDrill] = useState(false)
   const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false)
   const [isTriggeringBackup, setIsTriggeringBackup] = useState(false)
   const [showModal, setShowModal] = useState(false)
@@ -65,6 +93,11 @@ export default function SettingsPage() {
     role: 'cashier',
     is_active: true
   })
+  const [restoreDrillForm, setRestoreDrillForm] = useState({
+    status: 'passed',
+    restore_target: '',
+    notes: '',
+  })
 
   useEffect(() => {
     loadUsers()
@@ -73,6 +106,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (currentUser?.role === 'admin' || currentUser?.role === 'manager') {
       loadBackupStatus()
+      loadRestoreDrillStatus()
       loadDiagnostics()
     }
   }, [currentUser?.role])
@@ -113,6 +147,18 @@ export default function SettingsPage() {
     }
   }
 
+  const loadRestoreDrillStatus = async () => {
+    setIsLoadingRestoreDrill(true)
+    try {
+      const data = await api.getRestoreDrillStatus()
+      setRestoreDrillStatus(data)
+    } catch (error) {
+      toast.error('Failed to load restore drill status')
+    } finally {
+      setIsLoadingRestoreDrill(false)
+    }
+  }
+
   const handleBackupNow = async () => {
     setIsTriggeringBackup(true)
     try {
@@ -123,6 +169,28 @@ export default function SettingsPage() {
       toast.error(error.response?.data?.detail || 'Backup failed')
     } finally {
       setIsTriggeringBackup(false)
+    }
+  }
+
+  const handleRecordRestoreDrill = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setIsRecordingRestoreDrill(true)
+    try {
+      await api.recordRestoreDrill({
+        status: restoreDrillForm.status,
+        restore_target: restoreDrillForm.restore_target.trim(),
+        notes: restoreDrillForm.notes.trim() || null,
+        verification_summary: {
+          recorded_from: 'settings_page',
+        },
+      })
+      setRestoreDrillForm({ status: 'passed', restore_target: '', notes: '' })
+      await loadRestoreDrillStatus()
+      toast.success('Restore drill recorded')
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Restore drill could not be recorded')
+    } finally {
+      setIsRecordingRestoreDrill(false)
     }
   }
 
@@ -322,6 +390,137 @@ export default function SettingsPage() {
           <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-900/20 dark:text-slate-300">
             Recommended operation: keep nightly backups automatic, use “Back Up Now” before upgrades, and keep an external copy of recent backups for recovery.
           </div>
+        </div>
+      )}
+
+      {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+        <div className="card p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                Restore Drill Readiness
+              </h2>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                Record technician restore drills without touching the live pharmacy database.
+              </p>
+            </div>
+            <button
+              onClick={loadRestoreDrillStatus}
+              className="btn-secondary flex items-center"
+              disabled={isLoadingRestoreDrill}
+            >
+              <FiRefreshCw className="mr-2" />
+              Refresh Drill Status
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Recovery Readiness
+              </p>
+              <p className={`mt-2 text-sm font-semibold ${
+                restoreDrillStatus?.recovery_ready
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-amber-700 dark:text-amber-300'
+              }`}>
+                {restoreDrillStatus?.recovery_ready ? 'Recovery-ready' : isLoadingRestoreDrill ? 'Loading...' : 'Drill needed'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Last Drill
+              </p>
+              <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {restoreDrillStatus?.last_drill
+                  ? new Date(restoreDrillStatus.last_drill.tested_at).toLocaleString()
+                  : isLoadingRestoreDrill
+                  ? 'Loading...'
+                  : 'No drill recorded'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Latest Backup Tested
+              </p>
+              <p className={`mt-2 text-sm font-semibold ${
+                restoreDrillStatus?.latest_backup_tested
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-amber-700 dark:text-amber-300'
+              }`}>
+                {restoreDrillStatus?.latest_backup_tested ? 'Yes' : 'Not latest'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Drill Window
+              </p>
+              <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {restoreDrillStatus?.drill_max_age_days ?? '-'} day(s)
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {(restoreDrillStatus?.checklist ?? []).map((item) => (
+              <div key={item.key} className="rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
+                <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  {item.label}
+                </p>
+                <p className={`mt-1 text-sm ${
+                  item.status === 'passed'
+                    ? 'text-green-700 dark:text-green-300'
+                    : item.status === 'warning'
+                    ? 'text-amber-700 dark:text-amber-300'
+                    : 'text-red-700 dark:text-red-300'
+                }`}>
+                  {item.message}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleRecordRestoreDrill} className="mt-5 grid gap-4 md:grid-cols-[160px_1fr]">
+            <label className="block">
+              <span className="label">Result</span>
+              <select
+                className="input h-10 w-full"
+                value={restoreDrillForm.status}
+                onChange={(event) => setRestoreDrillForm({ ...restoreDrillForm, status: event.target.value })}
+              >
+                <option value="passed">Passed</option>
+                <option value="failed">Failed</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">Restore target</span>
+              <input
+                className="input h-10 w-full"
+                value={restoreDrillForm.restore_target}
+                onChange={(event) => setRestoreDrillForm({ ...restoreDrillForm, restore_target: event.target.value })}
+                placeholder="Staging database, technician laptop, or test VM"
+                required
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="label">Verification notes</span>
+              <textarea
+                className="input min-h-20 w-full"
+                value={restoreDrillForm.notes}
+                onChange={(event) => setRestoreDrillForm({ ...restoreDrillForm, notes: event.target.value })}
+                placeholder="Example: login worked, latest sale visible, stock counts matched, audit logs opened"
+              />
+            </label>
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={isRecordingRestoreDrill}
+              >
+                {isRecordingRestoreDrill ? 'Recording...' : 'Record Restore Drill'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

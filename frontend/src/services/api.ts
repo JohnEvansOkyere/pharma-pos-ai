@@ -500,6 +500,16 @@ class ApiClient {
     return response.data
   }
 
+  async getRestoreDrillStatus() {
+    const response = await this.client.get('/system/restore-drill-status')
+    return response.data
+  }
+
+  async recordRestoreDrill(payload: any) {
+    const response = await this.client.post('/system/restore-drills', payload)
+    return response.data
+  }
+
   async getSystemDiagnostics() {
     const response = await this.client.get('/system/diagnostics')
     return response.data

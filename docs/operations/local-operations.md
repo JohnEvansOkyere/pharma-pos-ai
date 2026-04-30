@@ -52,4 +52,5 @@ Installers/support should:
 - verify frontend connects to backend
 - verify backup scripts
 - run a test backup and restore drill where practical
+- record the restore drill result in Settings
 - confirm diagnostics page is clean

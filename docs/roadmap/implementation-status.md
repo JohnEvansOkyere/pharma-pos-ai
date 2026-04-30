@@ -24,6 +24,7 @@ Operational controls:
 - admin user management
 - backup status
 - manual backup trigger
+- restore drill readiness and technician drill recording
 - diagnostics
 - audit log viewer/export
 - tamper-evident audit hash chain and admin integrity verification
@@ -71,5 +72,5 @@ AI manager:
 - automatic cloud repair for every reconciliation issue type
 - full controlled-drug register workflow
 - full prescription verification workflow
-- automated restore drill verification
+- destructive live restore automation
 - advanced observability stack

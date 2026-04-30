@@ -168,6 +168,32 @@ Always do this first:
 5. start backend again
 6. test login, products, sales, and dashboard
 
+## Restore Drill Recording
+
+Do not test restores against the live pharmacy database unless there is a real recovery incident and management has approved it.
+
+For normal readiness checks:
+
+1. copy a recent `.dump` file to a test machine, staging database, or technician laptop
+2. restore into the test database
+3. verify login works
+4. verify latest sales are visible
+5. verify product and batch stock counts open correctly
+6. verify audit logs open
+7. open Settings in the live system
+8. record the restore drill result under Restore Drill Readiness
+
+The app stores:
+
+- drill status
+- backup path
+- restore target
+- technician notes
+- tested timestamp
+- user who recorded the drill
+
+`RESTORE_DRILL_MAX_AGE_DAYS` controls how long a successful drill counts as recent. The default is 90 days.
+
 ## Recommended Client Practice
 
 For each live client:
@@ -183,13 +209,15 @@ The system now supports:
 
 - backup status visibility from the admin settings area
 - manual backup trigger from the app for admins/managers
+- restore drill readiness status
+- non-destructive restore drill recording
 - local diagnostics visibility from the admin settings area
 - Windows scheduled backup helper via `install_backup_task.bat`
 
 Still recommended next:
 
 - installer-driven Task Scheduler setup by default
-- restore workflow surfaced more clearly for technicians
+- post-restore integrity check script for technicians
 - explicit backup warning banners when backups are stale
 
 ## Related Operational Controls

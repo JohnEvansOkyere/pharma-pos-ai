@@ -24,6 +24,7 @@ from app.models import (
     SaleItem,
     Notification,
     ActivityLog,
+    RestoreDrill,
     StockAdjustment,
 )
 

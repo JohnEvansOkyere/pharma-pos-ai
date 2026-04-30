@@ -30,16 +30,17 @@ Expected scope:
 - controlled-drug sale audit enhancement
 - manager override policy if required by business process
 
-## 3. Backup Restore Drill Automation
+## 3. Restore Drill Operations
 
-Add guided restore verification.
+Restore drill readiness and recording are implemented. The next step is making the drill process more operationally rigorous.
 
 Expected scope:
 
-- restore checklist endpoint or script
-- post-restore integrity checks
-- backup metadata verification
-- operator-facing restore status documentation
+- technician checklist templates
+- post-restore integrity check script
+- printable handoff report
+- restore drill reminders
+- optional separate-machine restore helper
 
 ## 4. Tenant/Branch Hardening
 

@@ -18,6 +18,7 @@ from app.api.dependencies import require_admin, require_trigger_backup
 from app.core.config import settings
 from app.db.base import SessionLocal, engine, get_db
 from app.models.activity_log import ActivityLog
+from app.models.restore_drill import RestoreDrill
 from app.models.user import User, UserRole
 from app.schemas.system import (
     AuditIntegrityStatus,
@@ -25,6 +26,9 @@ from app.schemas.system import (
     AuditLogListResponse,
     BackupStatus,
     BackupTriggerResult,
+    RestoreDrillCreate,
+    RestoreDrillRecord,
+    RestoreDrillStatus,
     SyncRunResult,
     SyncStatus,
     SystemDiagnostics,
@@ -51,6 +55,14 @@ def _get_retention_days() -> int:
         return max(1, int(raw_value))
     except ValueError:
         return 30
+
+
+def _get_restore_drill_max_age_days() -> int:
+    raw_value = os.getenv("RESTORE_DRILL_MAX_AGE_DAYS", "90")
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return 90
 
 
 def _get_latest_backup_path() -> Path | None:
@@ -200,6 +212,77 @@ def trigger_backup(
         message="Backup completed successfully",
         backup=_build_backup_status(),
     )
+
+
+@router.get("/restore-drill-status", response_model=RestoreDrillStatus)
+def get_restore_drill_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trigger_backup),
+):
+    return _build_restore_drill_status(db)
+
+
+@router.post("/restore-drills", response_model=RestoreDrillRecord, status_code=status.HTTP_201_CREATED)
+def record_restore_drill(
+    payload: RestoreDrillCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trigger_backup),
+):
+    status_value = payload.status.strip().lower()
+    if status_value not in {"passed", "failed"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Restore drill status must be passed or failed",
+        )
+
+    restore_target = payload.restore_target.strip()
+    if not restore_target:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Restore target is required",
+        )
+
+    backup = _build_backup_status()
+    backup_path = payload.backup_path.strip() if payload.backup_path else backup.latest_backup_path
+    if not backup_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A backup path is required because no latest backup is available",
+        )
+
+    drill = RestoreDrill(
+        status=status_value,
+        backup_path=backup_path,
+        backup_created_at=datetime.fromisoformat(backup.latest_backup_time) if backup.latest_backup_time else None,
+        backup_size_bytes=backup.latest_backup_size_bytes,
+        restore_target=restore_target,
+        notes=payload.notes,
+        verification_summary=payload.verification_summary or {},
+        tested_by_user_id=current_user.id,
+        tested_at=payload.tested_at or datetime.now(timezone.utc),
+    )
+    db.add(drill)
+    db.flush()
+    AuditService.log(
+        db,
+        action="record_restore_drill",
+        user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        branch_id=current_user.branch_id,
+        entity_type="restore_drill",
+        entity_id=drill.id,
+        description=f"Recorded restore drill as {status_value}",
+        extra_data={
+            "status": status_value,
+            "backup_path": backup_path,
+            "restore_target": restore_target,
+            "latest_backup_exists": backup.latest_backup_exists,
+            "backup_is_recent": backup.backup_is_recent,
+        },
+    )
+    db.commit()
+    db.refresh(drill)
+    return _restore_drill_record(drill)
 
 
 @router.get("/diagnostics", response_model=SystemDiagnostics)
@@ -381,6 +464,98 @@ def get_audit_integrity(
             db,
             organization_id=effective_organization_id,
         )
+    )
+
+
+def _build_restore_drill_status(db: Session) -> RestoreDrillStatus:
+    backup = _build_backup_status()
+    max_age_days = _get_restore_drill_max_age_days()
+    last_drill = db.query(RestoreDrill).order_by(RestoreDrill.tested_at.desc(), RestoreDrill.id.desc()).first()
+    last_success = (
+        db.query(RestoreDrill)
+        .filter(RestoreDrill.status == "passed")
+        .order_by(RestoreDrill.tested_at.desc(), RestoreDrill.id.desc())
+        .first()
+    )
+    now = datetime.now(timezone.utc)
+    successful_drill_recent = False
+    if last_success is not None:
+        tested_at = last_success.tested_at
+        if tested_at.tzinfo is None:
+            tested_at = tested_at.replace(tzinfo=timezone.utc)
+        successful_drill_recent = (now - tested_at).days <= max_age_days
+
+    latest_backup_tested = bool(
+        last_success
+        and backup.latest_backup_path
+        and last_success.backup_path == backup.latest_backup_path
+    )
+    recovery_ready = bool(
+        backup.latest_backup_exists
+        and backup.backup_is_recent
+        and successful_drill_recent
+    )
+    checklist = [
+        {
+            "key": "backup_exists",
+            "label": "Latest backup exists",
+            "status": "passed" if backup.latest_backup_exists else "failed",
+            "message": backup.latest_backup_path or "No backup file found",
+        },
+        {
+            "key": "backup_recent",
+            "label": "Latest backup is recent",
+            "status": "passed" if backup.backup_is_recent else "failed",
+            "message": (
+                f"Backup age is {backup.latest_backup_age_hours} hour(s)"
+                if backup.latest_backup_age_hours is not None
+                else "Backup age is unavailable"
+            ),
+        },
+        {
+            "key": "restore_drill_recent",
+            "label": "Restore drill completed recently",
+            "status": "passed" if successful_drill_recent else "failed",
+            "message": (
+                f"Last passed drill was {last_success.tested_at.isoformat()}"
+                if last_success
+                else "No passed restore drill recorded"
+            ),
+        },
+        {
+            "key": "latest_backup_tested",
+            "label": "Latest backup was tested",
+            "status": "passed" if latest_backup_tested else "warning",
+            "message": (
+                "Latest backup path matches the last passed drill"
+                if latest_backup_tested
+                else "Last passed drill may have tested an older backup"
+            ),
+        },
+    ]
+    return RestoreDrillStatus(
+        backup=backup,
+        last_drill=_restore_drill_record(last_drill) if last_drill else None,
+        recovery_ready=recovery_ready,
+        latest_backup_tested=latest_backup_tested,
+        drill_max_age_days=max_age_days,
+        checklist=checklist,
+    )
+
+
+def _restore_drill_record(drill: RestoreDrill) -> RestoreDrillRecord:
+    return RestoreDrillRecord(
+        id=drill.id,
+        status=drill.status,
+        backup_path=drill.backup_path,
+        backup_created_at=drill.backup_created_at,
+        backup_size_bytes=drill.backup_size_bytes,
+        restore_target=drill.restore_target,
+        notes=drill.notes,
+        verification_summary=drill.verification_summary or {},
+        tested_by_user_id=drill.tested_by_user_id,
+        tested_at=drill.tested_at,
+        created_at=drill.created_at,
     )
 
 

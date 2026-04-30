@@ -26,6 +26,45 @@ class BackupTriggerResult(BaseModel):
     backup: BackupStatus
 
 
+class RestoreDrillRecord(BaseModel):
+    id: int
+    status: str
+    backup_path: str
+    backup_created_at: Optional[datetime] = None
+    backup_size_bytes: Optional[int] = None
+    restore_target: str
+    notes: Optional[str] = None
+    verification_summary: Dict[str, Any]
+    tested_by_user_id: int
+    tested_at: datetime
+    created_at: datetime
+
+
+class RestoreDrillCreate(BaseModel):
+    status: str
+    restore_target: str
+    backup_path: Optional[str] = None
+    notes: Optional[str] = None
+    verification_summary: Optional[Dict[str, Any]] = None
+    tested_at: Optional[datetime] = None
+
+
+class RestoreDrillChecklistItem(BaseModel):
+    key: str
+    label: str
+    status: str
+    message: str
+
+
+class RestoreDrillStatus(BaseModel):
+    backup: BackupStatus
+    last_drill: Optional[RestoreDrillRecord] = None
+    recovery_ready: bool
+    latest_backup_tested: bool
+    drill_max_age_days: int
+    checklist: List[RestoreDrillChecklistItem]
+
+
 class SystemDiagnostics(BaseModel):
     platform: str
     app_version: str

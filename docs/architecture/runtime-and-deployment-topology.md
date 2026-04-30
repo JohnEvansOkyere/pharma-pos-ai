@@ -84,6 +84,7 @@ Before any client rollout, validate:
 - migrations apply cleanly
 - no demo credentials are shipped
 - local backup and restore have been tested
+- restore drill result is recorded in Settings
 - POS sale and sale reversal paths are tested
 - stock adjustment and stock take paths are tested
 - audit log visibility works
