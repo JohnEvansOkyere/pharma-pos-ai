@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "2b8c7a9d4e10"
@@ -38,7 +39,11 @@ def upgrade() -> None:
     movement_type_enum = sa.Enum(*MOVEMENT_TYPE_VALUES, name="inventorymovementtype")
     if dialect_name == "postgresql":
         movement_type_enum.create(bind, checkfirst=True)
-        movement_type_column = movement_type_enum
+        movement_type_column = postgresql.ENUM(
+            *MOVEMENT_TYPE_VALUES,
+            name="inventorymovementtype",
+            create_type=False,
+        )
     else:
         movement_type_column = sa.String(length=40)
 

@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "3c9d8b1f5a22"
@@ -27,7 +28,11 @@ def upgrade() -> None:
     reversal_type_enum = sa.Enum(*REVERSAL_TYPE_VALUES, name="salereversaltype")
     if dialect_name == "postgresql":
         reversal_type_enum.create(bind, checkfirst=True)
-        reversal_type_column = reversal_type_enum
+        reversal_type_column = postgresql.ENUM(
+            *REVERSAL_TYPE_VALUES,
+            name="salereversaltype",
+            create_type=False,
+        )
     else:
         reversal_type_column = sa.String(length=20)
 

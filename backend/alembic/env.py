@@ -2,7 +2,7 @@
 Alembic environment configuration.
 """
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
 from alembic import context
 import sys
 import os
@@ -62,9 +62,10 @@ def run_migrations_online() -> None:
     
     db_url = config.get_main_option("sqlalchemy.url")
     
-    # Extract database name and create a template connection URL
-    # For PostgreSQL URLs like: postgresql://user:pass@host:port/dbname
-    if db_url.startswith("postgresql://"):
+    # Optional database creation for first-time local setup. Normal migrations
+    # should not require connecting to the default postgres database; managed or
+    # Docker PostgreSQL deployments often restrict that connection.
+    if os.getenv("ALEMBIC_CREATE_DATABASE", "false").lower() == "true" and db_url.startswith("postgresql://"):
         try:
             # Create engine to connect to default postgres database
             parts = db_url.split("/")
@@ -85,11 +86,7 @@ def run_migrations_online() -> None:
         except Exception as e:
             print(f"Database creation attempt: {e}")
     
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = create_engine(db_url, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
         context.configure(

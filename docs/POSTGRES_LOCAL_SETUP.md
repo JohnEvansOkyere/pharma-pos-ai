@@ -105,6 +105,8 @@ CREATE DATABASE pharma_pos OWNER pharma_user;
 GRANT ALL PRIVILEGES ON DATABASE pharma_pos TO pharma_user;
 ```
 
+Only create the database user and empty database manually. Do not paste application table creation queries into a database editor; the application schema must be installed by Alembic migrations so the schema and `alembic_version` history stay consistent.
+
 ## 4. Confirm Database Access
 
 Test the login:
@@ -131,6 +133,16 @@ bash scripts/init_db.sh
 That runs:
 
 - Alembic migrations
+
+The direct Alembic command is:
+
+```bash
+cd /home/grejoy/Projects/pharma-pos-ai/backend
+venv/bin/python -m alembic upgrade head
+venv/bin/python -m alembic current
+```
+
+`current` should report the migration head. If the backend raises a missing-column error during login or POS operations, stop testing and apply the pending migrations before changing application code.
 
 If you want seed/demo data too:
 

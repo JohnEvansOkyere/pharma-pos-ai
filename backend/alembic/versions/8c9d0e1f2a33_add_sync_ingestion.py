@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "8c9d0e1f2a33"
@@ -46,7 +47,11 @@ def upgrade() -> None:
     dialect_name = bind.dialect.name
 
     if dialect_name == "postgresql":
-        event_type_column = sa.Enum(*SYNC_EVENT_TYPE_VALUES, name="synceventtype", create_type=False)
+        event_type_column = postgresql.ENUM(
+            *SYNC_EVENT_TYPE_VALUES,
+            name="synceventtype",
+            create_type=False,
+        )
     else:
         event_type_column = sa.String(length=50)
 

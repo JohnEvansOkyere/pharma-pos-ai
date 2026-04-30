@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "4d1a6e8b0c33"
@@ -27,7 +28,11 @@ def upgrade() -> None:
     status_enum = sa.Enum(*STOCK_TAKE_STATUS_VALUES, name="stocktakestatus")
     if dialect_name == "postgresql":
         status_enum.create(bind, checkfirst=True)
-        status_column = status_enum
+        status_column = postgresql.ENUM(
+            *STOCK_TAKE_STATUS_VALUES,
+            name="stocktakestatus",
+            create_type=False,
+        )
     else:
         status_column = sa.String(length=20)
 

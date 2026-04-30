@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 
 revision: str = "9f0d7e6a2c11"
@@ -28,11 +29,16 @@ def upgrade() -> None:
 
     if dialect_name == "postgresql":
         pricing_mode_enum.create(bind, checkfirst=True)
+        pricing_mode_column = postgresql.ENUM(
+            *PRICING_MODE_VALUES,
+            name="salepricingmode",
+            create_type=False,
+        )
         op.add_column(
             "sales",
             sa.Column(
                 "pricing_mode",
-                pricing_mode_enum,
+                pricing_mode_column,
                 nullable=False,
                 server_default="RETAIL",
             ),
