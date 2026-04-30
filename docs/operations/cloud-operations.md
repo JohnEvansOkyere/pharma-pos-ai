@@ -15,6 +15,12 @@ Key settings:
 - `CLOUD_SYNC_BATCH_SIZE`
 - `CLOUD_SYNC_MAX_RETRIES`
 - `CLOUD_SYNC_INTERVAL_MINUTES`
+- `CLOUD_SYNC_REQUIRE_TOKEN`
+- `CLOUD_PROJECTION_ENABLED`
+- `CLOUD_PROJECTION_INTERVAL_MINUTES`
+- `CLOUD_PROJECTION_BATCH_SIZE`
+
+`CLOUD_SYNC_API_TOKEN` must be configured on the cloud backend and on each local branch backend. The local branch sends it as a bearer token, and the cloud ingest endpoint rejects missing or invalid tokens.
 
 ## Sync Monitoring
 
@@ -38,6 +44,8 @@ Cloud reporting maintenance includes:
 - using reconciliation repair only where supported
 - keeping repairs audited
 - avoiding manual database fixes unless documented as incident response
+
+On the cloud backend, set `CLOUD_PROJECTION_ENABLED=true` so accepted events are projected into dashboard and AI reporting tables on a schedule.
 
 ## Supabase Operations
 

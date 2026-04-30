@@ -207,6 +207,7 @@ Primary documentation:
 - [Security And AI Safety](/home/grejoy/Projects/pharma-pos-ai/docs/security/README.md)
 - [AI Manager Documentation](/home/grejoy/Projects/pharma-pos-ai/docs/ai/README.md)
 - [Operations Documentation](/home/grejoy/Projects/pharma-pos-ai/docs/operations/README.md)
+- [Render And Vercel Deployment](/home/grejoy/Projects/pharma-pos-ai/docs/operations/render-vercel-deployment.md)
 - [Implementation Status And Roadmap](/home/grejoy/Projects/pharma-pos-ai/docs/roadmap/README.md)
 - [Developer Guide](/home/grejoy/Projects/pharma-pos-ai/docs/DEVELOPER_GUIDE.md)
 - [Client User Guide](/home/grejoy/Projects/pharma-pos-ai/docs/CLIENT_USER_GUIDE.md)

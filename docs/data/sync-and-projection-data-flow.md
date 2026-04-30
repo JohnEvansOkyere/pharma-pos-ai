@@ -66,6 +66,14 @@ Projection turns events into reporting read models:
 
 These tables exist for cloud reporting, reconciliation, and AI. They should not be used to drive local branch dispensing decisions.
 
+On the cloud backend, scheduled projection is controlled by:
+
+- `CLOUD_PROJECTION_ENABLED`
+- `CLOUD_PROJECTION_INTERVAL_MINUTES`
+- `CLOUD_PROJECTION_BATCH_SIZE`
+
+Render cloud deployments should enable projection so accepted sync events become cloud dashboard and AI reporting rows without manual intervention.
+
 ## Reconciliation
 
 Reconciliation compares projected cloud data for signs of corruption or projection drift.

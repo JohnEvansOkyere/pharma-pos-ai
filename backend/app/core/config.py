@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     CLOUD_SYNC_TIMEOUT_SECONDS: int = 15
     CLOUD_SYNC_MAX_RETRIES: int = 10
     CLOUD_SYNC_INTERVAL_MINUTES: int = 5
+    CLOUD_SYNC_REQUIRE_TOKEN: bool = True
+    CLOUD_PROJECTION_ENABLED: bool = False
+    CLOUD_PROJECTION_INTERVAL_MINUTES: int = 5
+    CLOUD_PROJECTION_BATCH_SIZE: int = 100
 
     # AI manager assistant provider. Keys remain server-side only.
     AI_MANAGER_PROVIDER: str = "deterministic"  # deterministic, openai, claude, groq

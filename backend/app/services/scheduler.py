@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.db.base import SessionLocal
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
+from app.services.cloud_projection_service import CloudProjectionService
 from app.services.notification_service import NotificationService
 from app.services.sync_upload_service import SyncUploadService
 from app.core.config import settings
@@ -87,6 +88,16 @@ class SchedulerService:
                 minutes=settings.CLOUD_SYNC_INTERVAL_MINUTES,
                 id="upload_sync_events",
                 name="Upload sync events",
+                replace_existing=True,
+            )
+
+        if settings.CLOUD_PROJECTION_ENABLED:
+            self.scheduler.add_job(
+                self.project_cloud_events,
+                "interval",
+                minutes=settings.CLOUD_PROJECTION_INTERVAL_MINUTES,
+                id="project_cloud_events",
+                name="Project cloud sync events",
                 replace_existing=True,
             )
 
@@ -209,6 +220,22 @@ class SchedulerService:
             logger.info("Cloud sync upload result: %s", result)
         except Exception as e:
             logger.error(f"Error in cloud sync upload task: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def project_cloud_events():
+        """Task to project accepted cloud sync events into reporting tables."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running cloud projection task")
+            result = CloudProjectionService.project_pending(
+                db,
+                limit=settings.CLOUD_PROJECTION_BATCH_SIZE,
+            )
+            logger.info("Cloud projection result: %s", result)
+        except Exception as e:
+            logger.error(f"Error in cloud projection task: {str(e)}")
         finally:
             db.close()
 

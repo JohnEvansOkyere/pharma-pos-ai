@@ -3,10 +3,13 @@ Sync ingestion API endpoints.
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_admin
+from app.core.config import settings
 from app.db.base import get_db
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Device, DeviceStatus
@@ -16,6 +19,24 @@ from app.services.cloud_projection_service import CloudProjectionService
 from app.models.user import User
 
 router = APIRouter(prefix="/sync", tags=["Sync"])
+
+
+def _require_sync_token(authorization: Optional[str]) -> None:
+    if not settings.CLOUD_SYNC_REQUIRE_TOKEN:
+        return
+
+    if not settings.CLOUD_SYNC_API_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloud sync token is not configured",
+        )
+
+    expected_header = f"Bearer {settings.CLOUD_SYNC_API_TOKEN}"
+    if authorization != expected_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid cloud sync token",
+        )
 
 
 def _get_active_device(db: Session, payload: SyncIngestionRequest) -> Device:
@@ -41,6 +62,7 @@ def _get_active_device(db: Session, payload: SyncIngestionRequest) -> Device:
 @router.post("/ingest", response_model=SyncIngestionResponse, status_code=status.HTTP_202_ACCEPTED)
 def ingest_sync_event(
     payload: SyncIngestionRequest,
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -51,6 +73,8 @@ def ingest_sync_event(
     - same event ID with different payload hash is rejected
     - same device sequence with a different event is rejected
     """
+    _require_sync_token(authorization)
+
     try:
         device = _get_active_device(db, payload)
 

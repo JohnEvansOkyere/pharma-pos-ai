@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.endpoints.sync import ingest_sync_event
+from app.core.config import settings
 from app.models import Branch, Device, Organization
 from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
@@ -64,13 +65,25 @@ def _request(organization, branch, *, event_id: str = "11111111-1111-1111-1111-1
     )
 
 
+@pytest.fixture(autouse=True)
+def sync_token(monkeypatch):
+    monkeypatch.setattr(settings, "CLOUD_SYNC_REQUIRE_TOKEN", True)
+    monkeypatch.setattr(settings, "CLOUD_SYNC_API_TOKEN", "test-sync-token")
+    return "Bearer test-sync-token"
+
+
+def _ingest(request: SyncIngestionRequest, *, db_session, authorization: str = "Bearer test-sync-token"):
+    return ingest_sync_event(
+        request,
+        authorization=authorization,
+        db=db_session,
+    )
+
+
 def test_ingest_sync_event_accepts_registered_device_event(db_session, registered_device):
     organization, branch, _device = registered_device
 
-    response = ingest_sync_event(
-        _request(organization, branch),
-        db=db_session,
-    )
+    response = _ingest(_request(organization, branch), db_session=db_session)
 
     ingested = db_session.query(IngestedSyncEvent).filter(
         IngestedSyncEvent.event_id == response.event_id
@@ -88,8 +101,8 @@ def test_ingest_sync_event_is_idempotent_for_same_event_and_hash(db_session, reg
     organization, branch, _device = registered_device
     request = _request(organization, branch)
 
-    first_response = ingest_sync_event(request, db=db_session)
-    duplicate_response = ingest_sync_event(request, db=db_session)
+    first_response = _ingest(request, db_session=db_session)
+    duplicate_response = _ingest(request, db_session=db_session)
 
     ingested = db_session.query(IngestedSyncEvent).filter(
         IngestedSyncEvent.event_id == request.event_id
@@ -106,14 +119,14 @@ def test_ingest_sync_event_is_idempotent_for_same_event_and_hash(db_session, reg
 def test_ingest_sync_event_rejects_same_event_id_with_different_hash(db_session, registered_device):
     organization, branch, _device = registered_device
     request = _request(organization, branch)
-    ingest_sync_event(request, db=db_session)
+    _ingest(request, db_session=db_session)
 
     conflicting_request = _request(organization, branch)
     conflicting_request.payload = {"sale_id": 10, "invoice_number": "CHANGED"}
     conflicting_request.payload_hash = _payload_hash(conflicting_request.payload)
 
     with pytest.raises(HTTPException) as exc:
-        ingest_sync_event(conflicting_request, db=db_session)
+        _ingest(conflicting_request, db_session=db_session)
 
     assert exc.value.status_code == 409
     assert "different payload hash" in exc.value.detail
@@ -121,17 +134,17 @@ def test_ingest_sync_event_rejects_same_event_id_with_different_hash(db_session,
 
 def test_ingest_sync_event_rejects_device_sequence_conflict(db_session, registered_device):
     organization, branch, _device = registered_device
-    ingest_sync_event(_request(organization, branch), db=db_session)
+    _ingest(_request(organization, branch), db_session=db_session)
 
     with pytest.raises(HTTPException) as exc:
-        ingest_sync_event(
+        _ingest(
             _request(
                 organization,
                 branch,
                 event_id="22222222-2222-2222-2222-222222222222",
                 sequence=1,
             ),
-            db=db_session,
+            db_session=db_session,
         )
 
     assert exc.value.status_code == 409
@@ -144,7 +157,42 @@ def test_ingest_sync_event_rejects_inactive_device(db_session, registered_device
     db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
-        ingest_sync_event(_request(organization, branch), db=db_session)
+        _ingest(_request(organization, branch), db_session=db_session)
 
     assert exc.value.status_code == 403
     assert "not active" in exc.value.detail
+
+
+def test_ingest_sync_event_rejects_missing_sync_token(db_session, registered_device):
+    organization, branch, _device = registered_device
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(_request(organization, branch), db_session=db_session, authorization=None)
+
+    assert exc.value.status_code == 401
+    assert "sync token" in exc.value.detail.lower()
+
+
+def test_ingest_sync_event_rejects_invalid_sync_token(db_session, registered_device):
+    organization, branch, _device = registered_device
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(_request(organization, branch), db_session=db_session, authorization="Bearer wrong-token")
+
+    assert exc.value.status_code == 401
+    assert "sync token" in exc.value.detail.lower()
+
+
+def test_ingest_sync_event_fails_closed_when_sync_token_is_not_configured(
+    db_session,
+    registered_device,
+    monkeypatch,
+):
+    organization, branch, _device = registered_device
+    monkeypatch.setattr(settings, "CLOUD_SYNC_API_TOKEN", None)
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(_request(organization, branch), db_session=db_session)
+
+    assert exc.value.status_code == 503
+    assert "not configured" in exc.value.detail.lower()

@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: pharma-pos-ai-backend
+    env: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: bash scripts/render_start.sh
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_BACKEND
+        value: postgresql
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: TIMEZONE
+        value: Africa/Accra
+      - key: ENABLE_BACKGROUND_SCHEDULER
+        value: true
+      - key: CLOUD_SYNC_REQUIRE_TOKEN
+        value: true
+      - key: CLOUD_SYNC_API_TOKEN
+        sync: false
+      - key: CLOUD_PROJECTION_ENABLED
+        value: true
+      - key: CLOUD_PROJECTION_INTERVAL_MINUTES
+        value: 5
+      - key: CLOUD_PROJECTION_BATCH_SIZE
+        value: 100
+      - key: BACKEND_CORS_ORIGINS
+        sync: false
+      - key: AI_MANAGER_PROVIDER
+        value: deterministic
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: AI_WEEKLY_REPORTS_ENABLED
+        value: false
+      - key: AI_WEEKLY_REPORT_DELIVERY_ENABLED
+        value: false
+      - key: AI_WEEKLY_REPORT_EMAIL_ENABLED
+        value: false
+      - key: AI_WEEKLY_REPORT_TELEGRAM_ENABLED
+        value: false
