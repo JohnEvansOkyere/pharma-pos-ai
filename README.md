@@ -201,6 +201,13 @@ alembic upgrade head
 Primary documentation:
 
 - [Documentation Index](/home/grejoy/Projects/pharma-pos-ai/docs/README.md)
+- [System Architecture](/home/grejoy/Projects/pharma-pos-ai/docs/architecture/README.md)
+- [Database And Data Integrity](/home/grejoy/Projects/pharma-pos-ai/docs/data/README.md)
+- [Pharmacy Domain Workflows](/home/grejoy/Projects/pharma-pos-ai/docs/domains/README.md)
+- [Security And AI Safety](/home/grejoy/Projects/pharma-pos-ai/docs/security/README.md)
+- [AI Manager Documentation](/home/grejoy/Projects/pharma-pos-ai/docs/ai/README.md)
+- [Operations Documentation](/home/grejoy/Projects/pharma-pos-ai/docs/operations/README.md)
+- [Implementation Status And Roadmap](/home/grejoy/Projects/pharma-pos-ai/docs/roadmap/README.md)
 - [Developer Guide](/home/grejoy/Projects/pharma-pos-ai/docs/DEVELOPER_GUIDE.md)
 - [Client User Guide](/home/grejoy/Projects/pharma-pos-ai/docs/CLIENT_USER_GUIDE.md)
 - [Windows Local Deployment Runbook](/home/grejoy/Projects/pharma-pos-ai/docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)

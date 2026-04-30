@@ -13,6 +13,23 @@ The documentation is organized by audience:
 
 ## Start Here
 
+### Full System Architecture
+
+- [Architecture Documentation](architecture/README.md)
+- [Data Documentation](data/README.md)
+- [Domain Documentation](domains/README.md)
+- [Security Documentation](security/README.md)
+- [AI Documentation](ai/README.md)
+- [Operations Documentation](operations/README.md)
+- [Roadmap Documentation](roadmap/README.md)
+
+Use these for:
+- understanding what the system is
+- understanding local-first and hybrid cloud architecture
+- understanding database design, ACID rules, and sync flow
+- understanding pharmacy workflows and safety boundaries
+- understanding AI, reporting, operations, and remaining production work
+
 ### For Developers
 
 - [Developer Guide](/home/grejoy/Projects/pharma-pos-ai/docs/DEVELOPER_GUIDE.md)
