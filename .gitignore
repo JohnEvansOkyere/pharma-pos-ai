@@ -31,7 +31,7 @@ env/
 # Database
 *.db
 *.sqlite3
-
+*.db.backup
 # Logs
 logs/
 *.log
