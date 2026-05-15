@@ -66,9 +66,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    # Relationships
-    sales = relationship("Sale", back_populates="user", cascade="all, delete-orphan")
-    activity_logs = relationship("ActivityLog", back_populates="user", cascade="all, delete-orphan")
+    # Relationships — cascade must NOT delete sales or audit logs when a user is removed.
+    # Financial records and tamper-evident audit chains must survive user deactivation.
+    sales = relationship("Sale", back_populates="user", cascade="save-update, merge", passive_deletes=True)
+    activity_logs = relationship("ActivityLog", back_populates="user", cascade="save-update, merge", passive_deletes=True)
     organization = relationship("Organization")
     branch = relationship("Branch")
 

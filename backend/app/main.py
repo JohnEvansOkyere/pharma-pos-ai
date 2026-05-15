@@ -71,8 +71,19 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint — verifies database connectivity."""
+    from sqlalchemy import text
+    from fastapi.responses import JSONResponse
+    from app.db.base import engine
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "database": "disconnected"},
+        )
 
 
 if __name__ == "__main__":

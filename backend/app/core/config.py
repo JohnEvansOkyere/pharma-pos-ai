@@ -147,6 +147,36 @@ class Settings(BaseSettings):
                 raise ValueError("SECRET_KEY must be set in production.")
             self.SECRET_KEY = secrets.token_urlsafe(32)
 
+        # Reject known placeholder or weak secret keys
+        _KNOWN_PLACEHOLDERS = {
+            "replace-with-generated-secret-key",
+            "changeme",
+            "secret",
+            "your-secret-key",
+        }
+        if self.SECRET_KEY.lower().strip() in _KNOWN_PLACEHOLDERS:
+            if environment == "production":
+                raise ValueError(
+                    "SECRET_KEY is a known placeholder value. "
+                    "Generate a real secret with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                )
+            import warnings
+            warnings.warn(
+                "SECRET_KEY is a known placeholder. This is unsafe for production.",
+                stacklevel=2,
+            )
+
+        if len(self.SECRET_KEY) < 32:
+            if environment == "production":
+                raise ValueError(
+                    "SECRET_KEY must be at least 32 characters in production."
+                )
+            import warnings
+            warnings.warn(
+                "SECRET_KEY is shorter than 32 characters. This is weak for production.",
+                stacklevel=2,
+            )
+
         return self
 
     class Config:

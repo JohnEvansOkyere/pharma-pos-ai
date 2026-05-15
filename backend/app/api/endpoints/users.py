@@ -17,48 +17,6 @@ from app.services.sync_outbox_service import SyncOutboxService
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-def require_admin(current_user: User = Depends(get_current_active_user)):
-    """
-    Dependency to check if current user is admin.
-
-    Args:
-        current_user: Current authenticated user
-
-    Returns:
-        User object if admin
-
-    Raises:
-        HTTPException: If user is not admin
-    """
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
-    return current_user
-
-
-def require_admin_or_manager(current_user: User = Depends(get_current_active_user)):
-    """
-    Dependency to check if current user is admin or manager.
-
-    Args:
-        current_user: Current authenticated user
-
-    Returns:
-        User object if admin or manager
-
-    Raises:
-        HTTPException: If user is not admin or manager
-    """
-    if current_user.role not in [UserRole.ADMIN, UserRole.MANAGER]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin or Manager access required"
-        )
-    return current_user
-
-
 @router.get("", response_model=List[UserSchema])
 def list_users(
     db: Session = Depends(get_db),
@@ -340,32 +298,33 @@ def delete_user(
                 detail="Managers can only delete cashier users"
             )
 
-    deleted_user_id = db_user.id
-    deleted_username = db_user.username
-    deleted_role = db_user.role.value
-    deleted_organization_id = db_user.organization_id
-    deleted_branch_id = db_user.branch_id
-    db.delete(db_user)
+    # Soft-delete: deactivate the user and clear credentials.
+    # Sales, audit logs, and inventory movements are preserved for
+    # financial and regulatory traceability.
+    db_user.is_active = False
+    db_user.hashed_password = "DEACTIVATED"
+
     SyncOutboxService.record_event(
         db,
         event_type=SyncEventType.USER_DELETED,
         aggregate_type="user",
-        aggregate_id=deleted_user_id,
-        organization_id=deleted_organization_id,
-        branch_id=deleted_branch_id,
+        aggregate_id=db_user.id,
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
         payload={
-            "user_id": deleted_user_id,
-            "username": deleted_username,
-            "role": deleted_role,
+            "user_id": db_user.id,
+            "username": db_user.username,
+            "role": db_user.role.value,
+            "action": "soft_delete",
         },
     )
     AuditService.log(
         db,
-        action="delete_user",
+        action="deactivate_user",
         user_id=current_user.id,
         entity_type="user",
-        entity_id=deleted_user_id,
-        description=f"Deleted user {deleted_username}",
-        extra_data={"role": deleted_role},
+        entity_id=db_user.id,
+        description=f"Deactivated user {db_user.username} (soft-delete)",
+        extra_data={"role": db_user.role.value},
     )
     db.commit()

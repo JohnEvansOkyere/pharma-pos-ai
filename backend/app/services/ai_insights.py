@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models.product import Product
-from app.models.sale import Sale, SaleItem
+from app.models.sale import Sale, SaleItem, SaleStatus
 from app.core.config import settings
 
 
@@ -38,7 +38,8 @@ class AIInsightsService:
         products_with_sales = db.query(SaleItem.product_id).join(
             Sale, Sale.id == SaleItem.sale_id
         ).filter(
-            Sale.created_at >= start_date
+            Sale.created_at >= start_date,
+            Sale.status == SaleStatus.COMPLETED,
         ).distinct().all()
 
         products_with_sales_ids = {p.product_id for p in products_with_sales}
@@ -86,7 +87,8 @@ class AIInsightsService:
             Sale, Sale.id == SaleItem.sale_id
         ).filter(
             SaleItem.product_id == product_id,
-            Sale.created_at >= start_date
+            Sale.created_at >= start_date,
+            Sale.status == SaleStatus.COMPLETED,
         ).scalar() or 0
 
         # Calculate daily average
@@ -143,7 +145,8 @@ class AIInsightsService:
             Sale, Sale.id == SaleItem.sale_id
         ).filter(
             SaleItem.product_id == product_id,
-            Sale.created_at >= start_date
+            Sale.created_at >= start_date,
+            Sale.status == SaleStatus.COMPLETED,
         ).group_by(
             func.date(Sale.created_at)
         ).all()

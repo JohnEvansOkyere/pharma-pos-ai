@@ -64,7 +64,7 @@ export const useCartStore = create<CartState>((set, get) => ({
       return {
         ...item,
         unit_price: unitPrice,
-        total_price: unitPrice * item.quantity - item.discount_amount,
+        total_price: Math.max(0, unitPrice * item.quantity - item.discount_amount),
       }
     })
 
@@ -147,8 +147,8 @@ export const useCartStore = create<CartState>((set, get) => ({
         item.product_id === productId
           ? {
               ...item,
-              discount_amount: discount,
-              total_price: item.unit_price * item.quantity - discount,
+              discount_amount: Math.min(discount, item.unit_price * item.quantity),
+              total_price: Math.max(0, item.unit_price * item.quantity - discount),
             }
           : item
       ),

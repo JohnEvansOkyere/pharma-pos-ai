@@ -336,6 +336,33 @@ def search_products(
     return _serialize_product_search_rows(db, products, nearest_expiry_map=nearest_expiry_map)
 
 
+@router.get("/low-stock", response_model=List[ProductSchema])
+def get_low_stock_products(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Get products with stock below threshold.
+
+    Args:
+        db: Database session
+        current_user: Current authenticated user
+
+    Returns:
+        List of low stock products
+    """
+    products = db.query(Product).filter(Product.is_active == True).all()
+    _refresh_product_stocks(db, products)
+
+    products = [
+        product
+        for product in products
+        if product.total_stock <= product.low_stock_threshold
+    ]
+
+    return products
+
+
 @router.get("/{product_id}", response_model=ProductWithBatches)
 def get_product(
     product_id: int,
@@ -976,29 +1003,3 @@ def receive_stock(
         db.rollback()
         raise
 
-
-@router.get("/low-stock", response_model=List[ProductSchema])
-def get_low_stock_products(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    Get products with stock below threshold.
-
-    Args:
-        db: Database session
-        current_user: Current authenticated user
-
-    Returns:
-        List of low stock products
-    """
-    products = db.query(Product).filter(Product.is_active == True).all()
-    _refresh_product_stocks(db, products)
-
-    products = [
-        product
-        for product in products
-        if product.total_stock <= product.low_stock_threshold
-    ]
-
-    return products

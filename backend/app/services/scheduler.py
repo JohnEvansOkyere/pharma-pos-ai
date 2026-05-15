@@ -146,7 +146,7 @@ class SchedulerService:
             logger.info("Running expiry check task")
             NotificationService.check_expiring_products(db)
         except Exception as e:
-            logger.error(f"Error in expiry check task: {str(e)}")
+            logger.exception("Error in expiry check task")
         finally:
             db.close()
 
@@ -158,7 +158,7 @@ class SchedulerService:
             logger.info("Running low stock check task")
             NotificationService.check_low_stock(db)
         except Exception as e:
-            logger.error(f"Error in low stock check task: {str(e)}")
+            logger.exception("Error in low stock check task")
         finally:
             db.close()
 
@@ -170,7 +170,7 @@ class SchedulerService:
             logger.info("Running out of stock check task")
             NotificationService.check_out_of_stock(db)
         except Exception as e:
-            logger.error(f"Error in out of stock check task: {str(e)}")
+            logger.exception("Error in out of stock check task")
         finally:
             db.close()
 
@@ -182,7 +182,7 @@ class SchedulerService:
             logger.info("Running near expiry check task")
             NotificationService.check_near_expiry(db)
         except Exception as e:
-            logger.error(f"Error in near expiry check task: {str(e)}")
+            logger.exception("Error in near expiry check task")
         finally:
             db.close()
 
@@ -194,7 +194,7 @@ class SchedulerService:
             logger.info("Running dead stock check task")
             NotificationService.check_dead_stock(db)
         except Exception as e:
-            logger.error(f"Error in dead stock check task: {str(e)}")
+            logger.exception("Error in dead stock check task")
         finally:
             db.close()
 
@@ -206,7 +206,7 @@ class SchedulerService:
             logger.info("Running overstock check task")
             NotificationService.check_overstock(db)
         except Exception as e:
-            logger.error(f"Error in overstock check task: {str(e)}")
+            logger.exception("Error in overstock check task")
         finally:
             db.close()
 
@@ -219,7 +219,7 @@ class SchedulerService:
             result = SyncUploadService.upload_pending(db)
             logger.info("Cloud sync upload result: %s", result)
         except Exception as e:
-            logger.error(f"Error in cloud sync upload task: {str(e)}")
+            logger.exception("Error in cloud sync upload task")
         finally:
             db.close()
 
@@ -235,7 +235,7 @@ class SchedulerService:
             )
             logger.info("Cloud projection result: %s", result)
         except Exception as e:
-            logger.error(f"Error in cloud projection task: {str(e)}")
+            logger.exception("Error in cloud projection task")
         finally:
             db.close()
 
@@ -251,7 +251,7 @@ class SchedulerService:
             )
             logger.info("Generated %s weekly AI manager report(s)", len(reports))
         except Exception as e:
-            logger.error(f"Error in weekly AI manager report task: {str(e)}")
+            logger.exception("Error in weekly AI manager report task")
         finally:
             db.close()
 
@@ -264,7 +264,7 @@ class SchedulerService:
             deliveries = AIReportDeliveryService.retry_due(db)
             logger.info("Retried %s weekly AI report delivery record(s)", len(deliveries))
         except Exception as e:
-            logger.error(f"Error in weekly AI report delivery retry task: {str(e)}")
+            logger.exception("Error in weekly AI report delivery retry task")
         finally:
             db.close()
 

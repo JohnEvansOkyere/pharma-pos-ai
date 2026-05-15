@@ -2,7 +2,7 @@
 Notification service for creating and managing system notifications.
 """
 from typing import Optional
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from sqlalchemy.orm import Session
 import httpx
 import logging
@@ -111,7 +111,7 @@ class NotificationService:
             existing = db.query(Notification).filter(
                 Notification.type == NotificationType.EXPIRY,
                 Notification.related_entity_id == batch.id,
-                Notification.created_at >= datetime.now() - timedelta(days=1)
+                Notification.created_at >= datetime.now(timezone.utc) - timedelta(days=1)
             ).first()
 
             if not existing:
@@ -150,7 +150,7 @@ class NotificationService:
             existing = db.query(Notification).filter(
                 Notification.type == NotificationType.LOW_STOCK,
                 Notification.related_entity_id == product.id,
-                Notification.created_at >= datetime.now() - timedelta(days=1)
+                Notification.created_at >= datetime.now(timezone.utc) - timedelta(days=1)
             ).first()
 
             if not existing:
@@ -186,7 +186,7 @@ class NotificationService:
             existing = db.query(Notification).filter(
                 Notification.type == NotificationType.OUT_OF_STOCK,
                 Notification.related_entity_id == product.id,
-                Notification.created_at >= datetime.now() - timedelta(days=1)
+                Notification.created_at >= datetime.now(timezone.utc) - timedelta(days=1)
             ).first()
 
             if not existing:
@@ -220,7 +220,7 @@ class NotificationService:
             existing = db.query(Notification).filter(
                 Notification.type == NotificationType.OVERSTOCK,
                 Notification.related_entity_id == product.id,
-                Notification.created_at >= datetime.now() - timedelta(days=7)  # Check weekly
+                Notification.created_at >= datetime.now(timezone.utc) - timedelta(days=7)  # Check weekly
             ).first()
 
             if not existing:
@@ -247,7 +247,7 @@ class NotificationService:
         """
         from app.models.sale import Sale, SaleItem
 
-        dead_stock_threshold = datetime.now() - timedelta(days=settings.DEAD_STOCK_DAYS)
+        dead_stock_threshold = datetime.now(timezone.utc) - timedelta(days=settings.DEAD_STOCK_DAYS)
 
         # Get all active products
         active_products = db.query(Product).filter(Product.is_active == True).all()
@@ -268,7 +268,7 @@ class NotificationService:
                 existing = db.query(Notification).filter(
                     Notification.type == NotificationType.DEAD_STOCK,
                     Notification.related_entity_id == product.id,
-                    Notification.created_at >= datetime.now() - timedelta(days=7)  # Check weekly
+                    Notification.created_at >= datetime.now(timezone.utc) - timedelta(days=7)  # Check weekly
                 ).first()
 
                 if not existing:
@@ -306,7 +306,7 @@ class NotificationService:
             existing = db.query(Notification).filter(
                 Notification.type == NotificationType.NEAR_EXPIRY,
                 Notification.related_entity_id == batch.id,
-                Notification.created_at >= datetime.now() - timedelta(hours=12)  # Check twice daily
+                Notification.created_at >= datetime.now(timezone.utc) - timedelta(hours=12)  # Check twice daily
             ).first()
 
             if not existing:

@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.db.base import get_db
-from app.models.sale import Sale, SaleItem
+from app.models.sale import Sale, SaleItem, SaleStatus
 from app.models.product import Product, ProductBatch
 from app.models.user import User
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import require_view_reports
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -27,7 +27,7 @@ def _count_or_zero(expression):
 @router.get("/kpis")
 def get_dashboard_kpis(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> Dict[str, Any]:
     """
     Get dashboard KPIs.
@@ -40,7 +40,10 @@ def get_dashboard_kpis(
     sales_stats = db.query(
         _sum_or_zero(Sale.total_amount).label("total_sales_today"),
         _count_or_zero(Sale.id).label("total_sales_count"),
-    ).filter(Sale.created_at >= today_start).one()
+    ).filter(
+        Sale.created_at >= today_start,
+        Sale.status == SaleStatus.COMPLETED,
+    ).one()
 
     total_profit_today = db.query(
         _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity)
@@ -49,7 +52,8 @@ def get_dashboard_kpis(
     ).join(
         Product, Product.id == SaleItem.product_id
     ).filter(
-        Sale.created_at >= today_start
+        Sale.created_at >= today_start,
+        Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0.0
 
     inventory_value = db.query(
@@ -89,7 +93,7 @@ def get_fast_moving_products(
     limit: int = 10,
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get fast-moving products based on sales volume.
@@ -116,7 +120,8 @@ def get_fast_moving_products(
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         Product.id, Product.name, Product.sku
     ).order_by(
@@ -140,7 +145,7 @@ def get_slow_moving_products(
     limit: int = 10,
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get slow-moving products with low sales.
@@ -162,7 +167,8 @@ def get_slow_moving_products(
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         SaleItem.product_id
     ).subquery()
@@ -198,7 +204,7 @@ def get_slow_moving_products(
 def get_low_stock_items(
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get products with low stock (at or below low stock threshold).
@@ -239,7 +245,7 @@ def get_low_stock_items(
 def get_sales_trend(
     days: int = 7,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get sales trend data for charts.
@@ -259,7 +265,8 @@ def get_sales_trend(
         func.count(Sale.id).label("sales_count"),
         func.sum(Sale.total_amount).label("total_revenue")
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         func.date(Sale.created_at)
     ).order_by(
@@ -280,7 +287,7 @@ def get_sales_trend(
 def get_staff_performance(
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get staff performance metrics.
@@ -304,7 +311,8 @@ def get_staff_performance(
     ).join(
         Sale, Sale.user_id == User.id
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         User.id, User.full_name, User.username
     ).order_by(
@@ -328,7 +336,7 @@ def get_expiring_products(
     days: int = 30,
     limit: int = 50,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get products expiring within specified days.
@@ -389,7 +397,7 @@ def get_expiring_products(
 @router.get("/overstock-items")
 def get_overstock_items(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get products with overstock (stock significantly above reorder level).
@@ -426,7 +434,7 @@ def get_overstock_items(
 def get_profit_by_category(
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> List[Dict[str, Any]]:
     """
     Get profit margins by product category.
@@ -456,7 +464,8 @@ def get_profit_by_category(
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         Category.id, Category.name
     ).all()
@@ -486,7 +495,7 @@ def get_profit_by_category(
 def get_revenue_analysis(
     period: str = "daily",  # daily, weekly, monthly
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> Dict[str, Any]:
     """
     Get revenue analysis for different periods.
@@ -503,20 +512,22 @@ def get_revenue_analysis(
     week_start = today_start - timedelta(days=today_start.weekday())
     month_start = today_start.replace(day=1)
 
+    _completed = Sale.status == SaleStatus.COMPLETED
+
     daily_stats = db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= today_start).one()
+    ).filter(Sale.created_at >= today_start, _completed).one()
 
     weekly_stats = db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= week_start).one()
+    ).filter(Sale.created_at >= week_start, _completed).one()
 
     monthly_stats = db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= month_start).one()
+    ).filter(Sale.created_at >= month_start, _completed).one()
 
     avg_basket = (
         float(daily_stats.revenue or 0.0) / int(daily_stats.transactions)
@@ -539,7 +550,7 @@ def get_revenue_analysis(
 def get_financial_kpis(
     days: int = 30,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
+    current_user: User = Depends(require_view_reports)
 ) -> Dict[str, Any]:
     """
     Get comprehensive financial KPIs.
@@ -557,7 +568,10 @@ def get_financial_kpis(
     sales_stats = db.query(
         _sum_or_zero(Sale.total_amount).label("total_revenue"),
         _count_or_zero(Sale.id).label("total_transactions"),
-    ).filter(Sale.created_at >= start_date).one()
+    ).filter(
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
+    ).one()
 
     total_revenue = float(sales_stats.total_revenue or 0.0)
 
@@ -568,7 +582,8 @@ def get_financial_kpis(
     ).join(
         Product, Product.id == SaleItem.product_id
     ).filter(
-        Sale.created_at >= start_date
+        Sale.created_at >= start_date,
+        Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0.0
 
     # Net profit (simplified - just subtracting estimated overhead)
@@ -588,7 +603,8 @@ def get_financial_kpis(
         _count_or_zero(Sale.id).label("credit_sales_count"),
     ).filter(
         Sale.created_at >= start_date,
-        Sale.payment_method == "credit"
+        Sale.payment_method == "credit",
+        Sale.status == SaleStatus.COMPLETED,
     ).one()
 
     return {

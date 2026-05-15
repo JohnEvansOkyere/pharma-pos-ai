@@ -20,7 +20,7 @@ from app.models.sale import (
     SaleReversalType,
     SaleStatus,
 )
-from app.models.product import Product, ProductBatch
+from app.models.product import Product, ProductBatch, PrescriptionStatus
 from app.models.stock_adjustment import StockAdjustment, AdjustmentType
 from app.models.inventory_movement import InventoryMovementType
 from app.models.sync_event import SyncEventType
@@ -302,6 +302,46 @@ def create_sale(
                     detail=f"Product {product.name} is inactive and cannot be sold"
                 )
 
+            # ── Prescription and controlled substance enforcement (P1-03) ──
+            if product.prescription_status == PrescriptionStatus.PRESCRIPTION_REQUIRED:
+                if not sale_data.has_prescription:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Product '{product.name}' requires a prescription. "
+                            f"Set has_prescription=True and provide prescription_number."
+                        ),
+                    )
+                if not (sale_data.prescription_number or "").strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Prescription number is required for '{product.name}'",
+                    )
+
+            if product.is_narcotic:
+                if not sale_data.has_prescription or not (sale_data.prescription_number or "").strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            f"Product '{product.name}' is a controlled substance. "
+                            f"Prescription is mandatory."
+                        ),
+                    )
+                if not (sale_data.customer_name or "").strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Customer name is required for controlled substance '{product.name}'",
+                    )
+
+            if product.requires_id:
+                if not (getattr(sale_data, 'customer_id_number', None) or "").strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Customer ID is required for product '{product.name}'",
+                    )
+
+            # ── Stock validation ──
+
             InventoryService.recalculate_product_stock(db, product)
             if product.total_stock < item.quantity:
                 raise HTTPException(
@@ -312,6 +352,18 @@ def create_sale(
             allocated_batches = _allocate_product_batches(db, product, item.quantity)
             unit_price = _resolve_sale_unit_price(product, sale_data.pricing_mode)
             line_discount = round_money(item.discount_amount)
+
+            # ── Reject item-level discount exceeding line subtotal (V2-P1-01) ──
+            line_subtotal = unit_price * Decimal(item.quantity)
+            if line_discount > line_subtotal:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Discount for '{product.name}' ({line_discount}) "
+                        f"exceeds the line subtotal ({line_subtotal})"
+                    ),
+                )
+
             quantity_remaining = item.quantity
             discount_remaining = line_discount
 
@@ -359,12 +411,29 @@ def create_sale(
                 discount_remaining -= batch_discount
 
         # Calculate final total
+        sale_level_discount = round_money(sale_data.discount_amount)
+        if sale_level_discount > subtotal:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Sale-level discount ({sale_level_discount}) "
+                    f"exceeds subtotal ({subtotal})"
+                ),
+            )
+
         total_amount_decimal = (
             subtotal
-            - round_money(sale_data.discount_amount)
+            - sale_level_discount
             + round_money(sale_data.tax_amount)
         )
         total_amount = round_money(total_amount_decimal)
+
+        if total_amount < Decimal("0"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Total amount cannot be negative. Check discounts.",
+            )
+
         amount_paid = round_money(sale_data.amount_paid)
 
         # Validate payment
@@ -382,7 +451,7 @@ def create_sale(
             user_id=current_user.id,
             pricing_mode=sale_data.pricing_mode,
             subtotal=round_money(subtotal),
-            discount_amount=round_money(sale_data.discount_amount),
+            discount_amount=sale_level_discount,
             tax_amount=round_money(sale_data.tax_amount),
             total_amount=total_amount,
             payment_method=sale_data.payment_method,
@@ -390,6 +459,13 @@ def create_sale(
             change_amount=change_amount,
             customer_name=sale_data.customer_name,
             customer_phone=sale_data.customer_phone,
+            customer_id_number=getattr(sale_data, 'customer_id_number', None),
+            customer_address=getattr(sale_data, 'customer_address', None),
+            momo_reference=getattr(sale_data, 'momo_reference', None),
+            momo_number=getattr(sale_data, 'momo_number', None),
+            prescription_number=getattr(sale_data, 'prescription_number', None),
+            doctor_name=getattr(sale_data, 'doctor_name', None),
+            has_prescription=getattr(sale_data, 'has_prescription', False),
             notes=sale_data.notes,
         )
 
@@ -543,14 +619,18 @@ def get_today_sales_summary(
     sales_stats = db.query(
         func.count(Sale.id).label("total_sales"),
         func.coalesce(func.sum(Sale.total_amount), 0).label("total_revenue"),
-    ).filter(Sale.created_at >= today_start).one()
+    ).filter(
+        Sale.created_at >= today_start,
+        Sale.status == SaleStatus.COMPLETED,
+    ).one()
 
     total_items_sold = db.query(
         func.coalesce(func.sum(SaleItem.quantity), 0)
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).filter(
-        Sale.created_at >= today_start
+        Sale.created_at >= today_start,
+        Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0
 
     total_profit = db.query(
@@ -560,7 +640,8 @@ def get_today_sales_summary(
     ).join(
         Product, Product.id == SaleItem.product_id
     ).filter(
-        Sale.created_at >= today_start
+        Sale.created_at >= today_start,
+        Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0
 
     return {

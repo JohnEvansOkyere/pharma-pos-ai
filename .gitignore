@@ -96,6 +96,8 @@ installer-builds/
 !requirements.txt
 !README.md
 !AGENTS.md
+!MEMORY.md
+!CLAUDE.md
 !docs/
 !docs/**
 deploy.sh
