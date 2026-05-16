@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.dependencies import get_current_active_user, require_perform_stock_take
 from app.db.base import get_db
@@ -163,7 +163,7 @@ def complete_stock_take(
     try:
         stock_take = (
             db.query(StockTake)
-            .options(joinedload(StockTake.items))
+            .options(selectinload(StockTake.items))
             .filter(StockTake.id == stock_take_id)
             .with_for_update()
             .first()
