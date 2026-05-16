@@ -5,15 +5,20 @@ color 0B
 
 cd /d "%~dp0"
 
-set "BACKEND_PYTHON=%~dp0backend\venv\Scripts\python.exe"
-if not exist "%BACKEND_PYTHON%" set "BACKEND_PYTHON=python"
-
 echo ========================================
-echo   LOCAL ADMIN PROVISIONING
+echo   ADMIN PROVISIONING
 echo ========================================
 echo.
 
-"%BACKEND_PYTHON%" scripts\provision_admin.py
+docker inspect pharma-pos-backend >nul 2>&1
+if errorlevel 1 (
+    echo Backend container is not running.
+    echo Start the application first with: docker compose -f docker-compose.client.yml up -d
+    pause
+    exit /b 1
+)
+
+docker exec -it pharma-pos-backend python scripts/provision_admin.py
 set EXIT_CODE=%ERRORLEVEL%
 
 echo.

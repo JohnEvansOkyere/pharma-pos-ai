@@ -21,161 +21,213 @@ Each pharmacy should have:
 
 Do not clone one pharmacy database into another live client installation.
 
-## Current Reality
+## Deployment Model
 
-This repo already includes:
-- Windows backup script: [backup.bat](/home/grejoy/Projects/pharma-pos-ai/backup.bat)
-- Windows backup task helper: [install_backup_task.bat](/home/grejoy/Projects/pharma-pos-ai/install_backup_task.bat)
-- Windows restore script: [restore.bat](/home/grejoy/Projects/pharma-pos-ai/restore.bat)
-- installer draft: [installer.iss](/home/grejoy/Projects/pharma-pos-ai/installer.iss)
-- environment helper: [setup-env.bat](/home/grejoy/Projects/pharma-pos-ai/setup-env.bat)
-- local launcher: [start.bat](/home/grejoy/Projects/pharma-pos-ai/start.bat)
-- local shutdown helper: [stop.bat](/home/grejoy/Projects/pharma-pos-ai/stop.bat)
-- admin backup status and local diagnostics in the `Settings` page
+**Primary path: Docker Compose.**
 
-Still required for a stronger production installer:
-- first-run admin provisioning
-- reliable backend service registration
-- cleaner release packaging without demo/default material
+All three services — PostgreSQL, backend API, and frontend — run as Docker containers managed by `docker-compose.yml`. This is the standard production deployment. It requires only Docker Desktop on the client machine; no separate Python, Node.js, or PostgreSQL installation is needed.
 
-Current first-run admin tool:
-- [provision-admin.bat](/home/grejoy/Projects/pharma-pos-ai/provision-admin.bat)
-- [scripts/provision_admin.py](/home/grejoy/Projects/pharma-pos-ai/scripts/provision_admin.py)
+The `start.bat` / `stop.bat` scripts are a secondary option for developer or bare-metal setups that require a local Python virtual environment and a pre-built frontend. Do not use them for client installs unless Docker Desktop cannot be installed.
+
+## Available Scripts
+
+- `setup-env.bat` — creates `backend/.env` and `frontend/.env.local` from the `.env.example` template
+- `start.bat` — bare-metal launcher (local Python path only; not needed for Docker)
+- `stop.bat` — stops bare-metal launcher windows
+- `backup.bat` — runs a `pg_dump` backup of the local PostgreSQL database
+- `install_backup_task.bat` — registers `backup.bat` as a Windows Scheduled Task
+- `restore.bat` — restores a backup file into the database
+- `provision-admin.bat` — creates the first admin account
+- `uninstall-app.bat` — removes the application
 
 ## Pre-Install Checklist
 
-Before installation, confirm:
+Before arriving at the client site, confirm:
 
-- target machine is stable and supported
-- Windows user with admin rights is available
-- PostgreSQL installer is available
-- `pg_dump`, `pg_restore`, and `psql` will be in `PATH`
-- pharmacy name and installation path are known
-- backup folder location is chosen
-- strong `SECRET_KEY` is prepared
-- strong PostgreSQL password is prepared
-- initial admin username and password are prepared
+- [ ] Target machine is stable with Windows 10 64-bit or newer
+- [ ] Windows user with administrator rights is available for the install session
+- [ ] Docker Desktop for Windows installer is downloaded and ready
+- [ ] WSL 2 is enabled (required by Docker Desktop) — check in Windows Features
+- [ ] Project files are copied to the machine (USB drive, local copy, or git clone)
+- [ ] Pharmacy name is known
+- [ ] Strong PostgreSQL password is prepared (write it down securely)
+- [ ] Strong admin account username and password are prepared
+- [ ] Backup folder location is decided (`C:\PharmaBackups` is a safe default)
+- [ ] Windows Defender / antivirus exclusions planned for the install folder
 
 ## Standard Installation Target
 
-Recommended target:
-
-- App root: `C:\Program Files\Pharma-POS-AI`
-- Database host: `localhost`
-- Database port: `5432`
+- App root: `C:\Pharma-POS-AI`
+- Database host: `db` (Docker internal) / `localhost:5435` (host-side access)
 - Database name: `pharma_pos`
 - Database user: `pharma_user`
-- Backups folder: `C:\Program Files\Pharma-POS-AI\backups`
+- Backups folder: `C:\PharmaBackups`
+- Frontend URL: `http://localhost:8080`
+- Backend API URL: `http://localhost:8000`
 
 ## Installation Procedure
 
-### 1. Install PostgreSQL
+### 1. Enable WSL 2
 
-Use official PostgreSQL for Windows.
+Open PowerShell as Administrator and run:
 
-During installation:
-- keep the local service enabled
-- record the superuser password
-- ensure command-line tools are installed
-
-### 2. Create App Database And App User
-
-Using `psql` or SQL Shell:
-
-```sql
-CREATE USER pharma_user WITH PASSWORD 'strong_password_here';
-CREATE DATABASE pharma_pos OWNER pharma_user;
-GRANT ALL PRIVILEGES ON DATABASE pharma_pos TO pharma_user;
+```powershell
+wsl --install
 ```
+
+Restart the machine if prompted. WSL 2 is required by Docker Desktop.
+
+### 2. Install Docker Desktop
+
+Download and install Docker Desktop for Windows. During installation:
+- enable WSL 2 backend when prompted
+- do not enable Kubernetes (not needed)
+
+After installation, start Docker Desktop and wait until the whale icon in the system tray shows "Docker Desktop is running".
+
+Verify in a Command Prompt:
+
+```cmd
+docker --version
+docker compose version
+```
+
+Both commands must succeed before continuing.
 
 ### 3. Deploy Application Files
 
-Install or copy the application to:
+Copy or clone the project to the target path:
 
-- `C:\Program Files\Pharma-POS-AI`
+```
+C:\Pharma-POS-AI
+```
+
+Verify the folder contains `docker-compose.yml`, `backend\`, `frontend\`, `setup-env.bat`, and `backup.bat`.
 
 ### 4. Configure Environment
 
-Run:
+Open a Command Prompt in `C:\Pharma-POS-AI` and run:
 
 ```bat
 setup-env.bat
 ```
 
-This will prepare:
+Enter the pharmacy name and the PostgreSQL password when prompted. The script generates a strong `SECRET_KEY` automatically and writes `backend\.env`.
 
-- `backend\.env`
-- `frontend\.env.local`
-
-The script prompts for:
-
-- pharmacy name
-- PostgreSQL password for `pharma_user`
-
-Then review the local values in:
-
-- `backend\.env`
-
-Minimum values:
+After the script finishes, open `backend\.env` and confirm:
 
 ```env
-DATABASE_BACKEND=postgresql
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=pharma_pos
-POSTGRES_USER=pharma_user
-POSTGRES_PASSWORD=strong_password_here
-SECRET_KEY=generated_secret_here
+POSTGRES_PASSWORD=<the password you entered — not empty>
+SECRET_KEY=<a long generated string — not a placeholder>
+ENVIRONMENT=production
+APP_NAME=<the pharmacy name you entered>
 ```
 
-### 5. Initialize Database
+### 5. Start Docker Services
 
-Run migrations from the installed root.
+From `C:\Pharma-POS-AI` run:
 
-If sample data is needed only for demonstration, seed intentionally.
+```cmd
+docker compose up -d
+```
 
-Do not ship demo users in a client release unless the client explicitly requested a demo environment.
+This builds the backend and frontend images and starts all three containers (database, backend, frontend). First run takes 3–5 minutes while images build.
 
-### 5A. Provision The First Admin
+Check that all containers are running:
 
-Run:
+```cmd
+docker compose ps
+```
+
+All three services (`pharma-pos-db`, `pharma-pos-backend`, `pharma-pos-frontend`) should show `Up` or `healthy`.
+
+If the backend shows `unhealthy`, wait 60 seconds and check again — it waits for the database to be ready.
+
+### 6. Run Database Migrations
+
+After the containers are healthy, apply any pending schema migrations:
+
+```cmd
+docker exec pharma-pos-backend alembic upgrade head
+```
+
+This is safe to run on every install and on every upgrade.
+
+### 7. Provision The First Admin Account
+
+Run the provisioning script inside the backend container:
+
+```cmd
+docker exec -it pharma-pos-backend python scripts/provision_admin.py
+```
+
+Enter the admin username, email, full name, and password when prompted. This creates the first administrator account for this pharmacy. No other accounts should be created at this stage — the admin creates staff accounts from within the application.
+
+> **Do not use generic or shared passwords.** The admin password must be strong and known only to the pharmacy owner.
+
+### 8. Verify The Application Is Running
+
+Open a browser and go to:
+
+```
+http://localhost:8080
+```
+
+Log in with the admin account created in step 7. Confirm:
+- dashboard loads without errors
+- products page is accessible
+- POS page opens
+
+### 9. Configure Windows Firewall (If Needed)
+
+By default, ports 8080 and 8000 are accessible only from `localhost`. If pharmacy staff will access the system from other computers on the same local network, open inbound rules in Windows Defender Firewall for TCP port 8080.
+
+If access is limited to the single pharmacy workstation, no firewall changes are needed.
+
+### 10. Configure Automatic Startup
+
+Docker Desktop is configured to start automatically at Windows login by default. The containers have `restart: unless-stopped`, so they restart automatically after a reboot.
+
+Verify after a reboot:
+1. Wait for Docker Desktop to show "running" in the system tray
+2. Open `http://localhost:8080` — it should load without manual intervention
+
+### 11. Configure Backups
+
+Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator and run:
 
 ```bat
-provision-admin.bat
+install_backup_task.bat
 ```
 
-Create the pharmacy-specific administrator account before handing the system to the client.
+This registers a Windows Scheduled Task that runs `backup.bat` every night. Backup files are written to the `backups\` folder inside the project directory.
 
-### 6. Configure Application Startup
+> **Important:** `backup.bat` connects to PostgreSQL at port `5435` when using Docker Compose (the database container maps to host port 5435). Confirm `backup.bat` is using the correct port — see the Docker Backup Note below.
 
-The backend should run automatically at startup.
+After installing the task, run a manual backup to confirm it works:
 
-Preferred supportable options:
-- Windows service for the backend
-- desktop shortcut or local launcher for the frontend
+```bat
+backup.bat
+```
 
-Expected outcome:
-- after machine reboot, backend is available without manual terminal steps
+A `.dump` file should appear in the `backups\` folder.
 
-### 7. Configure Backups
+#### Docker Backup Note
 
-Minimum expectation:
-- nightly backup scheduled automatically
-- backup files written to local backup folder
-- technician knows restore procedure
+When running under Docker Compose, PostgreSQL is reachable from the host at port `5435`. The `backup.bat` script reads `POSTGRES_PORT` from `backend\.env`. If `POSTGRES_PORT=5432` is set in `.env` (the Docker internal port), backup will fail.
 
-Current script available:
-- [backup.bat](/home/grejoy/Projects/pharma-pos-ai/backup.bat)
+**Workaround:** After confirming the application is running, update `POSTGRES_PORT` in `backend\.env` to `5435` before running `backup.bat`. This affects only host-side tools like `pg_dump`; Docker Compose overrides this value internally for the backend container.
 
-Windows task helper:
-- [install_backup_task.bat](/home/grejoy/Projects/pharma-pos-ai/install_backup_task.bat)
+Alternatively, run `pg_dump` directly inside the database container (no extra installation required):
 
-Current restore tool:
-- [restore.bat](/home/grejoy/Projects/pharma-pos-ai/restore.bat)
+```cmd
+docker exec pharma-pos-db pg_dump -U pharma_user -d pharma_pos -F c -f /tmp/backup.dump
+docker cp pharma-pos-db:/tmp/backup.dump C:\PharmaBackups\pharma_backup_%DATE:~-4%%DATE:~3,2%%DATE:~0,2%.dump
+```
 
-### 8. Validate Before Handover
+### 12. Validate Before Handover
 
-Test:
+Test every workflow before leaving the pharmacy:
 - login works for the created admin account
 - POS opens correctly
 - products page loads
@@ -184,9 +236,9 @@ Test:
 - sale completes
 - sale void or refund is verified with a test invoice
 - closeout summary is reviewed
-- manual backup succeeds
-- backup file appears in backup folder
-- `Settings` shows database connected and recent backup status
+- manual backup succeeds and the `.dump` file appears
+- `Settings` page shows database connected and recent backup status
+- machine rebooted and system came back up without manual steps
 
 ## Client Handover Checklist
 

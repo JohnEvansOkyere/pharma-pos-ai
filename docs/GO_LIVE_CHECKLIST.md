@@ -287,7 +287,7 @@
 7. [ ] Receipt printing verified with target printers
 8. [ ] Barcode scanner input path verified
 9. [ ] POS workflow tested on pharmacy workstation screens
-10. [ ] Install steps documented and repeatable
+10. [x] Install steps documented and repeatable ✅ *(2026-05-16 UTC — Docker Compose path fully documented in WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)*
 11. [ ] Clean install verified on a fresh machine
 
 ---
