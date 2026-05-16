@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
 from app.models.activity_log import ActivityLog
-from app.models.ai_report import AIWeeklyReportDeliverySetting
+from app.models.ai_report import AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -451,7 +451,9 @@ def test_transient_failed_weekly_report_delivery_is_retried(monkeypatch, db_sess
         db=db_session,
         current_user=manager,
     )
-    failed = deliveries[0]
+    # deliver_weekly_manager_report returns Pydantic response objects, not ORM models.
+    # Query the actual DB row so we can update next_retry_at for the retry test.
+    failed = db_session.query(AIWeeklyReportDelivery).filter(AIWeeklyReportDelivery.id == deliveries[0].id).first()
     failed.next_retry_at = datetime(2026, 5, 3, 19, 1, tzinfo=timezone.utc)
     db_session.commit()
 
@@ -539,7 +541,9 @@ def test_retry_stops_at_max_attempts(monkeypatch, db_session):
         db=db_session,
         current_user=manager,
     )
-    failed = deliveries[0]
+    # deliver_weekly_manager_report returns Pydantic response objects, not ORM models.
+    # Query the actual DB row so we can update next_retry_at for the retry test.
+    failed = db_session.query(AIWeeklyReportDelivery).filter(AIWeeklyReportDelivery.id == deliveries[0].id).first()
     failed.next_retry_at = datetime(2026, 5, 3, 19, 1, tzinfo=timezone.utc)
     db_session.commit()
 
