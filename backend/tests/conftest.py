@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
 from pathlib import Path
 import sys
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -16,17 +18,45 @@ from app.models import Category, Product, ProductBatch, User
 from app.models.product import DosageForm, PrescriptionStatus
 from app.models.user import UserRole
 
+_TEST_DB_URL = os.getenv("TEST_DATABASE_URL", "sqlite:///:memory:")
+_IS_POSTGRES = _TEST_DB_URL.startswith("postgresql")
+
+
+@pytest.fixture(scope="session")
+def _engine():
+    if _IS_POSTGRES:
+        engine = create_engine(_TEST_DB_URL)
+    else:
+        # StaticPool keeps the same in-memory connection alive for the whole session
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+    engine.dispose()
+
 
 @pytest.fixture()
-def db_session():
-    engine = create_engine("sqlite:///:memory:")
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base.metadata.create_all(bind=engine)
-    session = TestingSessionLocal()
+def db_session(_engine):
+    session = sessionmaker(autocommit=False, autoflush=False, bind=_engine)()
     try:
         yield session
     finally:
+        session.rollback()
         session.close()
+        # Wipe all rows between tests so each test starts with a clean slate
+        with _engine.begin() as conn:
+            if _IS_POSTGRES:
+                tables = ", ".join(
+                    f'"{t.name}"' for t in reversed(Base.metadata.sorted_tables)
+                )
+                conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+            else:
+                for table in reversed(Base.metadata.sorted_tables):
+                    conn.execute(table.delete())
 
 
 @pytest.fixture()
