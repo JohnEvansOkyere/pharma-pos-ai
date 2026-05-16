@@ -177,10 +177,10 @@ Frontend will run at: **http://localhost:3000**
 
 ### 4. Admin Provisioning
 
-For client installations, create the first administrator with:
+For client installations, create the first administrator inside the running backend container:
 
 ```bash
-python scripts/provision_admin.py
+docker exec -it pharma-pos-backend python scripts/provision_admin.py
 ```
 
 Development seed credentials should only exist in intentionally seeded demo environments.
@@ -301,43 +301,60 @@ VITE_API_URL=http://localhost:8000/api
 
 ---
 
-## 🐳 Docker Deployment (Optional)
+## 🐳 Docker Deployment
 
-Use the included `docker-compose.yml`. It reads server/database values from
-`backend/.env`; frontend Docker builds use the internal `/api` nginx proxy.
+### Development (builds from source)
 
-Run:
 ```bash
-setup-env.bat  # Windows; creates backend/.env and frontend/.env.local
-docker-compose up -d
+setup-env.bat          # creates backend/.env and frontend/.env.local
+docker compose up -d   # builds and starts PostgreSQL + backend + frontend
 ```
+
+### Client installation (pre-built images from GitHub Container Registry)
+
+```bash
+setup-env.bat
+docker compose -f docker-compose.client.yml up -d   # pulls images, no build step
+docker exec pharma-pos-backend alembic upgrade head
+docker exec -it pharma-pos-backend python scripts/provision_admin.py
+```
+
+Images are published automatically to `ghcr.io` on every push to `main` via the CI/CD pipeline in `.github/workflows/build.yml`. See [Windows Local Deployment Runbook](./docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md) for the full step-by-step client install guide.
 
 ---
 
-## 📦 Offline Installation for Clients
+## 📦 Client Installation Package
 
-See [OFFLINE_INSTALLATION.md](./docs/OFFLINE_INSTALLATION.md) for detailed guides on:
+The minimum set of files a client machine needs (no source code required):
 
-1. **Python + Node Bundled Installer**
-2. **Electron Desktop App**
-3. **Docker Offline Package**
-4. **Windows Installer (NSIS)**
+- `docker-compose.client.yml`
+- `setup-env.bat`
+- `backup.bat` + `restore.bat` + `install_backup_task.bat`
+- `provision-admin.bat`
+- `backend/.env.example`
 
 ---
 
 ## 🧪 Testing
 
 ### Backend Tests
+
+Local (fast, SQLite fallback):
 ```bash
-cd backend
-pytest
+cd backend && pytest
+```
+
+Against PostgreSQL (matches production and CI):
+```bash
+TEST_DATABASE_URL=postgresql://pharma_user:password@localhost:5435/pharma_pos pytest
 ```
 
 ### Frontend Tests
 ```bash
-cd frontend
-npm run test
+cd frontend && npm test
 ```
+
+CI runs both test suites against PostgreSQL before any image is built or pushed.
 
 ---
 

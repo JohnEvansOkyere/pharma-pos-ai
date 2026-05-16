@@ -25,7 +25,7 @@ Do not clone one pharmacy database into another live client installation.
 
 **Primary path: Docker Compose.**
 
-All three services — PostgreSQL, backend API, and frontend — run as Docker containers managed by `docker-compose.yml`. This is the standard production deployment. It requires only Docker Desktop on the client machine; no separate Python, Node.js, or PostgreSQL installation is needed.
+All three services — PostgreSQL, backend API, and frontend — run as Docker containers managed by `docker-compose.client.yml`. This is the standard production deployment. It requires only Docker Desktop on the client machine; no separate Python, Node.js, or PostgreSQL installation is needed. Pre-built images are pulled automatically from GitHub Container Registry — no source code is needed on the client machine.
 
 The `start.bat` / `stop.bat` scripts are a secondary option for developer or bare-metal setups that require a local Python virtual environment and a pre-built frontend. Do not use them for client installs unless Docker Desktop cannot be installed.
 
@@ -102,7 +102,7 @@ Copy or clone the project to the target path:
 C:\Pharma-POS-AI
 ```
 
-Verify the folder contains `docker-compose.yml`, `backend\`, `frontend\`, `setup-env.bat`, and `backup.bat`.
+Verify the folder contains `docker-compose.client.yml`, `setup-env.bat`, `backup.bat`, `restore.bat`, `install_backup_task.bat`, and `provision-admin.bat`.
 
 ### 4. Configure Environment
 
@@ -128,10 +128,10 @@ APP_NAME=<the pharmacy name you entered>
 From `C:\Pharma-POS-AI` run:
 
 ```cmd
-docker compose up -d
+docker compose -f docker-compose.client.yml up -d
 ```
 
-This builds the backend and frontend images and starts all three containers (database, backend, frontend). First run takes 3–5 minutes while images build.
+This pulls the pre-built images from GitHub Container Registry and starts all three containers (database, backend, frontend). First run takes 1–2 minutes while images download.
 
 Check that all containers are running:
 
