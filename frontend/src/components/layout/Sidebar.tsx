@@ -15,17 +15,19 @@ import {
 import { useAuthStore } from '../../stores/authStore'
 
 const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: FiHome, adminOnly: true },
-  { name: 'Cloud Dashboard', href: '/cloud-dashboard', icon: FiCloud, adminOrManager: true },
-  { name: 'Audit Logs', href: '/audit-logs', icon: FiClipboard, adminOnly: true },
-  { name: 'Products', href: '/products', icon: FiPackage },
-  { name: 'POS', href: '/pos', icon: FiShoppingCart },
-  { name: 'Sales', href: '/sales', icon: FiDollarSign },
-  { name: 'Stock Adjustments', href: '/stock-adjustments', icon: FiRefreshCw, adminOrManager: true },
-  { name: 'Suppliers', href: '/suppliers', icon: FiUsers },
-  { name: 'Notifications', href: '/notifications', icon: FiBell },
-  { name: 'Settings', href: '/settings', icon: FiSettings, adminOrManager: true },
+  { name: 'Dashboard', href: '/dashboard', icon: FiHome, group: 'OVERVIEW', adminOnly: true },
+  { name: 'Cloud Dashboard', href: '/cloud-dashboard', icon: FiCloud, group: 'OVERVIEW', adminOrManager: true },
+  { name: 'Audit Logs', href: '/audit-logs', icon: FiClipboard, group: 'OVERVIEW', adminOnly: true },
+  { name: 'Products', href: '/products', icon: FiPackage, group: 'PHARMACY' },
+  { name: 'POS', href: '/pos', icon: FiShoppingCart, group: 'PHARMACY' },
+  { name: 'Sales', href: '/sales', icon: FiDollarSign, group: 'PHARMACY' },
+  { name: 'Stock Adjustments', href: '/stock-adjustments', icon: FiRefreshCw, group: 'PHARMACY', adminOrManager: true },
+  { name: 'Suppliers', href: '/suppliers', icon: FiUsers, group: 'PHARMACY' },
+  { name: 'Notifications', href: '/notifications', icon: FiBell, group: 'SYSTEM' },
+  { name: 'Settings', href: '/settings', icon: FiSettings, group: 'SYSTEM', adminOrManager: true },
 ]
+
+const SIDEBAR_BG = '#1e3050'
 
 interface SidebarProps {
   onHide: () => void
@@ -34,60 +36,79 @@ interface SidebarProps {
 export default function Sidebar({ onHide }: SidebarProps) {
   const { user } = useAuthStore()
   return (
-    <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+    <div className="w-56 flex flex-col flex-shrink-0" style={{ backgroundColor: SIDEBAR_BG }}>
       {/* Logo */}
-      <div className="h-16 flex items-center justify-between gap-3 px-4 border-b border-gray-200 dark:border-gray-700">
-        <h1 className="min-w-0 truncate text-lg font-bold text-primary-600 dark:text-primary-400">
-          GYSBIN PHARMACY-ANNEX
+      <div
+        className="h-12 flex items-center justify-between gap-2 px-3"
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}
+      >
+        <h1 className="min-w-0 truncate text-sm font-semibold tracking-wide text-white">
+          GYSBIN PHARMACY
         </h1>
         <button
           onClick={onHide}
-          className="rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          className="flex-shrink-0 rounded p-1 transition-colors hover:bg-white/10"
+          style={{ color: 'rgba(255,255,255,0.4)' }}
           aria-label="Hide sidebar"
           title="Hide sidebar"
         >
-          <FiChevronLeft className="h-5 w-5" />
+          <FiChevronLeft className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto custom-scrollbar">
-        {navigation
-          .filter((item) => {
+      <nav className="flex-1 px-2 py-3 overflow-y-auto">
+        {(['OVERVIEW', 'PHARMACY', 'SYSTEM'] as const).map((group) => {
+          const items = navigation.filter((item) => {
+            if (item.group !== group) return false
             if (item.adminOnly) return user?.role === 'admin'
             if (item.adminOrManager) return user?.role === 'admin' || user?.role === 'manager'
             return true
           })
-          .map((item) => (
-            <NavLink
-              key={item.name}
-              to={item.href}
-              className={({ isActive }) =>
-                `flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-primary-50 text-primary-700 dark:bg-primary-900/20 dark:text-primary-400'
-                    : 'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-700'
-                }`
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <item.icon
-                    className={`mr-3 h-5 w-5 ${
-                      isActive ? 'text-primary-600 dark:text-primary-400' : ''
-                    }`}
-                  />
-                  {item.name}
-                </>
-              )}
-            </NavLink>
-          ))}
+          if (items.length === 0) return null
+          return (
+            <div key={group} className="mb-4">
+              <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest"
+                style={{ color: 'rgba(255,255,255,0.35)' }}>
+                {group}
+              </p>
+              <div className="space-y-0.5">
+                {items.map((item) => (
+                  <NavLink
+                    key={item.name}
+                    to={item.href}
+                    className={({ isActive }) =>
+                      `flex items-center px-3 py-2 font-normal rounded transition-colors ${
+                        isActive ? 'text-white' : 'hover:text-white hover:bg-white/5'
+                      }`
+                    }
+                    style={({ isActive }) => ({
+                      fontSize: '14px',
+                      backgroundColor: isActive ? 'rgba(255,255,255,0.12)' : undefined,
+                      color: isActive ? '#fff' : 'rgba(255,255,255,0.82)',
+                    })}
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          className="mr-3 h-4 w-4 flex-shrink-0"
+                          style={{ color: isActive ? '#fff' : 'rgba(255,255,255,0.55)' }}
+                        />
+                        {item.name}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          )
+        })}
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-        <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
-          v1.0.0 • Local Backend Required
+      <div className="px-3 py-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+        <p className="text-center" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
+          v1.0.0 · Local
         </p>
       </div>
     </div>

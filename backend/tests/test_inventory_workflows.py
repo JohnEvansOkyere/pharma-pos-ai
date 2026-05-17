@@ -6,7 +6,7 @@ from app.api.endpoints.products import list_products_catalog, receive_stock, upd
 from app.api.endpoints.sales import create_sale
 from app.models.activity_log import ActivityLog
 from app.models.inventory_movement import InventoryMovement, InventoryMovementType
-from app.models.product import Product, ProductBatch
+from app.models.product import PrescriptionStatus, Product, ProductBatch
 from app.models.sale import PaymentMethod
 from app.models.stock_adjustment import StockAdjustment
 from app.models.sync_event import SyncEvent, SyncEventType
@@ -174,3 +174,47 @@ def test_create_sale_depletes_batches_fefo_and_logs_audit(db_session, cashier_us
     assert movements[1].quantity_delta == -2
     assert movements[1].stock_after == 3
     assert audit_entry.action == "create_sale"
+
+
+def test_create_sale_allows_catalog_compliance_metadata_without_checkout_evidence(
+    db_session,
+    cashier_user,
+    category,
+    product_factory,
+    batch_factory,
+):
+    product = product_factory(category.id, name="Artemether Injection 80mg/ml", sku="ART-80")
+    product.prescription_status = PrescriptionStatus.PRESCRIPTION_REQUIRED
+    product.requires_id = True
+    product.is_narcotic = True
+    db_session.commit()
+    batch_factory(
+        product.id,
+        batch_number="ART-B1",
+        quantity=3,
+        expiry_offset_days=180,
+    )
+
+    sale = create_sale(
+        SaleCreate(
+            items=[
+                SaleItemCreate(
+                    product_id=product.id,
+                    quantity=1,
+                    unit_price=3.5,
+                    discount_amount=0.0,
+                )
+            ],
+            payment_method=PaymentMethod.CASH,
+            amount_paid=3.5,
+            discount_amount=0.0,
+            tax_amount=0.0,
+        ),
+        db=db_session,
+        current_user=cashier_user,
+    )
+
+    assert sale.items[0].product_id == product.id
+    assert sale.has_prescription is False
+    assert sale.prescription_number is None
+    assert sale.customer_id_number is None

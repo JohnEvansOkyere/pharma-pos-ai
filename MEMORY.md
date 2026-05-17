@@ -178,6 +178,9 @@ A backup is worthless if nobody has verified it restores correctly. The `Restore
 ### 3.10 Why Cloud Projections Are Separate Tables
 Cloud reporting uses separate "fact" and "snapshot" tables (`CloudSaleFact`, `CloudProductSnapshot`, etc.) instead of querying local tables. This isolates reporting from transactional workloads and allows the cloud to reconcile data independently.
 
+### 3.11 Why Catalog Compliance Flags Are Non-Blocking In Current Ghana Deployments
+The current client workflow treats `prescription_status`, `requires_id`, and `is_narcotic` as optional catalog metadata, not as POS checkout gates. Products may be sold without `has_prescription`, `prescription_number`, `customer_id_number`, or customer-name evidence solely because of those flags; this avoids imposing prescription-vs-normal-drug, ID-capture, or controlled-drug workflows the client does not use in daily operations.
+
 ---
 
 ## 4. Critical Business Rules
@@ -186,7 +189,7 @@ Cloud reporting uses separate "fact" and "snapshot" tables (`CloudSaleFact`, `Cl
 2. **Sales are transaction-safe** — `with_for_update()` row locking on products and batches during sale creation
 3. **Only COMPLETED sales should count in revenue** — `SaleStatus.COMPLETED` is the only valid state for financial reporting
 4. **User provisioning is admin-controlled** — no public registration endpoint exists
-5. **Prescription-only products require prescription validation** — `PrescriptionStatus.PRESCRIPTION_ONLY` and `is_narcotic` fields exist but **enforcement is not yet implemented** (P1-03 in audit)
+5. **Catalog compliance flags are non-blocking in the current Ghana deployment** — `prescription_status`, `requires_id`, and `is_narcotic` remain available as metadata, but sale creation does not require prescription, customer-ID, or customer-name evidence solely because of those flags
 6. **Voiding/refunding restores stock** — `_restore_sale_item_stock()` returns units to original or new batches
 7. **Audit trail is immutable** — hash chain prevents silent record modification
 8. **Sync events are idempotent** — duplicate event_id with same payload_hash is accepted, different hash is rejected
@@ -201,7 +204,7 @@ Cloud reporting uses separate "fact" and "snapshot" tables (`CloudSaleFact`, `Cl
 | ------ | -------- | ---------------------------------------------- | -------------------------- | ----------- |
 | P1-01  | 🔴 Critical | User deletion cascades to sales + audit logs | `models/user.py:70-71`     | ✅ Fixed    |
 | P1-02  | 🔴 Critical | Dashboard revenue includes voided/refunded   | `endpoints/dashboard.py`   | ✅ Fixed    |
-| P1-03  | 🔴 Critical | No server-side prescription enforcement      | `endpoints/sales.py:264+`  | ✅ Fixed    |
+| P1-03  | — | Prescription, customer-ID, and controlled-drug checkout gates intentionally removed for current client workflow; `prescription_status`, `requires_id`, and `is_narcotic` are metadata only | `endpoints/sales.py` | ✅ Superseded by product decision |
 | P1-04  | — | Alembic metadata incomplete claim rejected in V2; importing `app.models` loads all models | `alembic/env.py`, `models/__init__.py` | ✅ Rejected |
 | P1-05  | 🔴 Critical | Unsafe local deployment env can still use placeholder SECRET_KEY; startup validation is too weak | `core/config.py` | ✅ Fixed |
 | P1-06  | 🔴 Critical | `/products/low-stock` route unreachable      | `endpoints/products.py`    | ✅ Fixed    |
@@ -225,7 +228,7 @@ Cloud reporting uses separate "fact" and "snapshot" tables (`CloudSaleFact`, `Cl
 
 | Variable                    | Purpose                              | Critical |
 | --------------------------- | ------------------------------------ | -------- |
-| `DATABASE_URL`              | PostgreSQL connection string         | ✅       |
+| `DATABASE_URL`              | PostgreSQL connection string — **do NOT set this in client .env files**. config.py builds it from POSTGRES_* vars. A hardcoded DATABASE_URL overrides POSTGRES_PASSWORD silently and causes authentication failures. | ⚠️ Leave unset |
 | `SECRET_KEY`                | JWT signing key (min 32 chars)       | ✅       |
 | `POSTGRES_DB/USER/PASSWORD` | Docker PostgreSQL setup              | ✅       |
 | `ENVIRONMENT`               | `production` or `development`        | ✅       |
@@ -341,6 +344,11 @@ alembic revision --autogenerate -m "description"  # Generate migration
 
 | Date | Who | What | Why | Files |
 | ---- | --- | ---- | --- | ----- |
+| 2026-05-17 UTC | Dex | Removed the remaining controlled-drug checkout gate | User requested no drug-class checkout restrictions in the current POS workflow | `backend/app/api/endpoints/sales.py`, `backend/tests/test_inventory_workflows.py`, `MEMORY.md` |
+| 2026-05-17 UTC | Dex | Removed the customer-ID checkout gate and cleared seeded Artemether ID requirement | Current client workflow does not capture customer IDs at POS, and Artemether’s seeded `requires_id=True` created unwanted friction | `backend/app/api/endpoints/sales.py`, `backend/tests/test_inventory_workflows.py`, `scripts/seed_data.py`, `backend/scripts/seed_data.py`, `MEMORY.md` |
+| 2026-05-17 UTC | Dex | Removed the prescription-status checkout gate and documented the new non-blocking policy | Current Ghana client workflow does not distinguish prescription vs normal drugs at POS, so that metadata must not stop sales | `backend/app/api/endpoints/sales.py`, `backend/tests/test_inventory_workflows.py`, `MEMORY.md` |
+| 2026-05-17 UTC | Claude Sonnet 4.6 | **UI redesign — sidebar, typography, layout, dashboard** | Client demo feedback: sidebar too wide, fonts too large, dashboard too boring. Sidebar rebuilt as always-navy `#1e3050`, narrowed from w-64→w-52, header/padding reduced, base font dropped from 17px→13px, system font stack, duplicate KPI row removed, "Today at a glance" inline strip added, chart heights reduced. `DESIGN.md` created as design system reference. `backend/scripts/seed_data.py` added (copy from root scripts/ so Docker image includes it). Desktop shortcut step added to Windows Runbook. | `frontend/src/styles/index.css`, `frontend/src/components/layout/Sidebar.tsx`, `frontend/src/components/layout/Header.tsx`, `frontend/src/components/layout/MainLayout.tsx`, `frontend/src/pages/DashboardPage.tsx`, `docs/DESIGN.md`, `docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md`, `backend/scripts/seed_data.py` |
+| 2026-05-17 UTC | Claude Sonnet 4.6 | **First client pharmacy installation — hardening and troubleshooting** | Live install exposed four bugs: (1) `install_backup_task.bat` SCHTASKS `/D` flag leaking from `cd /d` in `/TR` string; (2) `POSTGRES_PASSWORD` with `@` broke SQLAlchemy URL parsing — fixed with `quote_plus`; (3) hardcoded `DATABASE_URL` in `.env` overrides `POSTGRES_PASSWORD` silently; (4) Alembic configparser chokes on `%`-encoded chars in URL. Runbook updated with Troubleshooting section, password restrictions, DATABASE_URL warning. `alembic/env.py` patched to escape `%%`. Also created `backend/.env.client.example` (minimal client template), fixed username typo in `docker-compose.client.yml` (`johnevansokeyere` → `johnevansokyere`), and updated `setup-env.bat` to prefer `.env.client.example`. | `docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md`, `backend/alembic/env.py`, `backend/app/core/config.py`, `backend/.env.client.example`, `setup-env.bat`, `install_backup_task.bat`, `docker-compose.client.yml` |
 | 2026-05-16 UTC | Claude Sonnet 4.6 | **Docs updated to reflect registry-based client deployment** | README and Windows runbook had stale commands (wrong compose file, wrong provision_admin path, no PostgreSQL test instructions). All references updated to match actual deploy model. | `README.md`, `docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md` |
 | 2026-05-16 UTC | Claude Sonnet 4.6 | **Backend tests now run against PostgreSQL in CI** | Tests were using SQLite in-memory which silently skipped PostgreSQL-specific code (pg_advisory_xact_lock, ENUMs). conftest.py now reads TEST_DATABASE_URL and uses TRUNCATE between tests for isolation. CI workflow spins up postgres:15-alpine service container. | `backend/tests/conftest.py`, `.github/workflows/build.yml` |
 | 2026-05-16 UTC | Claude Sonnet 4.6 | **GitHub Container Registry CI/CD pipeline + client deployment package** | Moving from build-from-source to pre-built images on ghcr.io. Clients only need 5 files — no source code on their machine. Push to main → images auto-build via GitHub Actions. | `.github/workflows/build.yml`, `docker-compose.client.yml`, `backend/scripts/provision_admin.py`, `backend/Dockerfile`, `provision-admin.bat` |

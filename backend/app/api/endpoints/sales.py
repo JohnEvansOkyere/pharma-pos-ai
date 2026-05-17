@@ -20,7 +20,7 @@ from app.models.sale import (
     SaleReversalType,
     SaleStatus,
 )
-from app.models.product import Product, ProductBatch, PrescriptionStatus
+from app.models.product import Product, ProductBatch
 from app.models.stock_adjustment import StockAdjustment, AdjustmentType
 from app.models.inventory_movement import InventoryMovementType
 from app.models.sync_event import SyncEventType
@@ -302,43 +302,8 @@ def create_sale(
                     detail=f"Product {product.name} is inactive and cannot be sold"
                 )
 
-            # ── Prescription and controlled substance enforcement (P1-03) ──
-            if product.prescription_status == PrescriptionStatus.PRESCRIPTION_REQUIRED:
-                if not sale_data.has_prescription:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=(
-                            f"Product '{product.name}' requires a prescription. "
-                            f"Set has_prescription=True and provide prescription_number."
-                        ),
-                    )
-                if not (sale_data.prescription_number or "").strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Prescription number is required for '{product.name}'",
-                    )
-
-            if product.is_narcotic:
-                if not sale_data.has_prescription or not (sale_data.prescription_number or "").strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=(
-                            f"Product '{product.name}' is a controlled substance. "
-                            f"Prescription is mandatory."
-                        ),
-                    )
-                if not (sale_data.customer_name or "").strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Customer name is required for controlled substance '{product.name}'",
-                    )
-
-            if product.requires_id:
-                if not (getattr(sale_data, 'customer_id_number', None) or "").strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Customer ID is required for product '{product.name}'",
-                    )
+            # Catalog compliance flags are retained as metadata for this
+            # deployment, but they do not block POS sales.
 
             # ── Stock validation ──
 

@@ -49,7 +49,7 @@ export default function Header({
   }
 
   return (
-    <header className="h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-6">
+    <header className="h-12 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between px-4">
       <div className="flex items-center gap-3">
         <button
           onClick={onToggleSidebar}
@@ -59,11 +59,11 @@ export default function Header({
         >
           <FiMenu className="h-5 w-5" />
         </button>
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-          Welcome, {user?.full_name || 'User'}
+        <h2 className="text-sm font-medium text-gray-700 dark:text-gray-200">
+          {user?.full_name || 'User'}
         </h2>
-        <span className="ml-3 px-2 py-1 text-xs font-medium rounded-full bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400">
-          {user?.role?.toUpperCase()}
+        <span className="ml-2 px-1.5 py-0.5 text-[10px] font-semibold rounded bg-primary-100 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400 uppercase tracking-wide">
+          {user?.role}
         </span>
       </div>
 
@@ -87,7 +87,7 @@ export default function Header({
           className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
           aria-label="Notifications"
         >
-          <FiBell className="h-5 w-5 text-gray-600 dark:text-gray-300" />
+          <FiBell className="h-4 w-4 text-gray-600 dark:text-gray-300" />
           {unreadCount > 0 && (
             <span className="absolute top-0 right-0 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">
               {unreadCount > 9 ? '9+' : unreadCount}

@@ -31,8 +31,10 @@ from app.models import (
 # this is the Alembic Config object
 config = context.config
 
-# Override sqlalchemy.url with settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Override sqlalchemy.url with settings.
+# configparser treats % as an interpolation character, so literal % signs in
+# the URL (e.g. %21 from URL-encoding) must be doubled to %%.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

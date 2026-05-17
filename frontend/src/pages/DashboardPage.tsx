@@ -3,15 +3,11 @@ import { api } from '../services/api'
 import {
   FiDollarSign,
   FiTrendingUp,
-  FiTrendingDown,
   FiPackage,
   FiAlertCircle,
   FiShoppingCart,
   FiCreditCard,
   FiCalendar,
-  FiArrowUp,
-  FiArrowDown,
-  FiMinus,
 } from 'react-icons/fi'
 import {
   LineChart,
@@ -161,22 +157,16 @@ export default function DashboardPage() {
     )
   }
 
-  // Calculate growth percentages (mock - you'd fetch yesterday's data in production)
-  const dailyGrowth = 12.5 // Replace with actual calculation
-  const profitGrowth = 8.3
-  const basketGrowth = -2.1
-  const transactionGrowth = 15.7
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">
             Business Dashboard
           </h1>
-          <p className="text-gray-600 dark:text-gray-400">
-            Real-time insights and analytics for data-driven decisions
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Real-time insights · {new Date().toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
           </p>
         </div>
 
@@ -202,89 +192,71 @@ export default function DashboardPage() {
       </div>
 
 
-      {/* Period Summary KPIs - Goes BEFORE Daily Revenue section */}
+      {/* Period Summary KPIs */}
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
-          Period Summary ({analysisPeriod} Days)
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide">
+          Last {analysisPeriod} days
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <EnhancedKPICard
             title="Total Revenue"
             value={`GH₵ ${financialKPIs?.total_revenue.toFixed(2) || '0.00'}`}
-            growth={12.5}
             subtitle={`${financialKPIs?.total_transactions || 0} transactions`}
             icon={FiDollarSign}
             iconColor="text-blue-600 dark:text-blue-400"
-            bgColor="bg-blue-100 dark:bg-blue-900/20"
+            bgColor="bg-blue-50 dark:bg-blue-900/20"
+            accentColor="#3B82F6"
           />
           <EnhancedKPICard
             title="Total Items Sold"
             value={`${salesTrend.reduce((sum, day) => sum + (day.sales_count || 0), 0)}`}
-            growth={8.3}
             subtitle="Units sold"
             icon={FiShoppingCart}
-            iconColor="text-purple-600 dark:text-purple-400"
-            bgColor="bg-purple-100 dark:bg-purple-900/20"
+            iconColor="text-violet-600 dark:text-violet-400"
+            bgColor="bg-violet-50 dark:bg-violet-900/20"
+            accentColor="#7C3AED"
           />
           <EnhancedKPICard
-            title="Total Profit"
+            title="Gross Profit"
             value={`GH₵ ${financialKPIs?.gross_profit.toFixed(2) || '0.00'}`}
-            growth={15.7}
             subtitle={`${financialKPIs?.profit_margin.toFixed(1) || '0'}% margin`}
             icon={FiTrendingUp}
-            iconColor="text-green-600 dark:text-green-400"
-            bgColor="bg-green-100 dark:bg-green-900/20"
+            iconColor="text-emerald-600 dark:text-emerald-400"
+            bgColor="bg-emerald-50 dark:bg-emerald-900/20"
+            accentColor="#10B981"
           />
           <EnhancedKPICard
-            title="Avg Basket Value"
+            title="Avg Basket"
             value={`GH₵ ${financialKPIs?.average_basket_value.toFixed(2) || '0.00'}`}
-            growth={-2.1}
             subtitle="Per transaction"
             icon={FiCreditCard}
-            iconColor="text-orange-600 dark:text-orange-400"
-            bgColor="bg-orange-100 dark:bg-orange-900/20"
+            iconColor="text-amber-600 dark:text-amber-400"
+            bgColor="bg-amber-50 dark:bg-amber-900/20"
+            accentColor="#F59E0B"
           />
         </div>
       </div>
 
-      {/* Enhanced KPIs with Growth Indicators */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <EnhancedKPICard
-          title="Daily Revenue"
-          value={`GH₵ ${revenueAnalysis?.daily_revenue.toFixed(2) || '0.00'}`}
-          growth={dailyGrowth}
-          subtitle={`${revenueAnalysis?.daily_transactions || 0} sales today`}
-          icon={FiDollarSign}
-          iconColor="text-green-600 dark:text-green-400"
-          bgColor="bg-green-100 dark:bg-green-900/20"
-        />
-        <EnhancedKPICard
-          title="Gross Profit"
-          value={`GH₵ ${financialKPIs?.gross_profit.toFixed(2) || '0.00'}`}
-          growth={profitGrowth}
-          subtitle={`${financialKPIs?.profit_margin.toFixed(1) || '0'}% margin`}
-          icon={FiTrendingUp}
-          iconColor="text-blue-600 dark:text-blue-400"
-          bgColor="bg-blue-100 dark:bg-blue-900/20"
-        />
-        <EnhancedKPICard
-          title="Avg Basket Value"
-          value={`GH₵ ${financialKPIs?.average_basket_value.toFixed(2) || '0.00'}`}
-          growth={basketGrowth}
-          subtitle={`${financialKPIs?.total_transactions || 0} transactions`}
-          icon={FiShoppingCart}
-          iconColor="text-purple-600 dark:text-purple-400"
-          bgColor="bg-purple-100 dark:bg-purple-900/20"
-        />
-        <EnhancedKPICard
-          title="Transaction Count"
-          value={`${financialKPIs?.total_transactions || 0}`}
-          growth={transactionGrowth}
-          subtitle="Total transactions"
-          icon={FiCreditCard}
-          iconColor="text-orange-600 dark:text-orange-400"
-          bgColor="bg-orange-100 dark:bg-orange-900/20"
-        />
+      {/* Today at a glance — thin inline strip */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1 px-4 py-2.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-xs">
+        <span className="text-gray-500 dark:text-gray-400">Today:</span>
+        <span className="font-semibold text-gray-900 dark:text-gray-100">
+          GH₵ {revenueAnalysis?.daily_revenue.toFixed(2) || '0.00'}
+        </span>
+        <span className="text-gray-400">·</span>
+        <span className="text-gray-600 dark:text-gray-300">
+          {revenueAnalysis?.daily_transactions || 0} sales
+        </span>
+        <span className="text-gray-400">·</span>
+        <span className="text-gray-500 dark:text-gray-400">Avg basket</span>
+        <span className="font-medium text-gray-900 dark:text-gray-100">
+          GH₵ {revenueAnalysis?.average_basket_value.toFixed(2) || '0.00'}
+        </span>
+        <span className="text-gray-400 ml-auto">·</span>
+        <span className="text-gray-500 dark:text-gray-400">Inventory</span>
+        <span className="font-medium text-gray-900 dark:text-gray-100">
+          GH₵ {kpis?.inventory_value.toFixed(0) || '0'}
+        </span>
       </div>
 
       {/* Critical Alerts Banner */}
@@ -312,15 +284,15 @@ export default function DashboardPage() {
         </div>
       )}
 
-          {/* FULL WIDTH: Sales Trend - Dual Axis (Revenue + Transactions) */}
-    <div className="card p-6">
-      <div className="flex justify-between items-center mb-6">
+      {/* FULL WIDTH: Sales Trend */}
+    <div className="card p-4">
+      <div className="flex justify-between items-center mb-4">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Daily Sales Performance
           </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Revenue and transaction trends over time
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Revenue and transaction trends
           </p>
         </div>
         <div className="flex gap-3">
@@ -334,7 +306,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
-      <ResponsiveContainer width="100%" height={350}>
+      <ResponsiveContainer width="100%" height={240}>
         <LineChart data={salesTrend}>
           <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
           <XAxis 
@@ -457,17 +429,17 @@ export default function DashboardPage() {
       </div> */}
     </div>
 
-      {/* FULL WIDTH: Top Products - Revenue + Quantity */}
-      <div className="card p-6">
-        <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+      {/* FULL WIDTH: Top Products */}
+      <div className="card p-4">
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Top Performing Products
           </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Best sellers by revenue and volume (Last {analysisPeriod} days)
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Best sellers by revenue and volume · last {analysisPeriod} days
           </p>
         </div>
-        <ResponsiveContainer width="100%" height={400}>
+        <ResponsiveContainer width="100%" height={280}>
           <BarChart data={fastMoving} layout="vertical">
             <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
             <XAxis type="number" stroke="#9CA3AF" />
@@ -493,14 +465,14 @@ export default function DashboardPage() {
       </div>
 
       {/* Business Insights - Two Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Profit by Category */}
-        <div className="card p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <div className="card p-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Category Performance
             </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               Profit contribution by category
             </p>
           </div>
@@ -540,12 +512,12 @@ export default function DashboardPage() {
         </div>
 
         {/* Inventory Health */}
-        <div className="card p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <div className="card p-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Inventory Health
             </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               Capital allocation and risk assessment
             </p>
           </div>
@@ -594,10 +566,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Critical Items Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Expiring Soon */}
-        <div className="card p-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
             Expiring Soon (≤30 days)
           </h3>
           <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar">
@@ -628,8 +600,8 @@ export default function DashboardPage() {
         </div>
 
         {/* Low Stock */}
-        <div className="card p-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <div className="card p-4">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
             Low Stock Alerts
           </h3>
           <div className="space-y-2 max-h-80 overflow-y-auto custom-scrollbar">
@@ -665,11 +637,11 @@ export default function DashboardPage() {
       </div>
 
       {/* Quick Actions */}
-      <div className="card p-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-900 dark:text-gray-100">
+      <div className="card p-4">
+        <h3 className="text-sm font-semibold mb-3 text-gray-900 dark:text-gray-100">
           Quick Actions
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <button onClick={() => (window.location.href = '/pos')} className="btn-primary">
             <FiShoppingCart className="inline mr-2" />
             New Sale
@@ -691,52 +663,44 @@ export default function DashboardPage() {
   )
 }
 
-// Enhanced KPI Card with Growth Indicator
 interface EnhancedKPICardProps {
   title: string
   value: string
-  growth: number
   subtitle: string
   icon: any
   iconColor: string
   bgColor: string
+  accentColor: string
 }
 
 function EnhancedKPICard({
   title,
   value,
-  growth,
   subtitle,
   icon: Icon,
   iconColor,
   bgColor,
+  accentColor,
 }: EnhancedKPICardProps) {
-  const isPositive = growth > 0
-  const isNeutral = growth === 0
-  const GrowthIcon = isNeutral ? FiMinus : isPositive ? FiArrowUp : FiArrowDown
-
   return (
-    <div className="card p-6">
-      <div className="flex items-center justify-between mb-3">
-        <div className={`p-3 rounded-lg ${bgColor}`}>
-          <Icon className={`h-6 w-6 ${iconColor}`} />
-        </div>
-        <div className={`flex items-center gap-1 text-sm font-medium ${
-          isNeutral ? 'text-gray-500' : isPositive ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'
-        }`}>
-          <GrowthIcon className="h-4 w-4" />
-          <span>{Math.abs(growth).toFixed(1)}%</span>
+    <div className="card p-5 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          {title}
+        </p>
+        <div className={`p-2 rounded-lg ${bgColor}`}>
+          <Icon className={`h-4 w-4 ${iconColor}`} />
         </div>
       </div>
-      <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
-        {title}
-      </p>
-      <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-2">
-        {value}
-      </p>
-      <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-        {subtitle}
-      </p>
+      <div>
+        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100 leading-none">
+          {value}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+          {subtitle}
+        </p>
+      </div>
+      <div className="h-0.5 w-8 rounded-full" style={{ backgroundColor: accentColor }} />
     </div>
   )
 }

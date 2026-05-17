@@ -123,6 +123,10 @@ ENVIRONMENT=production
 APP_NAME=<the pharmacy name you entered>
 ```
 
+**Password rule:** Use only letters and numbers in `POSTGRES_PASSWORD`. Do not use `@`, `!`, `#`, `$`, `%`, or any other special character. Special characters break PostgreSQL URL parsing and Alembic migrations.
+
+**DATABASE_URL check:** If `backend\.env` contains a line starting with `DATABASE_URL=`, delete that entire line. A hardcoded `DATABASE_URL` overrides `POSTGRES_PASSWORD` and will cause authentication failures that are hard to diagnose.
+
 ### 5. Authenticate With GitHub Container Registry
 
 The pre-built images are stored in a private registry. The client machine must log in once before it can pull images.
@@ -182,6 +186,8 @@ Enter the admin username, email, full name, and password when prompted. This cre
 
 > **Do not use generic or shared passwords.** The admin password must be strong and known only to the pharmacy owner.
 
+> **Admin password rule:** Use only letters and numbers — no `@`, `!`, `#`, `$`, or `%`. Special characters in the admin password do not cause a connection problem, but keeping passwords alphanumeric avoids surprises across the stack.
+
 ### 9. Verify The Application Is Running
 
 Open a browser and go to:
@@ -195,13 +201,26 @@ Log in with the admin account created in step 8. Confirm:
 - products page is accessible
 - POS page opens
 
-### 10. Configure Windows Firewall (If Needed)
+### 10. Create Desktop Shortcut
+
+Create a shortcut on the desktop so pharmacy staff can open the application with a double-click. Run this in PowerShell from `C:\Pharma-POS-AI`:
+
+```powershell
+$s = "[InternetShortcut]`r`nURL=http://localhost:8080`r`nIconFile=C:\Pharma-POS-AI\PHARMACY.ico`r`nIconIndex=0"
+$s | Out-File "$env:PUBLIC\Desktop\Pharma POS.url" -Encoding ASCII
+```
+
+This places a **Pharma POS** icon on the desktop for every Windows user account on the machine. Double-clicking it opens the application in the default browser.
+
+> If you want the shortcut only for the current user, replace `$env:PUBLIC\Desktop` with `$env:USERPROFILE\Desktop`.
+
+### 11. Configure Windows Firewall (If Needed)
 
 By default, ports 8080 and 8000 are accessible only from `localhost`. If pharmacy staff will access the system from other computers on the same local network, open inbound rules in Windows Defender Firewall for TCP port 8080.
 
 If access is limited to the single pharmacy workstation, no firewall changes are needed.
 
-### 11. Configure Automatic Startup
+### 12. Configure Automatic Startup
 
 Docker Desktop is configured to start automatically at Windows login by default. The containers have `restart: unless-stopped`, so they restart automatically after a reboot.
 
@@ -209,7 +228,7 @@ Verify after a reboot:
 1. Wait for Docker Desktop to show "running" in the system tray
 2. Open `http://localhost:8080` — it should load without manual intervention
 
-### 12. Configure Backups
+### 13. Configure Backups
 
 Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator and run:
 
@@ -242,7 +261,7 @@ docker exec pharma-pos-db pg_dump -U pharma_user -d pharma_pos -F c -f /tmp/back
 docker cp pharma-pos-db:/tmp/backup.dump C:\PharmaBackups\pharma_backup_%DATE:~-4%%DATE:~3,2%%DATE:~0,2%.dump
 ```
 
-### 13. Validate Before Handover
+### 14. Validate Before Handover
 
 Test every workflow before leaving the pharmacy:
 - login works for the created admin account
@@ -267,10 +286,75 @@ Before leaving the pharmacy:
 - [ ] product add/receive workflow verified
 - [ ] sale reversal workflow verified
 - [ ] closeout totals reviewed
+- [ ] desktop shortcut created and tested
 - [ ] backup location shown to client
 - [ ] backup procedure explained
 - [ ] support contact recorded
 - [ ] installed version recorded
+
+## Troubleshooting
+
+### Backend container restarts but still fails after editing `.env`
+
+`docker compose restart` does **not** reload the `.env` file. The container keeps the environment it was created with. Always recreate the container after any `.env` change:
+
+```cmd
+docker compose -f docker-compose.client.yml up -d --force-recreate backend
+```
+
+### Authentication failed — wrong password
+
+First check what password the running backend container actually sees:
+
+```cmd
+docker exec pharma-pos-backend env | findstr POSTGRES
+```
+
+Then check whether a `DATABASE_URL` override is also present:
+
+```cmd
+docker exec pharma-pos-backend env | findstr DATABASE
+```
+
+If `DATABASE_URL=` appears, it is overriding `POSTGRES_PASSWORD`. Open `backend\.env`, delete the `DATABASE_URL=` line, save, and recreate the backend container.
+
+To confirm which password PostgreSQL is actually using, connect from inside the database container:
+
+```cmd
+docker exec pharma-pos-db psql -U pharma_user -d pharma_pos -c "SELECT current_user;"
+```
+
+To reset the PostgreSQL password:
+
+```cmd
+docker exec pharma-pos-db psql -U pharma_user -d pharma_pos -c "ALTER USER pharma_user WITH PASSWORD 'NewPasswordHere';"
+```
+
+Then update `POSTGRES_PASSWORD` in `backend\.env` to match and recreate the backend container.
+
+### Alembic migration fails with "invalid interpolation syntax"
+
+This happens when `POSTGRES_PASSWORD` contains a special character (like `!`) that gets URL-encoded to `%21`. The `%` sign breaks Alembic's config parser.
+
+Fix: change `POSTGRES_PASSWORD` in `backend\.env` to an alphanumeric-only value, reset the DB password to match, and recreate the backend container.
+
+### `relation "users" does not exist` during provisioning
+
+Migrations have not been applied. Run:
+
+```cmd
+docker exec pharma-pos-backend alembic upgrade head
+```
+
+Then run the provision script again.
+
+### Frontend shows `unhealthy` in `docker compose ps`
+
+The frontend health check uses `wget`, which may not be present in the nginx image. The container serves the React app correctly regardless — open `http://localhost:8080` to confirm. This status line can be ignored if the browser shows the login page.
+
+### `docker login` succeeds but image pull shows "not found"
+
+The image name in `docker-compose.client.yml` must exactly match the GitHub username (case-sensitive, lowercase). Verify by going to the GitHub repo → Packages and copying the pull command shown there.
 
 ## Upgrade Procedure
 

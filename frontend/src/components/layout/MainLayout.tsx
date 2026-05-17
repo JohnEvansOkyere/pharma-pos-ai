@@ -18,8 +18,10 @@ export default function MainLayout() {
           onToggleSidebar={() => setIsSidebarVisible((current) => !current)}
         />
 
-        <main className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-          <Outlet />
+        <main className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+          <div className="max-w-screen-xl mx-auto">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>
