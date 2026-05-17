@@ -31,7 +31,7 @@ The `start.bat` / `stop.bat` scripts are a secondary option for developer or bar
 
 ## Available Scripts
 
-- `setup-env.bat` — creates `backend/.env` and `frontend/.env.local` from the `.env.example` template
+- `setup-env.bat` — creates `backend/.env` and `frontend/.env.local` from the `backend/.env.client.example` template
 - `start.bat` — bare-metal launcher (local Python path only; not needed for Docker)
 - `stop.bat` — stops bare-metal launcher windows
 - `backup.bat` — runs a `pg_dump` backup of the local PostgreSQL database
@@ -102,7 +102,7 @@ Copy or clone the project to the target path:
 C:\Pharma-POS-AI
 ```
 
-Verify the folder contains `docker-compose.client.yml`, `setup-env.bat`, `backup.bat`, `restore.bat`, `install_backup_task.bat`, and `provision-admin.bat`.
+Verify the folder contains `docker-compose.client.yml`, `setup-env.bat`, `backup.bat`, `restore.bat`, `install_backup_task.bat`, `provision-admin.bat`, and `backend\.env.client.example`.
 
 ### 4. Configure Environment
 
@@ -123,7 +123,24 @@ ENVIRONMENT=production
 APP_NAME=<the pharmacy name you entered>
 ```
 
-### 5. Start Docker Services
+### 5. Authenticate With GitHub Container Registry
+
+The pre-built images are stored in a private registry. The client machine must log in once before it can pull images.
+
+You need a GitHub Personal Access Token (PAT) with `read:packages` scope. Generate one at:
+`https://github.com/settings/tokens` → **Generate new token (classic)** → tick **read:packages** → copy the token.
+
+In a Command Prompt, run:
+
+```cmd
+docker login ghcr.io -u JohnEvansOkyere -p YOUR_PAT_HERE
+```
+
+You should see `Login Succeeded`. This credential is stored on the machine — you do not need to repeat this step on future upgrades unless the token expires.
+
+> **Keep the PAT secure.** Do not put it in a shared document or `.env` file. Store it in your technician password manager.
+
+### 6. Start Docker Services
 
 From `C:\Pharma-POS-AI` run:
 
@@ -143,7 +160,7 @@ All three services (`pharma-pos-db`, `pharma-pos-backend`, `pharma-pos-frontend`
 
 If the backend shows `unhealthy`, wait 60 seconds and check again — it waits for the database to be ready.
 
-### 6. Run Database Migrations
+### 7. Run Database Migrations
 
 After the containers are healthy, apply any pending schema migrations:
 
@@ -153,7 +170,7 @@ docker exec pharma-pos-backend alembic upgrade head
 
 This is safe to run on every install and on every upgrade.
 
-### 7. Provision The First Admin Account
+### 8. Provision The First Admin Account
 
 Run the provisioning script inside the backend container:
 
@@ -165,7 +182,7 @@ Enter the admin username, email, full name, and password when prompted. This cre
 
 > **Do not use generic or shared passwords.** The admin password must be strong and known only to the pharmacy owner.
 
-### 8. Verify The Application Is Running
+### 9. Verify The Application Is Running
 
 Open a browser and go to:
 
@@ -173,18 +190,18 @@ Open a browser and go to:
 http://localhost:8080
 ```
 
-Log in with the admin account created in step 7. Confirm:
+Log in with the admin account created in step 8. Confirm:
 - dashboard loads without errors
 - products page is accessible
 - POS page opens
 
-### 9. Configure Windows Firewall (If Needed)
+### 10. Configure Windows Firewall (If Needed)
 
 By default, ports 8080 and 8000 are accessible only from `localhost`. If pharmacy staff will access the system from other computers on the same local network, open inbound rules in Windows Defender Firewall for TCP port 8080.
 
 If access is limited to the single pharmacy workstation, no firewall changes are needed.
 
-### 10. Configure Automatic Startup
+### 11. Configure Automatic Startup
 
 Docker Desktop is configured to start automatically at Windows login by default. The containers have `restart: unless-stopped`, so they restart automatically after a reboot.
 
@@ -192,7 +209,7 @@ Verify after a reboot:
 1. Wait for Docker Desktop to show "running" in the system tray
 2. Open `http://localhost:8080` — it should load without manual intervention
 
-### 11. Configure Backups
+### 12. Configure Backups
 
 Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator and run:
 
@@ -225,7 +242,7 @@ docker exec pharma-pos-db pg_dump -U pharma_user -d pharma_pos -F c -f /tmp/back
 docker cp pharma-pos-db:/tmp/backup.dump C:\PharmaBackups\pharma_backup_%DATE:~-4%%DATE:~3,2%%DATE:~0,2%.dump
 ```
 
-### 12. Validate Before Handover
+### 13. Validate Before Handover
 
 Test every workflow before leaving the pharmacy:
 - login works for the created admin account

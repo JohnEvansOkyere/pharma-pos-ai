@@ -27,7 +27,9 @@ if not exist "%BACKEND_ENV%" (
         )
     )
 
-    if exist "backend\.env.example" (
+    if exist "backend\.env.client.example" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "$secret=[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $content = Get-Content 'backend\.env.client.example'; $content = $content -replace '^POSTGRES_PASSWORD=.*$', ('POSTGRES_PASSWORD=' + '%POSTGRES_PASSWORD_VALUE%'); $content = $content -replace '^SECRET_KEY=.*$', ('SECRET_KEY=' + $secret); $content = $content -replace '^APP_NAME=.*$', ('APP_NAME=' + '%PHARMACY_NAME%'); Set-Content '%BACKEND_ENV%' $content"
+    ) elseif exist "backend\.env.example" (
         powershell -NoProfile -ExecutionPolicy Bypass -Command "$secret=[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'); $content = Get-Content 'backend\.env.example'; $content = $content -replace '^POSTGRES_PASSWORD=.*$', ('POSTGRES_PASSWORD=' + '%POSTGRES_PASSWORD_VALUE%'); $content = $content -replace '^SECRET_KEY=.*$', ('SECRET_KEY=' + $secret); $content = $content -replace '^APP_NAME=.*$', ('APP_NAME=' + '%PHARMACY_NAME%'); Set-Content '%BACKEND_ENV%' $content"
     ) else (
         > "%BACKEND_ENV%" echo DATABASE_BACKEND=postgresql

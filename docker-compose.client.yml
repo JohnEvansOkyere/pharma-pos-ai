@@ -28,7 +28,7 @@ services:
       - pharma-network
 
   backend:
-    image: ghcr.io/johnevansokeyere/pharma-pos-backend:latest
+    image: ghcr.io/johnevansokyere/pharma-pos-backend:latest
     container_name: pharma-pos-backend
     restart: unless-stopped
     pull_policy: always
@@ -60,7 +60,7 @@ services:
       - pharma-network
 
   frontend:
-    image: ghcr.io/johnevansokeyere/pharma-pos-frontend:latest
+    image: ghcr.io/johnevansokyere/pharma-pos-frontend:latest
     container_name: pharma-pos-frontend
     restart: unless-stopped
     pull_policy: always

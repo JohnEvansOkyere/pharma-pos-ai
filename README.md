@@ -331,7 +331,7 @@ The minimum set of files a client machine needs (no source code required):
 - `setup-env.bat`
 - `backup.bat` + `restore.bat` + `install_backup_task.bat`
 - `provision-admin.bat`
-- `backend/.env.example`
+- `backend/.env.client.example`
 
 ---
 
