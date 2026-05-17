@@ -4,6 +4,7 @@ Loads settings from environment variables and provides typed configuration.
 """
 import secrets
 from typing import List, Optional
+from urllib.parse import quote_plus
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
@@ -138,7 +139,7 @@ class Settings(BaseSettings):
 
         if not self.DATABASE_URL:
             self.DATABASE_URL = (
-                f"postgresql://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+                f"postgresql://{self.POSTGRES_USER}:{quote_plus(self.POSTGRES_PASSWORD)}"
                 f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
             )
 

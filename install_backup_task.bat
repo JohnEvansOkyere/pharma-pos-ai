@@ -7,7 +7,7 @@ cd /d "%~dp0"
 
 set TASK_NAME=Pharma POS AI Nightly Backup
 set TASK_TIME=20:00
-set TASK_COMMAND=cmd.exe /c "cd /d ""%~dp0"" && set PHARMA_BACKUP_NONINTERACTIVE=1 && call backup.bat >> ""%~dp0backups\backup.log"" 2>&1"
+set "BACKUP_BAT=%~dp0backup.bat"
 
 echo ========================================
 echo   NIGHTLY BACKUP TASK SETUP
@@ -17,7 +17,7 @@ echo Task Name : %TASK_NAME%
 echo Run Time  : %TASK_TIME%
 echo.
 
-schtasks /Create /F /SC DAILY /TN "%TASK_NAME%" /TR "%TASK_COMMAND%" /ST %TASK_TIME%
+schtasks /Create /F /SC DAILY /TN "%TASK_NAME%" /TR "\"%BACKUP_BAT%\"" /ST %TASK_TIME%
 
 if %errorlevel% equ 0 (
     echo.
