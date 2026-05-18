@@ -6,7 +6,7 @@ import secrets
 from typing import List, Optional
 from urllib.parse import quote_plus
 
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,23 +35,22 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000"]
+    # CORS — stored as raw string so pydantic-settings never tries to JSON-decode it.
+    # Accepts: plain URL, comma-separated URLs, or JSON array. Use cors_origins property.
+    BACKEND_CORS_ORIGINS: str = "http://localhost:3000"
 
-    @field_validator(
-        "BACKEND_CORS_ORIGINS",
-        mode="before",
-    )
-    @classmethod
-    def assemble_comma_separated_list(cls, v):
-        """Parse comma-separated environment values into lists."""
-        if isinstance(v, str):
-            if v.startswith("[") and v.endswith("]"):
-                # Handle JSON-like env strings without requiring callers to
-                # switch formats between Docker and local installs.
+    @property
+    def cors_origins(self) -> List[str]:
+        v = self.BACKEND_CORS_ORIGINS.strip()
+        if not v:
+            return ["http://localhost:3000"]
+        import json as _json
+        if v.startswith("["):
+            try:
+                return _json.loads(v)
+            except Exception:
                 v = v[1:-1].replace('"', "").replace("'", "")
-            return [i.strip() for i in v.split(",")]
-        return v
+        return [o.strip() for o in v.split(",") if o.strip()]
 
     # Notifications
     ENABLE_EMAIL_NOTIFICATIONS: bool = False
