@@ -489,6 +489,52 @@ class ApiClient {
     await this.client.delete(`/users/${userId}`)
   }
 
+  // Admin — client / tenancy management (vendor-only)
+  async getAdminOrganizations(activeOnly = false) {
+    const response = await this.client.get('/admin/organizations', { params: { active_only: activeOnly } })
+    return response.data
+  }
+
+  async createAdminOrganization(data: any) {
+    const response = await this.client.post('/admin/organizations', data)
+    return response.data
+  }
+
+  async updateAdminOrganization(orgId: number, data: any) {
+    const response = await this.client.patch(`/admin/organizations/${orgId}`, data)
+    return response.data
+  }
+
+  async getAdminBranches(orgId: number) {
+    const response = await this.client.get(`/admin/organizations/${orgId}/branches`)
+    return response.data
+  }
+
+  async createAdminBranch(orgId: number, data: any) {
+    const response = await this.client.post(`/admin/organizations/${orgId}/branches`, data)
+    return response.data
+  }
+
+  async getAdminDevices(params?: { org_id?: number; status?: string }) {
+    const response = await this.client.get('/admin/devices', { params })
+    return response.data
+  }
+
+  async provisionAdminDevice(orgId: number, branchId: number, data: any) {
+    const response = await this.client.post(`/admin/organizations/${orgId}/branches/${branchId}/devices`, data)
+    return response.data
+  }
+
+  async updateAdminDeviceStatus(deviceId: number, status: string) {
+    const response = await this.client.patch(`/admin/devices/${deviceId}/status`, { status })
+    return response.data
+  }
+
+  async rotateAdminDeviceToken(deviceId: number) {
+    const response = await this.client.post(`/admin/devices/${deviceId}/rotate-token`)
+    return response.data
+  }
+
   // Local system operations
   async getBackupStatus() {
     const response = await this.client.get('/system/backup-status')

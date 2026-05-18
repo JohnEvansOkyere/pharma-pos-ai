@@ -294,18 +294,18 @@ function ProvisionWizard({
       if (orgChoice === 'existing') {
         if (!selectedOrgId) { toast.error('Select an organization'); return }
         const orgId = Number(selectedOrgId)
-        const res = await api.get(`/admin/organizations/${orgId}/branches`)
-        setBranches(res.data)
+        const branches = await api.getAdminBranches(orgId)
+        setBranches(branches)
         setResolvedOrgId(orgId)
         setStep('branch')
       } else {
         if (!orgName.trim()) { toast.error('Organization name is required'); return }
-        const res = await api.post('/admin/organizations', {
+        const org = await api.createAdminOrganization({
           name: orgName.trim(),
           contact_phone: orgPhone || null,
           contact_email: orgEmail || null,
         })
-        setResolvedOrgId(res.data.id)
+        setResolvedOrgId(org.id)
         setBranches([])
         setStep('branch')
       }
@@ -325,12 +325,12 @@ function ProvisionWizard({
         setStep('device')
       } else {
         if (!branchName.trim() || !branchCode.trim()) { toast.error('Branch name and code are required'); return }
-        const res = await api.post(`/admin/organizations/${resolvedOrgId}/branches`, {
+        const branch = await api.createAdminBranch(resolvedOrgId!, {
           name: branchName.trim(),
           code: branchCode.trim().toUpperCase(),
           address: branchAddress || null,
         })
-        setResolvedBranchId(res.data.id)
+        setResolvedBranchId(branch.id)
         setStep('device')
       }
     } catch (e: any) {
@@ -344,11 +344,8 @@ function ProvisionWizard({
     if (!deviceName.trim()) { toast.error('Device name is required'); return }
     setLoading(true)
     try {
-      const res = await api.post(
-        `/admin/organizations/${resolvedOrgId}/branches/${resolvedBranchId}/devices`,
-        { name: deviceName.trim() }
-      )
-      setProvisioned(res.data)
+      const device = await api.provisionAdminDevice(resolvedOrgId!, resolvedBranchId!, { name: deviceName.trim() })
+      setProvisioned(device)
       setStep('done')
       onDone()
     } catch (e: any) {
@@ -575,8 +572,8 @@ function RotateTokenDialog({
   async function handleRotate() {
     setLoading(true)
     try {
-      const res = await api.post(`/admin/devices/${device.id}/rotate-token`)
-      setResult(res.data)
+      const result = await api.rotateAdminDeviceToken(device.id)
+      setResult(result)
       toast.success('Token rotated — update the client machine')
     } catch (e: any) {
       toast.error(e.response?.data?.detail || 'Failed to rotate token')
@@ -650,12 +647,12 @@ export default function ClientsPage() {
   async function loadData() {
     setLoading(true)
     try {
-      const [orgsRes, devicesRes] = await Promise.all([
-        api.get('/admin/organizations'),
-        api.get('/admin/devices'),
+      const [orgs, devices] = await Promise.all([
+        api.getAdminOrganizations(),
+        api.getAdminDevices(),
       ])
-      setOrgs(orgsRes.data)
-      setDevices(devicesRes.data)
+      setOrgs(orgs)
+      setDevices(devices)
     } catch {
       toast.error('Failed to load client data')
     } finally {
@@ -670,7 +667,7 @@ export default function ClientsPage() {
     const label = newStatus === 'disabled' ? 'Disable' : 'Enable'
     if (!confirm(`${label} device "${device.name}"?`)) return
     try {
-      await api.patch(`/admin/devices/${device.id}/status`, { status: newStatus })
+      await api.updateAdminDeviceStatus(device.id, newStatus)
       toast.success(`Device ${newStatus}`)
       await loadData()
     } catch (e: any) {
