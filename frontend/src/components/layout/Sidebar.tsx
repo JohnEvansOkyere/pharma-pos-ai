@@ -11,6 +11,7 @@ import {
   FiUsers,
   FiBell,
   FiSettings,
+  FiServer,
 } from 'react-icons/fi'
 import { useAuthStore } from '../../stores/authStore'
 
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'Suppliers', href: '/suppliers', icon: FiUsers, group: 'PHARMACY' },
   { name: 'Notifications', href: '/notifications', icon: FiBell, group: 'SYSTEM' },
   { name: 'Settings', href: '/settings', icon: FiSettings, group: 'SYSTEM', adminOrManager: true },
+  { name: 'Clients', href: '/clients', icon: FiServer, group: 'SYSTEM', adminOnly: true },
 ]
 
 const SIDEBAR_BG = '#1e3050'

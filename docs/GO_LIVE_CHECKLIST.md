@@ -292,6 +292,50 @@
 
 ---
 
+## Phase 6: Cloud Vendor Admin Dashboard
+
+> **Goal:** John (the vendor) can manage all pharmacy clients, monitor sync health, and provision new devices entirely from `pharma-pos-ai.vercel.app` — no scripts, no database access required.
+
+### Backend — Client Provisioning API (`/admin/*`)
+
+- [ ] `GET /admin/organizations` — list all orgs with branch + device counts *(2026-05-18)*
+- [ ] `POST /admin/organizations` — create org *(2026-05-18)*
+- [ ] `PATCH /admin/organizations/{org_id}` — update org (name, active status) *(2026-05-18)*
+- [ ] `GET /admin/organizations/{org_id}/branches` — list branches *(2026-05-18)*
+- [ ] `POST /admin/organizations/{org_id}/branches` — create branch *(2026-05-18)*
+- [ ] `GET /admin/devices` — list all devices across all orgs with last_seen_at and status *(2026-05-18)*
+- [ ] `POST /admin/organizations/{org_id}/branches/{branch_id}/devices` — provision device, return raw token once *(2026-05-18)*
+- [ ] `PATCH /admin/devices/{device_id}/status` — enable / disable device *(2026-05-18)*
+- [ ] `POST /admin/devices/{device_id}/rotate-token` — generate new token, invalidate old *(2026-05-18)*
+- [ ] All endpoints require `require_admin` *(2026-05-18)*
+- [ ] `CLOUD_SYNC_REQUIRE_TOKEN` removed from `backend/.env.client.example` (server-only setting) *(2026-05-18)*
+
+### Frontend — Clients Page (`/clients`, admin-only)
+
+- [ ] Stats bar: total pharmacies, total devices, active devices, synced today *(2026-05-18)*
+- [ ] Client tree: org → branches → devices, expandable *(2026-05-18)*
+- [ ] Device rows: name, UID, status badge, last_seen_at, sync health indicator *(2026-05-18)*
+- [ ] "Provision New Client" wizard: org → branch → device → env block displayed once *(2026-05-18)*
+- [ ] Enable / disable device toggle *(2026-05-18)*
+- [ ] Rotate token action with confirmation dialog *(2026-05-18)*
+- [ ] Sidebar nav item "Clients" under SYSTEM group (admin-only) *(2026-05-18)*
+
+### Frontend — Sync Monitor (integrated into Clients page or Cloud Dashboard)
+
+- [ ] Per-device event count: ingested vs projected vs failed *(2026-05-18)*
+- [ ] Devices that have not synced in > 24 h shown with warning *(2026-05-18)*
+- [ ] Manual "Run Projection" button (admin) *(2026-05-18)*
+
+### Cloud Dashboard improvements
+
+- [ ] Replace demo/placeholder data with real cloud_reports API calls *(2026-05-18)*
+- [ ] Cross-pharmacy revenue chart using `GET /cloud-reports/branch-sales` *(2026-05-18)*
+- [ ] Sync health summary card using `GET /cloud-reports/sync-health` *(2026-05-18)*
+- [ ] Stock risk / low-stock alerts card using `GET /cloud-reports/stock-risk-summary` *(2026-05-18)*
+- [ ] Expiry risk table using `GET /cloud-reports/expiry-risk` *(2026-05-18)*
+
+---
+
 ## Sign-Off
 
 | Role | Name | Date | Approved |

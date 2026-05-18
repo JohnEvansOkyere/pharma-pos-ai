@@ -4,6 +4,7 @@ API package initialization.
 from fastapi import APIRouter
 
 from app.api.endpoints import (
+    admin_tenancy,
     auth,
     users,
     products,
@@ -25,6 +26,7 @@ from app.api.endpoints import (
 api_router = APIRouter()
 
 # Include all endpoint routers
+api_router.include_router(admin_tenancy.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.router)
 api_router.include_router(products.router)

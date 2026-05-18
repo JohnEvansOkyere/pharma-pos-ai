@@ -15,6 +15,7 @@ const SuppliersPage = lazy(() => import('./pages/SuppliersPage'))
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const StockAdjustmentsPage = lazy(() => import('./pages/StockAdjustmentsPage'))
+const ClientsPage = lazy(() => import('./pages/ClientsPage'))
 
 // Layout
 import MainLayout from './components/layout/MainLayout'
@@ -121,6 +122,11 @@ function App() {
               <AdminOrManagerRoute>
                 <SettingsPage />
               </AdminOrManagerRoute>
+            } />
+            <Route path="clients" element={
+              <AdminRoute>
+                <ClientsPage />
+              </AdminRoute>
             } />
           </Route>
 
