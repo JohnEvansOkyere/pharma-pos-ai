@@ -1,6 +1,7 @@
 """
 Main FastAPI application entry point.
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -18,16 +19,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _run_migrations() -> None:
+    from alembic.config import Config
+    from alembic import command
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Lifespan context manager for startup and shutdown events.
-
-    Startup: Initialize background scheduler
-    Shutdown: Stop background scheduler
-    """
     # Startup
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info("Running database migrations...")
+    try:
+        await asyncio.to_thread(_run_migrations)
+        logger.info("Database migrations complete")
+    except Exception as exc:
+        logger.error(f"Database migration failed: {exc}", exc_info=True)
+        raise
     scheduler.start()
 
     yield
