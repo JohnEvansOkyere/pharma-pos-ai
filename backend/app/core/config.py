@@ -7,7 +7,7 @@ from typing import List, Optional
 from urllib.parse import quote_plus
 
 from pydantic import field_validator, model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -180,10 +180,12 @@ class Settings(BaseSettings):
 
         return self
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",
+        env_ignore_empty=True,
+    )
 
 
 # Global settings instance
