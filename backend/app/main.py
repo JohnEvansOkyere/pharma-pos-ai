@@ -26,17 +26,22 @@ def _run_migrations() -> None:
     command.upgrade(alembic_cfg, "head")
 
 
+def _on_migration_done(task: asyncio.Task) -> None:
+    try:
+        task.result()
+        logger.info("Database migrations complete")
+    except Exception as exc:
+        logger.error(f"Database migration failed: {exc}", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    logger.info("Running database migrations...")
-    try:
-        await asyncio.to_thread(_run_migrations)
-        logger.info("Database migrations complete")
-    except Exception as exc:
-        logger.error(f"Database migration failed: {exc}", exc_info=True)
-        raise
+    # Run migrations in background so uvicorn can bind the port immediately.
+    # Render requires the port to be bound before the health check fires.
+    task = asyncio.create_task(asyncio.to_thread(_run_migrations))
+    task.add_done_callback(_on_migration_done)
     scheduler.start()
 
     yield
