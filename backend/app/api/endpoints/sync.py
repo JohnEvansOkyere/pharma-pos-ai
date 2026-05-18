@@ -35,9 +35,14 @@ def _authenticate_device(db: Session, payload: SyncIngestionRequest, authorizati
     if settings.CLOUD_SYNC_REQUIRE_TOKEN:
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing sync token")
+        if not device.token_hash:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Sync token not configured for this device",
+            )
         raw_token = authorization.removeprefix("Bearer ").strip()
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        if not device.token_hash or device.token_hash != token_hash:
+        if device.token_hash != token_hash:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sync token")
 
     device.last_seen_at = datetime.now(timezone.utc)

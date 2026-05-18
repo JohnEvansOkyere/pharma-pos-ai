@@ -37,6 +37,7 @@ def registered_device(db_session):
         branch_id=branch.id,
         device_uid="sync-device-001",
         name="Main Branch Server",
+        token_hash=hashlib.sha256(b"test-sync-token").hexdigest(),
         status=DeviceStatus.ACTIVE,
     )
     db_session.add(device)
@@ -186,10 +187,10 @@ def test_ingest_sync_event_rejects_invalid_sync_token(db_session, registered_dev
 def test_ingest_sync_event_fails_closed_when_sync_token_is_not_configured(
     db_session,
     registered_device,
-    monkeypatch,
 ):
-    organization, branch, _device = registered_device
-    monkeypatch.setattr(settings, "CLOUD_SYNC_API_TOKEN", None)
+    organization, branch, device = registered_device
+    device.token_hash = None
+    db_session.commit()
 
     with pytest.raises(HTTPException) as exc:
         _ingest(_request(organization, branch), db_session=db_session)
