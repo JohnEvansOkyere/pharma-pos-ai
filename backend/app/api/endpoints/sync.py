@@ -1,6 +1,7 @@
 """
 Sync ingestion API endpoints.
 """
+import hashlib
 from datetime import datetime, timezone
 
 from typing import Optional
@@ -21,41 +22,27 @@ from app.models.user import User
 router = APIRouter(prefix="/sync", tags=["Sync"])
 
 
-def _require_sync_token(authorization: Optional[str]) -> None:
-    if not settings.CLOUD_SYNC_REQUIRE_TOKEN:
-        return
-
-    if not settings.CLOUD_SYNC_API_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Cloud sync token is not configured",
-        )
-
-    expected_header = f"Bearer {settings.CLOUD_SYNC_API_TOKEN}"
-    if authorization != expected_header:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid cloud sync token",
-        )
-
-
-def _get_active_device(db: Session, payload: SyncIngestionRequest) -> Device:
+def _authenticate_device(db: Session, payload: SyncIngestionRequest, authorization: Optional[str]) -> Device:
+    """Look up device, verify it is active, and validate its per-device token."""
     device = db.query(Device).filter(Device.device_uid == payload.device_uid).first()
     if not device:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Device is not registered",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is not registered")
     if device.status != DeviceStatus.ACTIVE:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Device is not active",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is not active")
     if device.organization_id != payload.organization_id or device.branch_id != payload.branch_id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Device does not belong to the submitted organization and branch",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device does not belong to the submitted organization and branch")
+
+    if settings.CLOUD_SYNC_REQUIRE_TOKEN:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing sync token")
+        raw_token = authorization.removeprefix("Bearer ").strip()
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        if not device.token_hash or device.token_hash != token_hash:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sync token")
+
+    device.last_seen_at = datetime.now(timezone.utc)
+    db.add(device)
+
     return device
 
 
@@ -73,10 +60,8 @@ def ingest_sync_event(
     - same event ID with different payload hash is rejected
     - same device sequence with a different event is rejected
     """
-    _require_sync_token(authorization)
-
     try:
-        device = _get_active_device(db, payload)
+        device = _authenticate_device(db, payload, authorization)
 
         existing_by_event_id = db.query(IngestedSyncEvent).filter(
             IngestedSyncEvent.event_id == payload.event_id

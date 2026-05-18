@@ -1,110 +1,93 @@
 # Windows Local Deployment Runbook
 
-## Purpose
+Each pharmacy gets its own machine, database, secrets, and backup set.
 
-This guide is for the person installing and supporting Pharma POS AI on a client Windows machine.
+---
 
-The deployment goal is:
-- one pharmacy installation per client site
-- local PostgreSQL on the same machine
-- local backend service
-- frontend accessible from a desktop shortcut
-- nightly backups enabled
+## Part 1 — Before the Site Visit (Your Machine)
 
-## Intended Client Model
+### Step 1. Provision Cloud Sync (skip if offline-only install)
 
-Each pharmacy should have:
-- its own database
-- its own secrets
-- its own backup set
-- its own admin account
+Run this on your laptop to register the pharmacy in Supabase and generate its credentials:
 
-Do not clone one pharmacy database into another live client installation.
+```bash
+cd /path/to/pharma-pos-ai/backend
+DATABASE_URL="postgresql://postgres:PASSWORD@aws-1-eu-central-2.pooler.supabase.com:6543/postgres" \
+  python scripts/provision_client.py
+```
 
-## Deployment Model
+Enter the pharmacy name, branch name, and device name when prompted. The script prints a block like:
 
-**Primary path: Docker Compose.**
+```env
+CLOUD_SYNC_ENABLED=true
+CLOUD_SYNC_INGEST_URL=https://pharma-pos-ai.onrender.com/api/sync/ingest
+CLOUD_SYNC_API_TOKEN=...
+CLOUD_SYNC_DEVICE_UID=...
+CLOUD_SYNC_ORGANIZATION_ID=...
+CLOUD_SYNC_BRANCH_ID=...
+```
 
-All three services — PostgreSQL, backend API, and frontend — run as Docker containers managed by `docker-compose.client.yml`. This is the standard production deployment. It requires only Docker Desktop on the client machine; no separate Python, Node.js, or PostgreSQL installation is needed. Pre-built images are pulled automatically from GitHub Container Registry — no source code is needed on the client machine.
+Save this block. You will paste it into `backend\.env` during Step 6.
 
-The `start.bat` / `stop.bat` scripts are a secondary option for developer or bare-metal setups that require a local Python virtual environment and a pre-built frontend. Do not use them for client installs unless Docker Desktop cannot be installed.
+---
 
-## Available Scripts
+## Part 2 — On-Site Installation
 
-- `setup-env.bat` — creates `backend/.env` and `frontend/.env.local` from the `backend/.env.client.example` template
-- `start.bat` — bare-metal launcher (local Python path only; not needed for Docker)
-- `stop.bat` — stops bare-metal launcher windows
-- `backup.bat` — runs a `pg_dump` backup of the local PostgreSQL database
-- `install_backup_task.bat` — registers `backup.bat` as a Windows Scheduled Task
-- `restore.bat` — restores a backup file into the database
-- `provision-admin.bat` — creates the first admin account
-- `uninstall-app.bat` — removes the application
+### Step 2. Enable WSL 2
 
-## Pre-Install Checklist
-
-Before arriving at the client site, confirm:
-
-- [ ] Target machine is stable with Windows 10 64-bit or newer
-- [ ] Windows user with administrator rights is available for the install session
-- [ ] Docker Desktop for Windows installer is downloaded and ready
-- [ ] WSL 2 is enabled (required by Docker Desktop) — check in Windows Features
-- [ ] Project files are copied to the machine (USB drive, local copy, or git clone)
-- [ ] Pharmacy name is known
-- [ ] Strong PostgreSQL password is prepared (write it down securely)
-- [ ] Strong admin account username and password are prepared
-- [ ] Backup folder location is decided (`C:\PharmaBackups` is a safe default)
-- [ ] Windows Defender / antivirus exclusions planned for the install folder
-
-## Standard Installation Target
-
-- App root: `C:\Pharma-POS-AI`
-- Database host: `db` (Docker internal) / `localhost:5435` (host-side access)
-- Database name: `pharma_pos`
-- Database user: `pharma_user`
-- Backups folder: `C:\PharmaBackups`
-- Frontend URL: `http://localhost:8080`
-- Backend API URL: `http://localhost:8000`
-
-## Installation Procedure
-
-### 1. Enable WSL 2
-
-Open PowerShell as Administrator and run:
+Open PowerShell as Administrator:
 
 ```powershell
 wsl --install
 ```
 
-Restart the machine if prompted. WSL 2 is required by Docker Desktop.
+Restart if prompted.
 
-### 2. Install Docker Desktop
+### Step 3. Install Docker Desktop
 
 Download and install Docker Desktop for Windows. During installation:
-- enable WSL 2 backend when prompted
-- do not enable Kubernetes (not needed)
+- Enable WSL 2 backend
+- Do not enable Kubernetes
 
-After installation, start Docker Desktop and wait until the whale icon in the system tray shows "Docker Desktop is running".
+After installation, start Docker Desktop and wait until the system tray icon shows **Docker Desktop is running**.
 
-Verify in a Command Prompt:
+Verify:
 
 ```cmd
 docker --version
 docker compose version
 ```
 
-Both commands must succeed before continuing.
+Both must succeed before continuing.
 
-### 3. Deploy Application Files
+### Step 4. Copy Application Files
 
-Copy or clone the project to the target path:
+Copy the project to:
 
 ```
 C:\Pharma-POS-AI
 ```
 
-Verify the folder contains `docker-compose.client.yml`, `setup-env.bat`, `backup.bat`, `restore.bat`, `install_backup_task.bat`, `provision-admin.bat`, and `backend\.env.client.example`.
+Confirm these files are present:
+- `docker-compose.client.yml`
+- `setup-env.bat`
+- `backup.bat`
+- `restore.bat`
+- `install_backup_task.bat`
+- `backend\.env.client.example`
 
-### 4. Configure Environment
+### Step 5. Authenticate With GitHub Container Registry
+
+You need a GitHub Personal Access Token (PAT) with `read:packages` scope. Generate one at:
+`https://github.com/settings/tokens` → Generate new token (classic) → tick **read:packages**.
+
+```cmd
+docker login ghcr.io -u JohnEvansOkyere -p YOUR_PAT_HERE
+```
+
+You should see `Login Succeeded`. This is stored on the machine — no need to repeat on future upgrades unless the token expires.
+
+### Step 6. Configure Environment
 
 Open a Command Prompt in `C:\Pharma-POS-AI` and run:
 
@@ -112,83 +95,49 @@ Open a Command Prompt in `C:\Pharma-POS-AI` and run:
 setup-env.bat
 ```
 
-Enter the pharmacy name and the PostgreSQL password when prompted. The script generates a strong `SECRET_KEY` automatically and writes `backend\.env`.
+Enter the pharmacy name and PostgreSQL password when prompted.
 
 After the script finishes, open `backend\.env` and confirm:
+- `POSTGRES_PASSWORD` is the value you entered — not empty
+- `SECRET_KEY` is a long generated string — not a placeholder
+- `ENVIRONMENT=production`
+- No line starting with `DATABASE_URL=` — delete it if present
 
-```env
-POSTGRES_PASSWORD=<the password you entered — not empty>
-SECRET_KEY=<a long generated string — not a placeholder>
-ENVIRONMENT=production
-APP_NAME=<the pharmacy name you entered>
-```
+**Password rule:** Use letters and numbers only in `POSTGRES_PASSWORD`. No `@`, `!`, `#`, `$`, `%`. Special characters break URL parsing and Alembic.
 
-**Password rule:** Use only letters and numbers in `POSTGRES_PASSWORD`. Do not use `@`, `!`, `#`, `$`, `%`, or any other special character. Special characters break PostgreSQL URL parsing and Alembic migrations.
+If this is a cloud sync install, paste the block from Step 1 at the bottom of `backend\.env`.
 
-**DATABASE_URL check:** If `backend\.env` contains a line starting with `DATABASE_URL=`, delete that entire line. A hardcoded `DATABASE_URL` overrides `POSTGRES_PASSWORD` and will cause authentication failures that are hard to diagnose.
-
-### 5. Authenticate With GitHub Container Registry
-
-The pre-built images are stored in a private registry. The client machine must log in once before it can pull images.
-
-You need a GitHub Personal Access Token (PAT) with `read:packages` scope. Generate one at:
-`https://github.com/settings/tokens` → **Generate new token (classic)** → tick **read:packages** → copy the token.
-
-In a Command Prompt, run:
-
-```cmd
-docker login ghcr.io -u JohnEvansOkyere -p YOUR_PAT_HERE
-```
-
-You should see `Login Succeeded`. This credential is stored on the machine — you do not need to repeat this step on future upgrades unless the token expires.
-
-> **Keep the PAT secure.** Do not put it in a shared document or `.env` file. Store it in your technician password manager.
-
-### 6. Start Docker Services
-
-From `C:\Pharma-POS-AI` run:
+### Step 7. Start Services
 
 ```cmd
 docker compose -f docker-compose.client.yml up -d
 ```
 
-This pulls the pre-built images from GitHub Container Registry and starts all three containers (database, backend, frontend). First run takes 1–2 minutes while images download.
-
-Check that all containers are running:
+Wait 1–2 minutes for images to download on the first run. Then check:
 
 ```cmd
-docker compose ps
+docker compose -f docker-compose.client.yml ps
 ```
 
-All three services (`pharma-pos-db`, `pharma-pos-backend`, `pharma-pos-frontend`) should show `Up` or `healthy`.
+All three services (`pharma-pos-db`, `pharma-pos-backend`, `pharma-pos-frontend`) must show `Up` or `healthy`. If the backend shows `unhealthy`, wait 60 seconds and check again.
 
-If the backend shows `unhealthy`, wait 60 seconds and check again — it waits for the database to be ready.
-
-### 7. Run Database Migrations
-
-After the containers are healthy, apply any pending schema migrations:
+### Step 8. Run Database Migrations
 
 ```cmd
 docker exec pharma-pos-backend alembic upgrade head
 ```
 
-This is safe to run on every install and on every upgrade.
+Safe to run on every install and every upgrade.
 
-### 8. Provision The First Admin Account
-
-Run the provisioning script inside the backend container:
+### Step 9. Create the Admin Account
 
 ```cmd
 docker exec -it pharma-pos-backend python scripts/provision_admin.py
 ```
 
-Enter the admin username, email, full name, and password when prompted. This creates the first administrator account for this pharmacy. No other accounts should be created at this stage — the admin creates staff accounts from within the application.
+Enter username, email, full name, and password. This is the pharmacy owner's account — make it strong.
 
-> **Do not use generic or shared passwords.** The admin password must be strong and known only to the pharmacy owner.
-
-> **Admin password rule:** Use only letters and numbers — no `@`, `!`, `#`, `$`, or `%`. Special characters in the admin password do not cause a connection problem, but keeping passwords alphanumeric avoids surprises across the stack.
-
-### 9. Verify The Application Is Running
+### Step 10. Verify the Application
 
 Open a browser and go to:
 
@@ -196,209 +145,112 @@ Open a browser and go to:
 http://localhost:8080
 ```
 
-Log in with the admin account created in step 8. Confirm:
-- dashboard loads without errors
-- products page is accessible
-- POS page opens
+Log in with the admin account. Confirm:
+- Dashboard loads
+- Products page is accessible
+- POS page opens and a test sale completes
 
-### 10. Create Desktop Shortcut
+### Step 11. Create Desktop Shortcut
 
-Create a shortcut on the desktop so pharmacy staff can open the application with a double-click. Run this in PowerShell from `C:\Pharma-POS-AI`:
+Run in PowerShell from `C:\Pharma-POS-AI`:
 
 ```powershell
 $s = "[InternetShortcut]`r`nURL=http://localhost:8080`r`nIconFile=C:\Pharma-POS-AI\PHARMACY.ico`r`nIconIndex=0"
 $s | Out-File "$env:PUBLIC\Desktop\Pharma POS.url" -Encoding ASCII
 ```
 
-This places a **Pharma POS** icon on the desktop for every Windows user account on the machine. Double-clicking it opens the application in the default browser.
+### Step 12. Open Firewall (only if other machines need access)
 
-> If you want the shortcut only for the current user, replace `$env:PUBLIC\Desktop` with `$env:USERPROFILE\Desktop`.
+If pharmacy staff will access the system from other computers on the same network, open port 8080 in Windows Defender Firewall. If only one workstation is used, skip this step.
 
-### 11. Configure Windows Firewall (If Needed)
+### Step 13. Install Backup Schedule
 
-By default, ports 8080 and 8000 are accessible only from `localhost`. If pharmacy staff will access the system from other computers on the same local network, open inbound rules in Windows Defender Firewall for TCP port 8080.
-
-If access is limited to the single pharmacy workstation, no firewall changes are needed.
-
-### 12. Configure Automatic Startup
-
-Docker Desktop is configured to start automatically at Windows login by default. The containers have `restart: unless-stopped`, so they restart automatically after a reboot.
-
-Verify after a reboot:
-1. Wait for Docker Desktop to show "running" in the system tray
-2. Open `http://localhost:8080` — it should load without manual intervention
-
-### 13. Configure Backups
-
-Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator and run:
+Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator:
 
 ```bat
 install_backup_task.bat
 ```
 
-This registers a Windows Scheduled Task that runs `backup.bat` every night. Backup files are written to the `backups\` folder inside the project directory.
-
-> **Important:** `backup.bat` connects to PostgreSQL at port `5435` when using Docker Compose (the database container maps to host port 5435). Confirm `backup.bat` is using the correct port — see the Docker Backup Note below.
-
-After installing the task, run a manual backup to confirm it works:
+Run a manual backup to confirm it works:
 
 ```bat
 backup.bat
 ```
 
-A `.dump` file should appear in the `backups\` folder.
+A `.dump` file must appear in the `backups\` folder before you proceed.
 
-#### Docker Backup Note
+---
 
-When running under Docker Compose, PostgreSQL is reachable from the host at port `5435`. The `backup.bat` script reads `POSTGRES_PORT` from `backend\.env`. If `POSTGRES_PORT=5432` is set in `.env` (the Docker internal port), backup will fail.
+## Part 3 — Handover Checklist
 
-**Workaround:** After confirming the application is running, update `POSTGRES_PORT` in `backend\.env` to `5435` before running `backup.bat`. This affects only host-side tools like `pg_dump`; Docker Compose overrides this value internally for the backend container.
+Do not hand over until every item below is verified:
 
-Alternatively, run `pg_dump` directly inside the database container (no extra installation required):
+- [ ] Admin login works
+- [ ] Cashier login works
+- [ ] POS sale completes end to end
+- [ ] Product add and stock receipt work
+- [ ] Sale void or refund tested
+- [ ] Closeout summary reviewed
+- [ ] Desktop shortcut opens the app
+- [ ] Manual backup ran and `.dump` file exists
+- [ ] Machine rebooted and system came back up without manual steps
+- [ ] Backup folder location shown to client
+- [ ] Support contact recorded
 
-```cmd
-docker exec pharma-pos-db pg_dump -U pharma_user -d pharma_pos -F c -f /tmp/backup.dump
-docker cp pharma-pos-db:/tmp/backup.dump C:\PharmaBackups\pharma_backup_%DATE:~-4%%DATE:~3,2%%DATE:~0,2%.dump
+---
+
+## Part 4 — Ongoing Operations
+
+### Upgrade
+
+1. Run a manual backup first
+2. Pull new images:
+   ```cmd
+   docker compose -f docker-compose.client.yml pull
+   ```
+3. Restart with new images:
+   ```cmd
+   docker compose -f docker-compose.client.yml up -d
+   ```
+4. Run migrations:
+   ```cmd
+   docker exec pharma-pos-backend alembic upgrade head
+   ```
+5. Verify login, products, and POS
+
+### Backup
+
+Run manually at any time:
+
+```bat
+backup.bat
 ```
 
-### 14. Validate Before Handover
-
-Test every workflow before leaving the pharmacy:
-- login works for the created admin account
-- POS opens correctly
-- products page loads
-- product creation works
-- stock receipt works
-- sale completes
-- sale void or refund is verified with a test invoice
-- closeout summary is reviewed
-- manual backup succeeds and the `.dump` file appears
-- `Settings` page shows database connected and recent backup status
-- machine rebooted and system came back up without manual steps
-
-## Client Handover Checklist
-
-Before leaving the pharmacy:
-
-- [ ] admin login verified
-- [ ] cashier login verified
-- [ ] POS sale verified
-- [ ] product add/receive workflow verified
-- [ ] sale reversal workflow verified
-- [ ] closeout totals reviewed
-- [ ] desktop shortcut created and tested
-- [ ] backup location shown to client
-- [ ] backup procedure explained
-- [ ] support contact recorded
-- [ ] installed version recorded
-
-## Troubleshooting
-
-### Backend container restarts but still fails after editing `.env`
-
-`docker compose restart` does **not** reload the `.env` file. The container keeps the environment it was created with. Always recreate the container after any `.env` change:
+Or confirm the scheduled task is active:
 
 ```cmd
-docker compose -f docker-compose.client.yml up -d --force-recreate backend
+schtasks /query /tn "PharmaBackup"
 ```
 
-### Authentication failed — wrong password
+### Restore
 
-First check what password the running backend container actually sees:
+Always create a fresh backup before restoring. Then:
 
-```cmd
-docker exec pharma-pos-backend env | findstr POSTGRES
+```bat
+restore.bat
 ```
 
-Then check whether a `DATABASE_URL` override is also present:
+Test login and a sample workflow after every restore.
 
-```cmd
-docker exec pharma-pos-backend env | findstr DATABASE
-```
+---
 
-If `DATABASE_URL=` appears, it is overriding `POSTGRES_PASSWORD`. Open `backend\.env`, delete the `DATABASE_URL=` line, save, and recreate the backend container.
+## Part 5 — Quick Fixes
 
-To confirm which password PostgreSQL is actually using, connect from inside the database container:
-
-```cmd
-docker exec pharma-pos-db psql -U pharma_user -d pharma_pos -c "SELECT current_user;"
-```
-
-To reset the PostgreSQL password:
-
-```cmd
-docker exec pharma-pos-db psql -U pharma_user -d pharma_pos -c "ALTER USER pharma_user WITH PASSWORD 'NewPasswordHere';"
-```
-
-Then update `POSTGRES_PASSWORD` in `backend\.env` to match and recreate the backend container.
-
-### Alembic migration fails with "invalid interpolation syntax"
-
-This happens when `POSTGRES_PASSWORD` contains a special character (like `!`) that gets URL-encoded to `%21`. The `%` sign breaks Alembic's config parser.
-
-Fix: change `POSTGRES_PASSWORD` in `backend\.env` to an alphanumeric-only value, reset the DB password to match, and recreate the backend container.
-
-### `relation "users" does not exist` during provisioning
-
-Migrations have not been applied. Run:
-
-```cmd
-docker exec pharma-pos-backend alembic upgrade head
-```
-
-Then run the provision script again.
-
-### Frontend shows `unhealthy` in `docker compose ps`
-
-The frontend health check uses `wget`, which may not be present in the nginx image. The container serves the React app correctly regardless — open `http://localhost:8080` to confirm. This status line can be ignored if the browser shows the login page.
-
-### `docker login` succeeds but image pull shows "not found"
-
-The image name in `docker-compose.client.yml` must exactly match the GitHub username (case-sensitive, lowercase). Verify by going to the GitHub repo → Packages and copying the pull command shown there.
-
-## Upgrade Procedure
-
-Before any upgrade:
-
-1. create manual backup
-2. confirm backup file exists
-3. stop backend service if required
-4. apply update
-5. run migrations
-6. start service
-7. verify login, products, and POS
-
-## Restore Procedure
-
-Use:
-
-- [restore.bat](/home/grejoy/Projects/pharma-pos-ai/restore.bat)
-
-Rules:
-- always create a fresh backup before restore
-- confirm all users are out of the system
-- restore only with technician/admin approval
-- test login and a sample workflow after restore
-
-## Support Record Template
-
-For each client, record:
-
-- pharmacy name
-- machine name
-- install path
-- database name
-- backup folder
-- admin username
-- installed version
-- install date
-- last successful backup test date
-- last successful restore rehearsal date
-
-## Operational Standard
-
-Do not consider a Windows local deployment complete until:
-- startup works after reboot
-- backup runs reliably
-- restore is documented
-- admin can operate the system without terminal commands
+| Problem | Fix |
+|---|---|
+| Backend `unhealthy` after editing `.env` | `docker compose -f docker-compose.client.yml up -d --force-recreate backend` — `docker restart` does not reload env |
+| Authentication failed — wrong password | `docker exec pharma-pos-backend env \| findstr POSTGRES` — check for a `DATABASE_URL=` line overriding the password; delete it from `.env` then recreate backend |
+| `relation "users" does not exist` | Run `docker exec pharma-pos-backend alembic upgrade head` then provision admin again |
+| Alembic `invalid interpolation syntax` | `POSTGRES_PASSWORD` contains a special character — change to alphanumeric only, reset DB password to match, recreate backend |
+| `docker login` succeeds but image pull fails | Image name in `docker-compose.client.yml` must be lowercase and match the GitHub username exactly |
+| Frontend shows `unhealthy` | Ignore — the nginx container serves the app correctly; open `http://localhost:8080` to confirm |
