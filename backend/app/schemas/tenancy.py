@@ -166,3 +166,91 @@ class DeviceProvisionResponse(BaseModel):
     env_block: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ── Admin command center schemas ──────────────────────────────────────────────
+
+class CommandCenterTotals(BaseModel):
+    total_pharmacies: int = 0
+    active_pharmacies: int = 0
+    total_branches: int = 0
+    active_branches: int = 0
+    total_devices: int = 0
+    active_devices: int = 0
+    disabled_devices: int = 0
+    retired_devices: int = 0
+    synced_last_24h: int = 0
+    stale_devices: int = 0
+    never_synced_devices: int = 0
+    branches_without_devices: int = 0
+    branches_without_healthy_device: int = 0
+
+
+class CommandCenterDataTrust(BaseModel):
+    status: str
+    last_event_received_at: Optional[datetime] = None
+    last_projected_at: Optional[datetime] = None
+    projection_lag_minutes: Optional[int] = None
+    ingested_event_count: int = 0
+    projected_event_count: int = 0
+    unprojected_event_count: int = 0
+    projection_failed_count: int = 0
+    duplicate_delivery_count: int = 0
+
+
+class CommandCenterMoneyPulse(BaseModel):
+    today_revenue: float = 0
+    yesterday_revenue: float = 0
+    trailing_7d_revenue: float = 0
+    today_sales_count: int = 0
+    yesterday_sales_count: int = 0
+    trailing_7d_sales_count: int = 0
+
+
+class CommandCenterStockRisk(BaseModel):
+    out_of_stock_products: int = 0
+    low_stock_products: int = 0
+    expired_batches: int = 0
+    near_expiry_batches: int = 0
+    quantity_on_hand: int = 0
+    value_at_risk: float = 0
+    expiry_warning_days: int = 90
+
+
+class CommandCenterAttentionItem(BaseModel):
+    severity: str
+    kind: str
+    title: str
+    detail: str
+    organization_id: Optional[int] = None
+    organization_name: Optional[str] = None
+    branch_id: Optional[int] = None
+    branch_name: Optional[str] = None
+    device_id: Optional[int] = None
+    device_name: Optional[str] = None
+    last_seen_at: Optional[datetime] = None
+
+
+class CommandCenterOrganizationSummary(BaseModel):
+    organization_id: int
+    organization_name: str
+    branch_count: int = 0
+    device_count: int = 0
+    active_device_count: int = 0
+    stale_device_count: int = 0
+    never_synced_device_count: int = 0
+    last_seen_at: Optional[datetime] = None
+    today_revenue: float = 0
+    trailing_7d_revenue: float = 0
+    projection_failed_count: int = 0
+    sync_status: str = "unknown"
+
+
+class AdminCommandCenterResponse(BaseModel):
+    generated_at: datetime
+    totals: CommandCenterTotals
+    data_trust: CommandCenterDataTrust
+    money: CommandCenterMoneyPulse
+    stock_risk: CommandCenterStockRisk
+    attention: List[CommandCenterAttentionItem] = []
+    organizations: List[CommandCenterOrganizationSummary] = []

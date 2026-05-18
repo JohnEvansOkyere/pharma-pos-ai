@@ -117,8 +117,19 @@ def require_permission(required_permission: UserPermission):
     return permission_checker
 
 
+def get_vendor_admin(current_user: User = Depends(get_current_active_user)) -> User:
+    """Require the caller to be a vendor-level admin (role=admin, no organization)."""
+    if current_user.role != UserRole.ADMIN or current_user.organization_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vendor admin access required",
+        )
+    return current_user
+
+
 # Convenience dependencies
 require_admin = require_role(UserRole.ADMIN)
+require_vendor_admin = get_vendor_admin
 require_manager = require_role(UserRole.MANAGER)
 require_manage_products = require_permission(UserPermission.MANAGE_PRODUCTS)
 require_manage_suppliers = require_permission(UserPermission.MANAGE_SUPPLIERS)

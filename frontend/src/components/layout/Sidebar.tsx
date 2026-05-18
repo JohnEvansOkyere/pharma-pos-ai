@@ -26,7 +26,7 @@ const navigation = [
   { name: 'Suppliers', href: '/suppliers', icon: FiUsers, group: 'PHARMACY' },
   { name: 'Notifications', href: '/notifications', icon: FiBell, group: 'SYSTEM' },
   { name: 'Settings', href: '/settings', icon: FiSettings, group: 'SYSTEM', adminOrManager: true },
-  { name: 'Clients', href: '/clients', icon: FiServer, group: 'SYSTEM', adminOnly: true },
+  { name: 'Clients', href: '/clients', icon: FiServer, group: 'SYSTEM', vendorOnly: true },
 ]
 
 const SIDEBAR_BG = '#1e3050'
@@ -63,6 +63,7 @@ export default function Sidebar({ onHide }: SidebarProps) {
         {(['OVERVIEW', 'PHARMACY', 'SYSTEM'] as const).map((group) => {
           const items = navigation.filter((item) => {
             if (item.group !== group) return false
+            if (item.vendorOnly) return user?.role === 'admin' && !user.organization_id
             if (item.adminOnly) return user?.role === 'admin'
             if (item.adminOrManager) return user?.role === 'admin' || user?.role === 'manager'
             return true

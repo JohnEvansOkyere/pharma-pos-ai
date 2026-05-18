@@ -56,9 +56,10 @@ backend/
 │   │   └── supplier.py          # Supplier
 │   ├── schemas/                 # 17 Pydantic schema files (request/response)
 │   ├── api/
-│   │   ├── __init__.py          # api_router with all 15 endpoint routers
+│   │   ├── __init__.py          # api_router with endpoint routers
 │   │   ├── dependencies/        # Auth dependencies (get_current_user, require_*)
-│   │   └── endpoints/           # 15 endpoint modules
+│   │   └── endpoints/           # Endpoint modules
+│   │       ├── admin_tenancy.py # Vendor-admin client management + command center
 │   │       ├── auth.py          # POST /auth/login, GET /auth/me
 │   │       ├── users.py         # CRUD /users (admin-controlled)
 │   │       ├── products.py      # CRUD /products, batches, receive-stock, low-stock
@@ -120,6 +121,7 @@ frontend/
 │   │   ├── SettingsPage.tsx     # System settings, users, backup, AI config
 │   │   ├── LoginPage.tsx        # Login form
 │   │   ├── NotificationsPage.tsx # Notification center
+│   │   ├── ClientsPage.tsx      # Vendor-admin command center + client provisioning
 │   │   └── SuppliersPage.tsx    # Supplier management
 │   ├── components/              # Reusable UI components
 │   ├── hooks/                   # Custom React hooks
@@ -189,6 +191,9 @@ The original design compared the `Authorization` header against a single `CLOUD_
 
 ### 3.14 Why Vendor Admin Panel Is Separate From the Pharmacy Local Dashboard
 The `/admin/*` API endpoints and `ClientsPage.tsx` are vendor-facing (John only, admin role). They live on Render/Vercel and manage the cloud-side tenancy records. The local pharmacy dashboard at `localhost:8080` is for pharmacy staff and has no concept of multi-tenancy. Keeping them separate means pharmacy admins cannot accidentally see or modify other clients' data, and the vendor panel does not depend on any individual pharmacy machine being online.
+
+### 3.15 Why The Vendor Command Center Must Separate Reachability From Trust
+The cloud side is downstream of the local-first pharmacy installs: local outbox events are uploaded to Render, then projected into cloud read models. A recent `Device.last_seen_at` only proves that a device contacted the cloud; it does not prove that the local database, scheduler, backups, or unsent outbox are healthy. Likewise, missing cloud sales can mean zero business, no connectivity, or delayed upload. The vendor dashboard should therefore show **device reachability**, **sync/data freshness**, and **reconciliation state** as separate signals, and future heartbeat telemetry should carry local diagnostics the cloud cannot infer from business events alone.
 
 ---
 
@@ -353,6 +358,8 @@ alembic revision --autogenerate -m "description"  # Generate migration
 
 | Date | Who | What | Why | Files |
 | ---- | --- | ---- | --- | ----- |
+| 2026-05-18 21:37 UTC | Dex | Implemented admin-only client command center P0 layer | User clarified the dashboard is only visible to the admin and wanted the vendor home to show real operational intelligence. Added `/admin/command-center` guarded by `require_vendor_admin`, aggregating tenancy, sync ingestion, projected sales, product snapshots, and batch snapshots into fleet coverage, data trust, money pulse, stock risk, attention queue, and organization summaries. Upgraded `/clients` UI into an admin-only command center and updated the go-live checklist to mark completed/partial dashboard insight work. | `backend/app/api/endpoints/admin_tenancy.py`, `backend/app/schemas/tenancy.py`, `frontend/src/services/api.ts`, `frontend/src/pages/ClientsPage.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-18 21:26 UTC | Dex | Expanded the go-live checklist into a vendor command-center insight roadmap | User wanted the client management dashboard to feel like an owner’s operational home, not a minimal demo. Added local-first/cloud-projection guardrails, marked the implemented provisioning baseline, and listed P0/P1/P2 insights for fleet health, sync freshness, reconciliation, sales, stock risk, telemetry, support, security, and portfolio intelligence. Added a MEMORY design decision separating device reachability from data trust. | `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-05-18 UTC | Claude Sonnet 4.6 | **Cloud vendor admin dashboard — client provisioning UI + admin tenancy API** | Vendor (John) had no way to create pharmacy client records (org/branch/device) or generate per-device tokens without running a Python script with DB credentials. Built `/admin/*` REST API (admin-only) for full CRUD on organizations, branches, and devices with on-demand token generation/rotation. Built `ClientsPage.tsx` with stats bar, expandable org→device tree, 3-step provisioning wizard (shows env block once), enable/disable toggle, and token rotation dialog. Added `/clients` route (admin-only) and "Clients" sidebar nav item. Removed `CLOUD_SYNC_REQUIRE_TOKEN` from `.env.client.example` (server-side setting, not for client machines). | `backend/app/api/endpoints/admin_tenancy.py`, `backend/app/schemas/tenancy.py`, `backend/app/api/__init__.py`, `frontend/src/pages/ClientsPage.tsx`, `frontend/src/App.tsx`, `frontend/src/components/layout/Sidebar.tsx`, `backend/.env.client.example`, `docs/GO_LIVE_CHECKLIST.md` |
 | 2026-05-18 UTC | Claude Sonnet 4.6 | **Fix sync token tests broken by per-device token_hash migration** | `registered_device` fixture created devices without `token_hash`; new `_authenticate_device` always rejected them. Split None-hash (503 misconfiguration) from bad-hash (401 invalid). | `backend/app/api/endpoints/sync.py`, `backend/tests/test_sync_ingestion.py` |
 | 2026-05-18 19:24 UTC | Dex | Identified likely live CORS mismatch from Vercel deployment screenshot | Screenshot showed both the stable alias `https://pharma-pos-ai.vercel.app` and a deployment-specific URL `https://pharma-pos-enz81525u-john-evans-okyeres-projects.vercel.app`; opening the deployment URL would produce a different browser origin than the one currently allowlisted in Render | `MEMORY.md` |

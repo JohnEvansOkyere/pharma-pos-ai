@@ -520,6 +520,11 @@ class ApiClient {
     return response.data
   }
 
+  async getAdminCommandCenter() {
+    const response = await this.client.get('/admin/command-center')
+    return response.data
+  }
+
   async provisionAdminDevice(orgId: number, branchId: number, data: any) {
     const response = await this.client.post(`/admin/organizations/${orgId}/branches/${branchId}/devices`, data)
     return response.data

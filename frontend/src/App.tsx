@@ -46,6 +46,21 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Vendor-admin-only route: role=admin AND no organization (not a pharmacy client)
+function VendorRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, user } = useAuthStore()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (user?.role !== 'admin' || user.organization_id) {
+    return <Navigate to="/pos" replace />
+  }
+
+  return <>{children}</>
+}
+
 // Admin or Manager route component
 function AdminOrManagerRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useAuthStore()
@@ -124,9 +139,9 @@ function App() {
               </AdminOrManagerRoute>
             } />
             <Route path="clients" element={
-              <AdminRoute>
+              <VendorRoute>
                 <ClientsPage />
-              </AdminRoute>
+              </VendorRoute>
             } />
           </Route>
 

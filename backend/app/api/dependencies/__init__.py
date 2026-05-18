@@ -17,6 +17,7 @@ from app.api.dependencies.auth import (
     require_refund_sale,
     require_role,
     require_trigger_backup,
+    require_vendor_admin,
     require_view_reports,
     require_void_sale,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "require_refund_sale",
     "require_role",
     "require_trigger_backup",
+    "require_vendor_admin",
     "require_view_reports",
     "require_void_sale",
 ]

@@ -10,21 +10,31 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import date, datetime, time, timedelta, timezone
+from decimal import Decimal
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_admin
+from app.api.dependencies import require_vendor_admin
 from app.core.config import settings
 from app.db.base import get_db
+from app.models.cloud_projection import CloudBatchSnapshot, CloudProductSnapshot, CloudSaleFact
+from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Branch, Device, DeviceStatus, Organization
 from app.models.user import User
 from app.schemas.tenancy import (
+    AdminCommandCenterResponse,
     BranchCreate,
     BranchDetail,
+    CommandCenterAttentionItem,
+    CommandCenterDataTrust,
+    CommandCenterMoneyPulse,
+    CommandCenterOrganizationSummary,
+    CommandCenterStockRisk,
+    CommandCenterTotals,
     BranchUpdate,
     DeviceCreate,
     DeviceDetail,
@@ -105,13 +115,394 @@ def _env_block(device: Device, raw_token: str) -> str:
     )
 
 
+def _money(value) -> float:
+    if value is None:
+        return 0.0
+    if isinstance(value, Decimal):
+        return float(value)
+    return float(value or 0)
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _sync_status(last_seen_at: Optional[datetime], *, now: datetime) -> str:
+    last_seen_at = _aware(last_seen_at)
+    if last_seen_at is None:
+        return "never"
+    age = now - last_seen_at
+    if age <= timedelta(hours=1):
+        return "fresh"
+    if age <= timedelta(hours=24):
+        return "delayed"
+    return "stale"
+
+
+def _trust_status(
+    *,
+    last_received_at: Optional[datetime],
+    projection_failed_count: int,
+    unprojected_event_count: int,
+    now: datetime,
+) -> str:
+    last_received_at = _aware(last_received_at)
+    if projection_failed_count > 0:
+        return "unsafe"
+    if last_received_at is None:
+        return "unknown"
+    if unprojected_event_count > 0:
+        return "delayed"
+    age = now - last_received_at
+    if age <= timedelta(hours=1):
+        return "fresh"
+    if age <= timedelta(hours=24):
+        return "delayed"
+    return "stale"
+
+
+def _start_of_utc_day(value: date) -> datetime:
+    return datetime.combine(value, time.min, tzinfo=timezone.utc)
+
+
+def _sales_window(db: Session, start_at: datetime, end_at: Optional[datetime] = None):
+    query = db.query(
+        func.count(CloudSaleFact.id).label("sales_count"),
+        func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("revenue"),
+    ).filter(CloudSaleFact.created_at >= start_at)
+    if end_at is not None:
+        query = query.filter(CloudSaleFact.created_at < end_at)
+    return query.one()
+
+
+def _sales_revenue_by_org(db: Session, start_at: datetime, end_at: Optional[datetime] = None) -> Dict[int, float]:
+    query = db.query(
+        CloudSaleFact.organization_id,
+        func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("revenue"),
+    ).filter(CloudSaleFact.created_at >= start_at)
+    if end_at is not None:
+        query = query.filter(CloudSaleFact.created_at < end_at)
+    rows = query.group_by(CloudSaleFact.organization_id).all()
+    return {int(row.organization_id): _money(row.revenue) for row in rows}
+
+
+# ── Command center ────────────────────────────────────────────────────────────
+
+@router.get("/command-center", response_model=AdminCommandCenterResponse)
+def get_command_center(
+    expiry_warning_days: int = Query(90, ge=1, le=730),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_vendor_admin),
+):
+    """
+    Fleet-level owner dashboard for the vendor admin.
+
+    This endpoint intentionally separates:
+    - reachability: devices seen by the cloud recently
+    - data freshness: sync ingestion + projection lag
+    - business pulse: cloud-projected sales and stock facts
+
+    Local pharmacy installs remain the operational source of truth; cloud
+    metrics are only as fresh as the latest uploaded + projected events.
+    """
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    today_start = _start_of_utc_day(today)
+    yesterday_start = _start_of_utc_day(today - timedelta(days=1))
+    seven_day_start = now - timedelta(days=7)
+    stale_cutoff = now - timedelta(hours=24)
+    near_expiry_cutoff = today + timedelta(days=expiry_warning_days)
+
+    orgs = db.query(Organization).order_by(Organization.name).all()
+    branches = db.query(Branch).order_by(Branch.organization_id, Branch.name).all()
+    devices = db.query(Device).order_by(Device.organization_id, Device.branch_id, Device.name).all()
+
+    active_devices = [d for d in devices if d.status == DeviceStatus.ACTIVE]
+    disabled_devices = [d for d in devices if d.status == DeviceStatus.DISABLED]
+    retired_devices = [d for d in devices if d.status == DeviceStatus.RETIRED]
+    synced_last_24h = [
+        d for d in active_devices
+        if _aware(d.last_seen_at) is not None and _aware(d.last_seen_at) >= stale_cutoff
+    ]
+    stale_devices = [
+        d for d in active_devices
+        if _aware(d.last_seen_at) is not None and _aware(d.last_seen_at) < stale_cutoff
+    ]
+    never_synced_devices = [d for d in active_devices if d.last_seen_at is None]
+
+    devices_by_branch: Dict[int, List[Device]] = {}
+    devices_by_org: Dict[int, List[Device]] = {}
+    branches_by_org: Dict[int, List[Branch]] = {}
+    for branch in branches:
+        branches_by_org.setdefault(branch.organization_id, []).append(branch)
+    for device in devices:
+        devices_by_branch.setdefault(device.branch_id, []).append(device)
+        devices_by_org.setdefault(device.organization_id, []).append(device)
+
+    branches_without_devices = 0
+    branches_without_healthy_device = 0
+    attention: List[CommandCenterAttentionItem] = []
+
+    for branch in branches:
+        branch_devices = devices_by_branch.get(branch.id, [])
+        healthy_devices = [
+            d for d in branch_devices
+            if d.status == DeviceStatus.ACTIVE
+            and _aware(d.last_seen_at) is not None
+            and _aware(d.last_seen_at) >= stale_cutoff
+        ]
+        org_name = branch.organization.name if branch.organization else None
+        if not branch_devices:
+            branches_without_devices += 1
+            branches_without_healthy_device += 1
+            attention.append(CommandCenterAttentionItem(
+                severity="high",
+                kind="branch_without_device",
+                title=f"{branch.name} has no device",
+                detail="This branch cannot sync until at least one local machine is provisioned.",
+                organization_id=branch.organization_id,
+                organization_name=org_name,
+                branch_id=branch.id,
+                branch_name=branch.name,
+            ))
+        elif not healthy_devices and branch.is_active:
+            branches_without_healthy_device += 1
+            attention.append(CommandCenterAttentionItem(
+                severity="high",
+                kind="branch_without_healthy_device",
+                title=f"{branch.name} has no healthy device",
+                detail="No active device has contacted the cloud in the last 24 hours.",
+                organization_id=branch.organization_id,
+                organization_name=org_name,
+                branch_id=branch.id,
+                branch_name=branch.name,
+            ))
+
+    for device in sorted(
+        never_synced_devices + stale_devices,
+        key=lambda d: _aware(d.last_seen_at) or datetime.min.replace(tzinfo=timezone.utc),
+    )[:12]:
+        status_label = _sync_status(device.last_seen_at, now=now)
+        attention.append(CommandCenterAttentionItem(
+            severity="medium" if status_label == "stale" else "high",
+            kind=f"device_{status_label}",
+            title=f"{device.name} is {status_label}",
+            detail=(
+                "Device has never completed a cloud sync."
+                if status_label == "never"
+                else "Device has not contacted the cloud in more than 24 hours."
+            ),
+            organization_id=device.organization_id,
+            organization_name=device.organization.name if device.organization else None,
+            branch_id=device.branch_id,
+            branch_name=device.branch.name if device.branch else None,
+            device_id=device.id,
+            device_name=device.name,
+            last_seen_at=device.last_seen_at,
+        ))
+
+    # SQLAlchemy boolean aggregation differs by database; keep portable counts as
+    # separate simple queries. This endpoint is small and admin-only.
+    ingested_event_count = db.query(func.count(IngestedSyncEvent.id)).scalar() or 0
+    projected_event_count = db.query(func.count(IngestedSyncEvent.id)).filter(
+        IngestedSyncEvent.projected_at.is_not(None)
+    ).scalar() or 0
+    projection_failed_count = db.query(func.count(IngestedSyncEvent.id)).filter(
+        IngestedSyncEvent.projection_error.is_not(None)
+    ).scalar() or 0
+    duplicate_delivery_count = db.query(func.coalesce(func.sum(IngestedSyncEvent.duplicate_count), 0)).scalar() or 0
+    last_received_at = db.query(func.max(IngestedSyncEvent.received_at)).scalar()
+    last_projected_at = db.query(func.max(IngestedSyncEvent.projected_at)).scalar()
+    unprojected_event_count = max(int(ingested_event_count) - int(projected_event_count), 0)
+    projection_lag_minutes = None
+    if last_received_at and last_projected_at:
+        projection_lag_minutes = max(int((_aware(last_received_at) - _aware(last_projected_at)).total_seconds() // 60), 0)
+
+    data_trust = CommandCenterDataTrust(
+        status=_trust_status(
+            last_received_at=last_received_at,
+            projection_failed_count=int(projection_failed_count),
+            unprojected_event_count=unprojected_event_count,
+            now=now,
+        ),
+        last_event_received_at=last_received_at,
+        last_projected_at=last_projected_at,
+        projection_lag_minutes=projection_lag_minutes,
+        ingested_event_count=int(ingested_event_count),
+        projected_event_count=int(projected_event_count),
+        unprojected_event_count=unprojected_event_count,
+        projection_failed_count=int(projection_failed_count),
+        duplicate_delivery_count=int(duplicate_delivery_count),
+    )
+
+    if data_trust.projection_failed_count:
+        attention.append(CommandCenterAttentionItem(
+            severity="critical",
+            kind="projection_failures",
+            title=f"{data_trust.projection_failed_count} projection failures",
+            detail="Cloud reporting may be incomplete until failed events are repaired or replayed.",
+        ))
+    elif data_trust.unprojected_event_count:
+        attention.append(CommandCenterAttentionItem(
+            severity="medium",
+            kind="projection_backlog",
+            title=f"{data_trust.unprojected_event_count} events waiting for projection",
+            detail="The cloud has accepted events that have not yet reached reporting tables.",
+        ))
+
+    today_sales = _sales_window(db, today_start)
+    yesterday_sales = _sales_window(db, yesterday_start, today_start)
+    trailing_sales = _sales_window(db, seven_day_start)
+    money = CommandCenterMoneyPulse(
+        today_revenue=_money(today_sales.revenue),
+        yesterday_revenue=_money(yesterday_sales.revenue),
+        trailing_7d_revenue=_money(trailing_sales.revenue),
+        today_sales_count=int(today_sales.sales_count or 0),
+        yesterday_sales_count=int(yesterday_sales.sales_count or 0),
+        trailing_7d_sales_count=int(trailing_sales.sales_count or 0),
+    )
+
+    out_of_stock_products = db.query(func.count(CloudProductSnapshot.id)).filter(
+        CloudProductSnapshot.is_active.is_(True),
+        CloudProductSnapshot.total_stock <= 0,
+    ).scalar() or 0
+    low_stock_products = db.query(func.count(CloudProductSnapshot.id)).filter(
+        CloudProductSnapshot.is_active.is_(True),
+        CloudProductSnapshot.total_stock > 0,
+        CloudProductSnapshot.total_stock <= CloudProductSnapshot.low_stock_threshold,
+    ).scalar() or 0
+    quantity_on_hand = db.query(func.coalesce(func.sum(CloudProductSnapshot.total_stock), 0)).filter(
+        CloudProductSnapshot.is_active.is_(True),
+    ).scalar() or 0
+    risky_batches = db.query(CloudBatchSnapshot).filter(
+        CloudBatchSnapshot.quantity > 0,
+        CloudBatchSnapshot.is_quarantined.is_(False),
+        CloudBatchSnapshot.expiry_date <= near_expiry_cutoff,
+    ).all()
+    expired_batches = sum(1 for b in risky_batches if b.expiry_date < today)
+    near_expiry_batches = sum(1 for b in risky_batches if today <= b.expiry_date <= near_expiry_cutoff)
+    value_at_risk = sum(_money(b.cost_price) * int(b.quantity or 0) for b in risky_batches)
+    stock_risk = CommandCenterStockRisk(
+        out_of_stock_products=int(out_of_stock_products),
+        low_stock_products=int(low_stock_products),
+        expired_batches=expired_batches,
+        near_expiry_batches=near_expiry_batches,
+        quantity_on_hand=int(quantity_on_hand or 0),
+        value_at_risk=float(value_at_risk),
+        expiry_warning_days=expiry_warning_days,
+    )
+
+    if stock_risk.expired_batches:
+        attention.append(CommandCenterAttentionItem(
+            severity="critical",
+            kind="expired_stock",
+            title=f"{stock_risk.expired_batches} expired batches",
+            detail="Expired stock is still visible in cloud stock snapshots and should be investigated.",
+        ))
+    if stock_risk.out_of_stock_products:
+        attention.append(CommandCenterAttentionItem(
+            severity="medium",
+            kind="out_of_stock",
+            title=f"{stock_risk.out_of_stock_products} products out of stock",
+            detail="One or more client branches have products at zero or negative projected stock.",
+        ))
+
+    today_revenue_by_org = _sales_revenue_by_org(db, today_start)
+    trailing_revenue_by_org = _sales_revenue_by_org(db, seven_day_start)
+    projection_failures_by_org = {
+        int(row.organization_id): int(row.count or 0)
+        for row in db.query(
+            IngestedSyncEvent.organization_id,
+            func.count(IngestedSyncEvent.id).label("count"),
+        ).filter(
+            IngestedSyncEvent.projection_error.is_not(None)
+        ).group_by(IngestedSyncEvent.organization_id).all()
+    }
+
+    org_summaries: List[CommandCenterOrganizationSummary] = []
+    for org in orgs:
+        org_devices = devices_by_org.get(org.id, [])
+        org_active_devices = [d for d in org_devices if d.status == DeviceStatus.ACTIVE]
+        org_stale_devices = [
+            d for d in org_active_devices
+            if _aware(d.last_seen_at) is not None and _aware(d.last_seen_at) < stale_cutoff
+        ]
+        org_never_synced = [d for d in org_active_devices if d.last_seen_at is None]
+        latest_seen = max((_aware(d.last_seen_at) for d in org_devices if d.last_seen_at), default=None)
+        org_sync_status = "unknown"
+        if org_active_devices:
+            if org_never_synced:
+                org_sync_status = "never"
+            elif org_stale_devices:
+                org_sync_status = "stale"
+            elif latest_seen and latest_seen >= now - timedelta(hours=1):
+                org_sync_status = "fresh"
+            else:
+                org_sync_status = "delayed"
+
+        org_summaries.append(CommandCenterOrganizationSummary(
+            organization_id=org.id,
+            organization_name=org.name,
+            branch_count=len(branches_by_org.get(org.id, [])),
+            device_count=len(org_devices),
+            active_device_count=len(org_active_devices),
+            stale_device_count=len(org_stale_devices),
+            never_synced_device_count=len(org_never_synced),
+            last_seen_at=latest_seen,
+            today_revenue=today_revenue_by_org.get(org.id, 0.0),
+            trailing_7d_revenue=trailing_revenue_by_org.get(org.id, 0.0),
+            projection_failed_count=projection_failures_by_org.get(org.id, 0),
+            sync_status=org_sync_status,
+        ))
+
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    attention = sorted(
+        attention,
+        key=lambda item: (
+            severity_rank.get(item.severity, 9),
+            _aware(item.last_seen_at) or datetime.min.replace(tzinfo=timezone.utc),
+            item.title,
+        ),
+    )[:16]
+
+    totals = CommandCenterTotals(
+        total_pharmacies=len(orgs),
+        active_pharmacies=sum(1 for org in orgs if org.is_active),
+        total_branches=len(branches),
+        active_branches=sum(1 for branch in branches if branch.is_active),
+        total_devices=len(devices),
+        active_devices=len(active_devices),
+        disabled_devices=len(disabled_devices),
+        retired_devices=len(retired_devices),
+        synced_last_24h=len(synced_last_24h),
+        stale_devices=len(stale_devices),
+        never_synced_devices=len(never_synced_devices),
+        branches_without_devices=branches_without_devices,
+        branches_without_healthy_device=branches_without_healthy_device,
+    )
+
+    return AdminCommandCenterResponse(
+        generated_at=now,
+        totals=totals,
+        data_trust=data_trust,
+        money=money,
+        stock_risk=stock_risk,
+        attention=attention,
+        organizations=org_summaries,
+    )
+
+
 # ── Organizations ─────────────────────────────────────────────────────────────
 
 @router.get("/organizations", response_model=List[OrganizationDetail])
 def list_organizations(
     active_only: bool = Query(False),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     q = db.query(Organization)
     if active_only:
@@ -124,7 +515,7 @@ def list_organizations(
 def create_organization(
     data: OrganizationCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     if db.query(Organization).filter(Organization.name == data.name).first():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Organization name already exists")
@@ -146,7 +537,7 @@ def update_organization(
     org_id: int,
     data: OrganizationUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
@@ -175,7 +566,7 @@ def update_organization(
 def list_branches(
     org_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
@@ -189,7 +580,7 @@ def create_branch(
     org_id: int,
     data: BranchCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
@@ -216,7 +607,7 @@ def update_branch(
     branch_id: int,
     data: BranchUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     branch = db.query(Branch).filter(Branch.id == branch_id, Branch.organization_id == org_id).first()
     if not branch:
@@ -241,7 +632,7 @@ def list_all_devices(
     org_id: Optional[int] = Query(None),
     status_filter: Optional[DeviceStatus] = Query(None, alias="status"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     q = db.query(Device)
     if org_id:
@@ -262,7 +653,7 @@ def provision_device(
     branch_id: int,
     data: DeviceCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     """
     Create a new device and return its raw sync token once.
@@ -309,7 +700,7 @@ def update_device_status(
     device_id: int,
     data: DeviceStatusUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
@@ -324,7 +715,7 @@ def update_device_status(
 def rotate_device_token(
     device_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_admin),
+    _: User = Depends(require_vendor_admin),
 ):
     """
     Generate a new token for a device, invalidating the old one immediately.
