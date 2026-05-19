@@ -347,7 +347,9 @@ function aiProviderFormFromSetting(setting: AIExternalProviderSetting): AIExtern
 
 export default function CloudDashboardPage() {
   const { user } = useAuthStore()
-  const defaultOrganizationId = user?.organization_id ? String(user.organization_id) : ''
+  const defaultOrganizationId = user?.organization_id
+    ? String(user.organization_id)
+    : (localStorage.getItem('cloud_dashboard_org_id') ?? '')
   const [organizationInput, setOrganizationInput] = useState(defaultOrganizationId)
   const [selectedBranchId, setSelectedBranchId] = useState<string>(user?.branch_id ? String(user.branch_id) : 'all')
   const [periodDays, setPeriodDays] = useState(30)
@@ -858,7 +860,12 @@ export default function CloudDashboardPage() {
               className="input h-10 w-40"
               inputMode="numeric"
               value={organizationInput}
-              onChange={(event) => setOrganizationInput(event.target.value)}
+              onChange={(event) => {
+                setOrganizationInput(event.target.value)
+                if (event.target.value && !user?.organization_id) {
+                  localStorage.setItem('cloud_dashboard_org_id', event.target.value)
+                }
+              }}
               disabled={user?.organization_id != null}
             />
           </label>
