@@ -102,6 +102,7 @@ interface CloudExpiryRiskItem {
 
 interface CloudStockVelocityItem {
   branch_id: number
+  branch_name?: string | null
   product_id: number
   product_name: string
   sku: string
