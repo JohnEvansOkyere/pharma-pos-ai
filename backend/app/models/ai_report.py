@@ -156,6 +156,25 @@ class AIChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
 
+class TelegramAlertLog(Base):
+    """
+    Deduplication log for proactive Telegram anomaly alerts.
+    One row per (organization, alert_key). Updated on each send.
+    Alerts are suppressed until the cooldown window passes.
+    """
+
+    __tablename__ = "telegram_alert_logs"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "alert_key", name="uq_telegram_alert_logs_org_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    alert_key = Column(String(200), nullable=False, index=True)
+    last_sent_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class AIExternalProviderSetting(Base):
     """Tenant-level policy for external AI provider use."""
 

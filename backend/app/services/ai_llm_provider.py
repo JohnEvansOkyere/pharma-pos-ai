@@ -3,7 +3,8 @@ Server-side LLM provider adapter for the AI manager assistant.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
@@ -26,6 +27,7 @@ class AIManagerLLMProvider:
         "claude": "claude-3-5-haiku-latest",
         "groq": "llama-3.3-70b-versatile",
     }
+    MAX_TOOL_ITERATIONS: int = 5
 
     @staticmethod
     def configured_provider() -> str:
@@ -110,6 +112,185 @@ class AIManagerLLMProvider:
             "model": model,
             "fallback_used": not bool(answer),
         }
+
+    @staticmethod
+    def generate_answer_with_tools(
+        *,
+        message: str,
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+        tool_dispatcher: Callable[[str, Dict[str, Any]], Any],
+        conversation_history: Optional[List[Dict[str, str]]] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+        fallback_summary: str,
+    ) -> Dict[str, Any]:
+        """Tool-use entry point. The LLM calls registered tools to fetch business data."""
+        provider = (provider or AIManagerLLMProvider.configured_provider()).strip().lower()
+        if model is not None:
+            model = model.strip() or None
+        else:
+            model = AIManagerLLMProvider.configured_model(provider)
+
+        if provider == "deterministic" or not AIManagerLLMProvider.is_external_provider_configured(provider, model):
+            return {
+                "answer": fallback_summary,
+                "provider": provider,
+                "model": model,
+                "fallback_used": True,
+            }
+
+        history = conversation_history or []
+        try:
+            if provider in ("openai", "groq"):
+                url = AIManagerLLMProvider.OPENAI_URL if provider == "openai" else AIManagerLLMProvider.GROQ_URL
+                api_key = (settings.OPENAI_API_KEY if provider == "openai" else settings.GROQ_API_KEY) or ""
+                answer = AIManagerLLMProvider._openai_tool_loop(
+                    message=message,
+                    system_prompt=system_prompt,
+                    tools=tools,
+                    tool_dispatcher=tool_dispatcher,
+                    history=history,
+                    model=model or "",
+                    url=url,
+                    api_key=api_key,
+                )
+            elif provider == "claude":
+                answer = AIManagerLLMProvider._claude_tool_loop(
+                    message=message,
+                    system_prompt=system_prompt,
+                    tools=AIManagerLLMProvider._to_anthropic_tools(tools),
+                    tool_dispatcher=tool_dispatcher,
+                    history=history,
+                    model=model or "",
+                )
+            else:
+                raise AIProviderUnavailable(f"Unsupported provider: {provider}")
+        except Exception:
+            return {
+                "answer": fallback_summary,
+                "provider": provider,
+                "model": model,
+                "fallback_used": True,
+            }
+
+        return {
+            "answer": answer or fallback_summary,
+            "provider": provider,
+            "model": model,
+            "fallback_used": not bool(answer),
+        }
+
+    @staticmethod
+    def _openai_tool_loop(
+        *,
+        message: str,
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+        tool_dispatcher: Callable[[str, Dict[str, Any]], Any],
+        history: List[Dict[str, str]],
+        model: str,
+        url: str,
+        api_key: str,
+    ) -> str:
+        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages.extend({"role": m["role"], "content": m["content"]} for m in history)
+        messages.append({"role": "user", "content": message})
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        for _ in range(AIManagerLLMProvider.MAX_TOOL_ITERATIONS):
+            payload = {
+                "model": model,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto",
+                "max_tokens": settings.AI_MANAGER_MAX_TOKENS,
+                "temperature": 0.2,
+            }
+            with httpx.Client(timeout=settings.AI_MANAGER_TIMEOUT_SECONDS) as client:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            choice = data["choices"][0]
+            assistant_message = choice["message"]
+            messages.append(assistant_message)
+            if choice.get("finish_reason") != "tool_calls":
+                return (assistant_message.get("content") or "").strip()
+            for tc in assistant_message.get("tool_calls", []):
+                name = tc["function"]["name"]
+                args = json.loads(tc["function"]["arguments"] or "{}")
+                result = tool_dispatcher(name, args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(result, default=str),
+                })
+        return ""
+
+    @staticmethod
+    def _claude_tool_loop(
+        *,
+        message: str,
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+        tool_dispatcher: Callable[[str, Dict[str, Any]], Any],
+        history: List[Dict[str, str]],
+        model: str,
+    ) -> str:
+        messages: List[Dict[str, Any]] = [{"role": m["role"], "content": m["content"]} for m in history]
+        messages.append({"role": "user", "content": message})
+        headers = {
+            "x-api-key": settings.ANTHROPIC_API_KEY or "",
+            "anthropic-version": AIManagerLLMProvider.ANTHROPIC_VERSION,
+            "Content-Type": "application/json",
+        }
+        for _ in range(AIManagerLLMProvider.MAX_TOOL_ITERATIONS):
+            payload = {
+                "model": model,
+                "system": system_prompt,
+                "messages": messages,
+                "tools": tools,
+                "max_tokens": settings.AI_MANAGER_MAX_TOKENS,
+                "temperature": 0.2,
+            }
+            with httpx.Client(timeout=settings.AI_MANAGER_TIMEOUT_SECONDS) as client:
+                response = client.post(AIManagerLLMProvider.CLAUDE_URL, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+            content_blocks = data.get("content", [])
+            messages.append({"role": "assistant", "content": content_blocks})
+            if data.get("stop_reason") != "tool_use":
+                for block in content_blocks:
+                    if block.get("type") == "text" and block.get("text"):
+                        return block["text"].strip()
+                return ""
+            tool_results = []
+            for block in content_blocks:
+                if block.get("type") != "tool_use":
+                    continue
+                result = tool_dispatcher(block["name"], block.get("input", {}))
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block["id"],
+                    "content": json.dumps(result, default=str),
+                })
+            messages.append({"role": "user", "content": tool_results})
+        return ""
+
+    @staticmethod
+    def _to_anthropic_tools(openai_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert OpenAI function-calling format to Anthropic tool-use format."""
+        result = []
+        for tool in openai_tools:
+            fn = tool.get("function", tool)
+            result.append({
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+            })
+        return result
 
     @staticmethod
     def _chat_completion(url: str, *, api_key: str, model: str, prompt: str, history: List[Dict[str, str]]) -> str:

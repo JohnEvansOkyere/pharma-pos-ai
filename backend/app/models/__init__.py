@@ -24,6 +24,7 @@ from app.models.ai_report import (
     AIWeeklyManagerReport,
     AIWeeklyReportDelivery,
     AIWeeklyReportDeliverySetting,
+    TelegramAlertLog,
 )
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
@@ -63,6 +64,7 @@ __all__ = [
     "AIWeeklyReportDelivery",
     "AIWeeklyReportDeliverySetting",
     "AIExternalProviderSetting",
+    "TelegramAlertLog",
     "CloudSaleFact",
     "CloudInventoryMovementFact",
     "CloudProductSnapshot",

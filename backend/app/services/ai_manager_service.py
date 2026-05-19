@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from sqlalchemy import case, func
 from sqlalchemy.orm import Session
@@ -25,6 +25,200 @@ from app.services.cloud_dead_stock_service import CloudDeadStockService
 from app.services.cloud_reconciliation_service import CloudReconciliationService
 from app.services.cloud_sales_trend_service import CloudSalesTrendService
 from app.services.cloud_stock_velocity_service import CloudStockVelocityService
+
+
+TOOL_SCHEMAS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_sales_summary",
+            "description": (
+                "Get total revenue (GHS), transaction count, and item count "
+                "for the reporting period across permitted branches."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": ["today", "yesterday", "period"],
+                        "description": (
+                            "'today' = today only, 'yesterday' = yesterday only, "
+                            "'period' = configured reporting window (default)."
+                        ),
+                    }
+                },
+                "required": ["period"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_branch_sales",
+            "description": "Get sales broken down by branch for the selected period, ranked by revenue.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": ["today", "yesterday", "period"],
+                    }
+                },
+                "required": ["period"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_product_sales",
+            "description": "Get the top-selling products by units sold for the selected period.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": ["today", "yesterday", "period"],
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Number of top products to return (default 10).",
+                    },
+                },
+                "required": ["period"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_inventory_summary",
+            "description": (
+                "Get aggregate inventory movement totals (units received vs dispensed) "
+                "for the selected period."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "period": {
+                        "type": "string",
+                        "enum": ["today", "yesterday", "period"],
+                    }
+                },
+                "required": ["period"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_sync_health",
+            "description": (
+                "Get sync and data-projection health: event counts, projection failures, "
+                "duplicate deliveries, and last sync timestamps."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_stock_risk",
+            "description": (
+                "Get stock risk summary: out-of-stock products, low-stock products, "
+                "expired batches, and batches nearing expiry."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "expiry_warning_days": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 365,
+                        "description": "Days ahead to flag near-expiry batches (default 90).",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_stock_velocity",
+            "description": (
+                "Get stock velocity rankings: products ordered by daily sales rate "
+                "with estimated days-of-stock remaining. Use for reorder planning."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Number of products to return (default 10).",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_dead_stock",
+            "description": (
+                "Get dead stock and slow movers: products with zero or very low sales "
+                "over the reporting period. Use for clearance or write-off decisions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 20,
+                        "description": "Number of products to return (default 10).",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_revenue_comparison",
+            "description": (
+                "Compare revenue between the current period and the previous equivalent period. "
+                "Flags branches with revenue drops, growth, or zero sales."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_reconciliation",
+            "description": (
+                "Get cloud data reconciliation results: checks product snapshot vs movement fact "
+                "consistency. Use when assessing report reliability."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "description": "Number of issues to return (default 10).",
+                    }
+                },
+            },
+        },
+    },
+]
 
 
 REFUSAL_MESSAGE = (
@@ -78,79 +272,52 @@ class AIManagerService:
                 "refused": True,
             }
 
+        start_at = reporting_window["start_at"]
+        end_at = reporting_window["end_at"]
+
         sales_summary = AIManagerService._sales_summary(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            start_at=reporting_window["start_at"],
-            end_at=reporting_window["end_at"],
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            start_at=start_at, end_at=end_at,
         )
         branch_sales = AIManagerService._branch_sales(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            start_at=reporting_window["start_at"],
-            end_at=reporting_window["end_at"],
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            start_at=start_at, end_at=end_at,
         )
         inventory_summary = AIManagerService._inventory_summary(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            start_at=reporting_window["start_at"],
-            end_at=reporting_window["end_at"],
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            start_at=start_at, end_at=end_at,
         )
         product_sales = AIManagerService._product_sales(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            start_at=reporting_window["start_at"],
-            end_at=reporting_window["end_at"],
-            limit=10,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            start_at=start_at, end_at=end_at, limit=10,
         )
         sync_health = AIManagerService._sync_health(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
         )
         stock_risk = AIManagerService._stock_risk_summary(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
         )
         stock_velocity = CloudStockVelocityService.stock_velocity(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            period_days=effective_period_days,
-            limit=10,
-            include_stable=False,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            period_days=effective_period_days, limit=10, include_stable=False,
         )
         dead_stock = CloudDeadStockService.dead_stock(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            period_days=effective_period_days,
-            limit=10,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            period_days=effective_period_days, limit=10,
         )
         revenue_comparison = CloudSalesTrendService.revenue_comparison(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            period_days=effective_period_days,
-            limit=10,
+            db, organization_id=organization_id, branch_id=effective_branch_id,
+            period_days=effective_period_days, limit=10,
         )
         reconciliation = CloudReconciliationService.reconcile(
-            db,
-            organization_id=organization_id,
-            branch_id=effective_branch_id,
-            limit=10,
+            db, organization_id=organization_id, branch_id=effective_branch_id, limit=10,
         )
 
         tool_results = {
             "time_window": {
                 "label": reporting_window["label"],
-                "start_at": reporting_window["start_at"].isoformat(),
-                "end_at": reporting_window["end_at"].isoformat(),
+                "start_at": start_at.isoformat(),
+                "end_at": end_at.isoformat(),
                 "period_days": effective_period_days,
             },
             "sales_summary": sales_summary,
@@ -165,44 +332,53 @@ class AIManagerService:
             "reconciliation": reconciliation,
         }
 
+        trust_warning = AIManagerService._build_trust_warning(sync_health, reconciliation)
+        provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
+        provider = provider_policy["provider"]
+        model = provider_policy["model"]
+
         deterministic_answer = AIManagerService._compose_answer(
             normalized_message,
-            sales_summary=sales_summary,
-            branch_sales=branch_sales,
-            inventory_summary=inventory_summary,
-            sync_health=sync_health,
-            stock_risk=stock_risk,
-            stock_velocity=stock_velocity,
-            dead_stock=dead_stock,
-            revenue_comparison=revenue_comparison,
-            reconciliation=reconciliation,
-            period_days=effective_period_days,
-            window_label=reporting_window["label"],
-            product_sales=product_sales,
+            sales_summary=sales_summary, branch_sales=branch_sales,
+            inventory_summary=inventory_summary, sync_health=sync_health,
+            stock_risk=stock_risk, stock_velocity=stock_velocity,
+            dead_stock=dead_stock, revenue_comparison=revenue_comparison,
+            reconciliation=reconciliation, period_days=effective_period_days,
+            window_label=reporting_window["label"], product_sales=product_sales,
             branch_id=effective_branch_id,
         )
-
-        # Trust gate: warn when data is stale or has projection failures.
-        trust_warning = AIManagerService._build_trust_warning(sync_health, reconciliation)
         if trust_warning:
             deterministic_answer = f"DATA TRUST WARNING: {trust_warning}\n\n{deterministic_answer}"
 
-        provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
-        provider_result = AIManagerLLMProvider.generate_answer(
-            prompt=AIManagerService._provider_prompt(
+        if AIManagerLLMProvider.is_external_provider_configured(provider, model):
+            provider_result = AIManagerLLMProvider.generate_answer_with_tools(
                 message=message.strip(),
-                deterministic_answer=deterministic_answer,
-                tool_results=tool_results,
-                organization_id=organization_id,
-                branch_id=effective_branch_id,
-                period_days=effective_period_days,
-                window_label=reporting_window["label"],
-            ),
-            deterministic_answer=deterministic_answer,
-            provider=provider_policy["provider"],
-            model=provider_policy["model"],
-            conversation_history=conversation_history or [],
-        )
+                system_prompt=AIManagerService._ceo_system_prompt(
+                    organization_id=organization_id,
+                    branch_id=effective_branch_id,
+                    window_label=reporting_window["label"],
+                    trust_warning=trust_warning,
+                ),
+                tools=TOOL_SCHEMAS,
+                tool_dispatcher=AIManagerService._make_tool_dispatcher(
+                    db,
+                    organization_id=organization_id,
+                    branch_id=effective_branch_id,
+                    reporting_window=reporting_window,
+                    prefetched=tool_results,
+                ),
+                conversation_history=conversation_history or [],
+                provider=provider,
+                model=model,
+                fallback_summary=deterministic_answer,
+            )
+        else:
+            provider_result = {
+                "answer": deterministic_answer,
+                "provider": provider,
+                "model": model,
+                "fallback_used": False,
+            }
 
         return {
             "answer": provider_result["answer"],
@@ -236,6 +412,131 @@ class AIManagerService:
     @staticmethod
     def _window_start(period_days: int) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=period_days)
+
+    @staticmethod
+    def _ceo_system_prompt(
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        window_label: str,
+        trust_warning: Optional[str],
+    ) -> str:
+        scope = f"Branch {branch_id}" if branch_id is not None else "all branches"
+        prompt = (
+            f"You are a business intelligence assistant for a pharmacy group "
+            f"({scope}, reporting window: {window_label}). "
+            "You have access to real-time business data through the provided tools. "
+            "Call the relevant tool(s) to answer the question, then reason over "
+            "the results to give a concise, actionable answer in plain business language. "
+            "Never fabricate figures — only state what the tool results contain. "
+            "Always state the reporting window and branch scope explicitly in your answer. "
+            "Do not reference internal database table names, column names, or IDs. "
+            "Do not provide clinical advice, patient records, prescription overrides, "
+            "controlled-drug guidance, or stock mutations."
+        )
+        if trust_warning:
+            prompt += f"\n\nDATA QUALITY ALERT: {trust_warning} — include this caveat in your answer."
+        return prompt
+
+    @staticmethod
+    def _make_tool_dispatcher(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        reporting_window: Dict[str, Any],
+        prefetched: Dict[str, Any],
+    ) -> Callable[[str, Dict[str, Any]], Any]:
+        """Return a dispatcher that serves pre-fetched data for the default period and
+        executes fresh DB queries when the LLM requests today/yesterday."""
+        period_days = int(reporting_window["period_days"])
+        _CACHE_MAP = {
+            "get_sales_summary": "sales_summary",
+            "get_branch_sales": "branch_sales",
+            "get_product_sales": "product_sales",
+            "get_inventory_summary": "inventory_summary",
+            "get_sync_health": "sync_health",
+            "get_stock_risk": "stock_risk",
+            "get_stock_velocity": "stock_velocity",
+            "get_dead_stock": "dead_stock",
+            "get_revenue_comparison": "revenue_comparison",
+            "get_reconciliation": "reconciliation",
+        }
+
+        def _resolve_window(period: str):
+            now = datetime.now(timezone.utc)
+            today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+            if period == "today":
+                return today_start, now
+            if period == "yesterday":
+                yesterday = today_start - timedelta(days=1)
+                return yesterday, today_start
+            return reporting_window["start_at"], reporting_window["end_at"]
+
+        def _dispatch(tool_name: str, arguments: Dict[str, Any]) -> Any:
+            period = arguments.get("period", "period")
+            limit = int(arguments.get("limit", 10))
+
+            if period == "period":
+                cache_key = _CACHE_MAP.get(tool_name)
+                if cache_key and cache_key in prefetched:
+                    return prefetched[cache_key]
+
+            start_at, end_at = _resolve_window(period)
+
+            if tool_name == "get_sales_summary":
+                return AIManagerService._sales_summary(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    start_at=start_at, end_at=end_at,
+                )
+            if tool_name == "get_branch_sales":
+                return AIManagerService._branch_sales(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    start_at=start_at, end_at=end_at,
+                )
+            if tool_name == "get_product_sales":
+                return AIManagerService._product_sales(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    start_at=start_at, end_at=end_at, limit=limit,
+                )
+            if tool_name == "get_inventory_summary":
+                return AIManagerService._inventory_summary(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    start_at=start_at, end_at=end_at,
+                )
+            if tool_name == "get_sync_health":
+                return AIManagerService._sync_health(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                )
+            if tool_name == "get_stock_risk":
+                expiry_warning_days = int(arguments.get("expiry_warning_days", 90))
+                return AIManagerService._stock_risk_summary(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    expiry_warning_days=expiry_warning_days,
+                )
+            if tool_name == "get_stock_velocity":
+                return CloudStockVelocityService.stock_velocity(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    period_days=period_days, limit=limit, include_stable=False,
+                )
+            if tool_name == "get_dead_stock":
+                return CloudDeadStockService.dead_stock(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    period_days=period_days, limit=limit,
+                )
+            if tool_name == "get_revenue_comparison":
+                return CloudSalesTrendService.revenue_comparison(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    period_days=period_days, limit=10,
+                )
+            if tool_name == "get_reconciliation":
+                return CloudReconciliationService.reconcile(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    limit=limit,
+                )
+            return {"error": f"Unknown tool: {tool_name}"}
+
+        return _dispatch
 
     @staticmethod
     def _reporting_window(message: str, period_days: int) -> Dict[str, Any]:
@@ -748,36 +1049,6 @@ class AIManagerService:
                 f"Cloud reconciliation has {critical} critical and {high} high severity issue(s)"
             )
         return "; ".join(warnings) if warnings else None
-
-    @staticmethod
-    def _provider_prompt(
-        *,
-        message: str,
-        deterministic_answer: str,
-        tool_results: Dict[str, Any],
-        organization_id: int,
-        branch_id: Optional[int],
-        period_days: int,
-        window_label: str,
-    ) -> str:
-        scope = (
-            f"organization_id={organization_id}, branch_id={branch_id}, "
-            f"period_days={period_days}, reporting_window={window_label}"
-        )
-        return (
-            "User question:\n"
-            f"{message}\n\n"
-            "Authorized reporting scope:\n"
-            f"{scope}\n\n"
-            "Approved reporting data:\n"
-            f"{tool_results}\n\n"
-            "Deterministic baseline answer:\n"
-            f"{deterministic_answer}\n\n"
-            "Write a concise manager-facing answer using only the approved reporting data. "
-            "Preserve the deterministic answer's reporting window exactly; do not change today "
-            "to 30 days or use stock-risk rows as products-sold rows. "
-            "Do not add clinical, dispensing, controlled-drug, patient, or stock mutation advice."
-        )
 
     @staticmethod
     def _is_disallowed_request(message: str) -> bool:

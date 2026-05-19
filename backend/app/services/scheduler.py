@@ -124,6 +124,25 @@ class SchedulerService:
                 replace_existing=True,
             )
 
+        if settings.TELEGRAM_ALERTS_ENABLED and settings.TELEGRAM_BOT_TOKEN:
+            self.scheduler.add_job(
+                self.push_telegram_alerts,
+                "interval",
+                minutes=settings.TELEGRAM_ALERT_INTERVAL_MINUTES,
+                id="push_telegram_alerts",
+                name="Push Telegram anomaly alerts",
+                replace_existing=True,
+            )
+
+        if settings.AI_DAILY_BRIEFING_ENABLED:
+            self.scheduler.add_job(
+                self.send_daily_briefing,
+                CronTrigger(hour=settings.AI_DAILY_BRIEFING_HOUR, minute=0, timezone=tz),
+                id="send_daily_briefing",
+                name="Send daily AI briefing via Telegram",
+                replace_existing=True,
+            )
+
         if settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_ENABLED:
             self.scheduler.add_job(
                 self.retry_weekly_ai_report_deliveries,
@@ -280,6 +299,34 @@ class SchedulerService:
             logger.info("Generated %s weekly AI manager report(s)", len(reports))
         except Exception as e:
             logger.exception("Error in weekly AI manager report task")
+        finally:
+            db.close()
+
+    @staticmethod
+    def push_telegram_alerts():
+        """Task to detect business anomalies and push Telegram alerts to the CEO."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running Telegram anomaly alert task")
+            from app.services.telegram_alert_service import TelegramAlertService
+            count = TelegramAlertService.push_alerts_all_orgs(db)
+            logger.info("Pushed %s Telegram alert(s)", count)
+        except Exception:
+            logger.exception("Error in Telegram alert push task")
+        finally:
+            db.close()
+
+    @staticmethod
+    def send_daily_briefing():
+        """Task to send the daily morning briefing to all orgs with Telegram configured."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running daily AI briefing task")
+            from app.services.telegram_alert_service import TelegramAlertService
+            count = TelegramAlertService.send_daily_briefing_all_orgs(db)
+            logger.info("Sent %s daily briefing(s)", count)
+        except Exception:
+            logger.exception("Error in daily AI briefing task")
         finally:
             db.close()
 

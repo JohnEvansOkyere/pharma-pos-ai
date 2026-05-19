@@ -758,7 +758,11 @@ def test_server_configured_external_ai_uses_available_api_key_without_tenant_pol
     monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", "groq")
     monkeypatch.setattr(settings, "AI_MANAGER_MODEL", "")
     monkeypatch.setattr(settings, "GROQ_API_KEY", "test-groq-key")
-    monkeypatch.setattr(AIManagerLLMProvider, "_groq", lambda *, prompt, model, history: "External Groq summary.")
+
+    def _fake_tool_answer(*, message, system_prompt, tools, tool_dispatcher, conversation_history, provider, model, fallback_summary):
+        return {"answer": "External Groq summary.", "provider": provider, "model": model, "fallback_used": False}
+
+    monkeypatch.setattr(AIManagerLLMProvider, "generate_answer_with_tools", _fake_tool_answer)
 
     response = chat_with_ai_manager(
         AIManagerChatRequest(

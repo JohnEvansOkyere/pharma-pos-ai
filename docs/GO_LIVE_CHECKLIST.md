@@ -1,6 +1,6 @@
 # Go-Live Checklist — 5-Shop Pharmacy Rollout
 
-> **Last updated:** 2026-05-19 17:11 UTC
+> **Last updated:** 2026-05-19 UTC
 > **Source audits:** `docs/audits/2026-05-15-production-readiness-audit.md`, `docs/audits/2026-05-15-production-readiness-audit-v2.md`, `docs/ai/AI_CLOUD_DASHBOARD_ASSESSMENT_2026-05-18.md`, `docs/ai/2026-05-19-cloud-ai-dashboard-audit.md`
 > **Status:** 🟡 **CONDITIONALLY READY** — All critical code defects resolved. Operational verification and credential rotation remain.
 
@@ -647,6 +647,64 @@
 - [ ] Keep AI on the cloud dashboard/reporting side only; it must not mutate sales, stock, products, or users. *(2026-05-19 11:29 UTC)*
 - [ ] Let AI generate chart/report definitions only from structured backend evidence packs, with chart data coming from trusted backend endpoints rather than invented LLM numbers. *(2026-05-19 11:29 UTC)*
 - [ ] Add exportable CEO report output with embedded freshness/reconciliation warnings. *(2026-05-19 11:29 UTC)*
+
+---
+
+## Phase 9: CEO AI Intelligence — From Keyword Matching to Real Intelligence
+
+> **Goal:** The AI is the primary value proposition of this product for the CEO. It must understand any question about the pharmacy in plain English, answer from real data only, never guess, and find the CEO proactively instead of waiting to be asked.
+>
+> **Architecture decision (2026-05-19):** Replace the current keyword-matching `_compose_answer` layer with **LLM Tool Use orchestration**. The LLM decides which data functions to call based on the question, calls all relevant ones, combines the results, and reasons freely over them. The pre-built service functions (sales, velocity, dead stock, trends, reconciliation, etc.) become **tools** the LLM selects — not routes triggered by hardcoded keywords. This is the same pattern used by Salesforce Einstein Copilot, Microsoft Copilot for Business Central, and Intercom Fin.
+>
+> **Why Tool Use over Text-to-SQL:** Business rules (FEFO, completed-sales-only revenue, `coalesce(occurred_at, created_at)` time windows, multi-tenant isolation) are already correctly encoded in the existing service functions. Text-to-SQL bypasses those rules. Tool Use keeps accuracy guarantees, is testable, schema-change-safe, and sandboxed. Text-to-SQL is only appropriate with a dedicated semantic layer — which is itself tool use at the schema level.
+
+### 9.1 LLM Tool Use Architecture (Replace Keyword Matching)
+
+- [x] Define the existing service functions as formal LLM tools with JSON schemas: `get_sales_summary`, `get_branch_sales`, `get_product_sales`, `get_stock_risk`, `get_stock_velocity`, `get_dead_stock`, `get_revenue_comparison`, `get_sync_health`, `get_reconciliation`, `get_inventory_summary`. ✅ *(2026-05-19)*
+  - Done: `TOOL_SCHEMAS` (10 tools, OpenAI function-calling format) added to `ai_manager_service.py`.
+- [x] Remove `_compose_answer` keyword-matching routing from the LLM-configured path. ✅ *(2026-05-19)*
+  - Done: `answer()` now splits — LLM-configured path uses `generate_answer_with_tools` with `_ceo_system_prompt`; deterministic/no-key fallback still uses `_compose_answer` for test and offline safety.
+- [x] Remove `_provider_prompt` and replace with CEO-appropriate `_ceo_system_prompt` that gives the LLM full reasoning freedom. ✅ *(2026-05-19)*
+  - Done: `_provider_prompt` deleted. `_ceo_system_prompt` does not anchor the LLM to a keyword-matched baseline.
+- [x] Implement OpenAI function-calling and Anthropic tool-use protocol in `ai_llm_provider.py`. ✅ *(2026-05-19)*
+  - Done: `generate_answer_with_tools()`, `_openai_tool_loop()` (handles OpenAI + Groq), `_claude_tool_loop()`, `_to_anthropic_tools()` added. Agentic loop capped at `MAX_TOOL_ITERATIONS = 5`.
+- [x] Tool dispatcher caches pre-fetched data for default period calls (zero extra DB round-trips); does a fresh query only when LLM asks for `today`/`yesterday`. ✅ *(2026-05-19)*
+  - Done: `_make_tool_dispatcher()` serves `prefetched` dict on `period="period"` and queries live for `today`/`yesterday`.
+- [x] All tool results come from the existing validated service functions — the LLM selects and combines, never invents numbers. ✅ *(2026-05-19)*
+- [x] Write regression tests: the LLM tool-use path must pass all existing AI manager test cases. ✅ *(2026-05-19)*
+  - Done: all 22 `test_ai_manager` tests pass. The Groq-mock test updated to patch `generate_answer_with_tools` (the new entry point).
+
+### 9.2 Proactive Push Alerts (CEO Gets Found, Not the Other Way Around)
+
+> **Key insight:** A CEO running 5 shops will not open the dashboard every morning. The AI must come to them. Pull-only Q&A is the secondary interface; push is primary.
+
+- [x] Real-time anomaly detection scheduler job: runs every 45 minutes, detects critical/high findings via `AIBriefingService` (out-of-stock, expired batch, revenue drop, sync failure, stale sync). ✅ *(2026-05-19)*
+  - Done: `TelegramAlertService.push_alerts_all_orgs()` — scheduler job `push_telegram_alerts` added, controlled by `TELEGRAM_ALERTS_ENABLED`.
+- [x] Push delivery adapter: Telegram Bot API. CEO receives formatted alert immediately when anomaly detected. ✅ *(2026-05-19)*
+  - Done: `TelegramService.send_message()` + `format_alert()` in `telegram_service.py`. Severity emoji: 🔴/🟠/🟡.
+- [x] Alert deduplication: same anomaly not re-sent within configurable cooldown (default 4h). ✅ *(2026-05-19)*
+  - Done: `TelegramAlertLog` model + Alembic migration `n4c5d6e7f8g9`. One row per `(org, alert_key)` tracks `last_sent_at`.
+- [x] Alert severity tiers: 🔴 Critical, 🟠 High — only these trigger push alerts (medium findings appear in daily briefing only). ✅ *(2026-05-19)*
+- [x] CEO can reply to a Telegram alert and the reply routes back into the AI manager. ✅ *(2026-05-19)*
+  - Done: `POST /api/telegram/webhook` receives Telegram updates, routes CEO messages through `TelegramAlertService.route_ceo_message()` → `AIManagerService.answer()` → reply sent back.
+- [x] Alert delivery settings use existing per-org `AIWeeklyReportDeliverySetting.telegram_chat_ids`. ✅ *(2026-05-19)*
+  - No new table needed — reuses the weekly report delivery setting rows already in place.
+
+### 9.3 Daily CEO Briefing (Replace Weekly-Only Reports)
+
+- [x] Daily morning briefing job (configurable time, default 08:00 local): generates ranked finding summary from `AIBriefingService`. ✅ *(2026-05-19)*
+  - Done: `TelegramAlertService.send_daily_briefing_all_orgs()` — scheduler job `send_daily_briefing` controlled by `AI_DAILY_BRIEFING_ENABLED`.
+- [x] Briefing delivered via Telegram to all orgs with Telegram chat IDs configured. ✅ *(2026-05-19)*
+  - Done: `TelegramService.format_briefing()` formats top 8 findings with emoji, scope, and date label.
+- [x] Briefing includes data freshness status via `data_trust_status` from `AIBriefingService`. ✅ *(2026-05-19)*
+- [x] Weekly report remains for deeper narrative; daily briefing is the operational pulse. ✅ *(2026-05-19)*
+
+### 9.4 Conversation Quality for a Non-Technical CEO
+
+- [ ] System prompt rewritten to be CEO/owner-facing: no references to "projection facts", "cloud read models", or internal table names. Plain English: "your Kumasi branch", "Paracetamol", "last week's sales". *(2026-05-19)*
+- [ ] LLM answer must always state the time window and branch scope it used so the CEO can verify the context. *(2026-05-19)*
+- [ ] If data is stale or missing for a specific question, say so explicitly with how stale — not a silent zero. *(2026-05-19)*
+- [ ] Add `POST /ai-manager/chat` parameter: `branch_name` filter (in addition to `branch_id`) so the CEO can ask "what's happening at Kumasi?" and the system resolves the branch. *(2026-05-19)*
 
 ---
 
