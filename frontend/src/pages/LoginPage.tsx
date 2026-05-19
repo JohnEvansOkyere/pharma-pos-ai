@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
+import { getDefaultAuthenticatedPath, isCloudReportingMode } from '../config/appMode'
 import toast from 'react-hot-toast'
 import { FiLock, FiUser } from 'react-icons/fi'
 
@@ -18,7 +19,7 @@ export default function LoginPage() {
     try {
       const user = await login(username, password)
       toast.success('Login successful!')
-      navigate(user.role === 'admin' ? '/dashboard' : '/pos')
+      navigate(getDefaultAuthenticatedPath(user))
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Login failed')
     } finally {
@@ -85,18 +86,22 @@ export default function LoginPage() {
 
           <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
             <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
-              Local Install
+              {isCloudReportingMode ? 'Cloud Portal' : 'Local Install'}
             </p>
             <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
-              <p>Use the pharmacy-specific credentials provisioned during setup.</p>
-              <p>Contact your administrator if this workstation has not been commissioned yet.</p>
+              <p>
+                {isCloudReportingMode
+                  ? 'Use the cloud reporting credentials provisioned by the vendor.'
+                  : 'Use the pharmacy-specific credentials provisioned during setup.'}
+              </p>
+              <p>Contact your administrator if your account has not been commissioned yet.</p>
             </div>
           </div>
         </div>
 
         {/* Footer */}
         <p className="text-center text-white text-sm mt-6">
-          Local deployment • Secure • Fast
+          {isCloudReportingMode ? 'Cloud reporting portal' : 'Local deployment'} • Secure • Fast
         </p>
       </div>
     </div>

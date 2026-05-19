@@ -366,6 +366,21 @@ class ApiClient {
     return response.data
   }
 
+  async getCloudProfitSummary(params: any) {
+    const response = await this.client.get('/cloud-reports/profit-summary', { params })
+    return response.data
+  }
+
+  async getCloudStockValue(params: any) {
+    const response = await this.client.get('/cloud-reports/stock-value', { params })
+    return response.data
+  }
+
+  async getCloudStockoutImpact(params: any) {
+    const response = await this.client.get('/cloud-reports/stockout-impact', { params })
+    return response.data
+  }
+
   async getAIManagerBriefing(params: any) {
     const response = await this.client.get('/ai-manager/briefing', {
       params,
@@ -451,15 +466,13 @@ class ApiClient {
     return response.data
   }
 
-  async getAIExternalProviderSettings(params: any) {
-    const response = await this.client.get('/ai-manager/external-provider-settings', {
-      params,
-    })
+  async listChatSessions(params: { organization_id: number; branch_id?: number; limit?: number }) {
+    const response = await this.client.get('/ai-manager/sessions', { params })
     return response.data
   }
 
-  async updateAIExternalProviderSettings(payload: any) {
-    const response = await this.client.put('/ai-manager/external-provider-settings', payload)
+  async getSessionMessages(sessionId: number) {
+    const response = await this.client.get(`/ai-manager/sessions/${sessionId}/messages`)
     return response.data
   }
 

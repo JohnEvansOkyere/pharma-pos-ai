@@ -19,12 +19,15 @@ from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.ai_report import (
     AIExternalProviderSetting,
     AIFinding,
+    AIChatSession,
+    AIChatMessage,
     AIWeeklyManagerReport,
     AIWeeklyReportDelivery,
     AIWeeklyReportDeliverySetting,
 )
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
+    CloudDeviceHeartbeatSnapshot,
     CloudInventoryMovementFact,
     CloudProductSnapshot,
     CloudReconciliationAcknowledgement,
@@ -54,6 +57,8 @@ __all__ = [
     "SyncEventCounter",
     "IngestedSyncEvent",
     "AIFinding",
+    "AIChatSession",
+    "AIChatMessage",
     "AIWeeklyManagerReport",
     "AIWeeklyReportDelivery",
     "AIWeeklyReportDeliverySetting",
@@ -62,5 +67,6 @@ __all__ = [
     "CloudInventoryMovementFact",
     "CloudProductSnapshot",
     "CloudBatchSnapshot",
+    "CloudDeviceHeartbeatSnapshot",
     "CloudReconciliationAcknowledgement",
 ]

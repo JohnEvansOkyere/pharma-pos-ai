@@ -17,6 +17,8 @@ services:
         sync: false
       - key: ENVIRONMENT
         value: production
+      - key: APP_MODE
+        value: cloud_reporting
       - key: DEBUG
         value: false
       - key: TIMEZONE

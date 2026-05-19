@@ -82,6 +82,11 @@ interface CommandCenterTotals {
   never_synced_devices: number
   branches_without_devices: number
   branches_without_healthy_device: number
+  heartbeat_ready_devices: number
+  heartbeat_warning_devices: number
+  heartbeat_critical_devices: number
+  heartbeat_stale_devices: number
+  heartbeat_missing_devices: number
 }
 
 interface CommandCenterDataTrust {
@@ -142,12 +147,19 @@ interface CommandCenterOrganizationSummary {
   trailing_7d_revenue: number
   projection_failed_count: number
   sync_status: 'fresh' | 'delayed' | 'stale' | 'never' | 'unknown'
+  readiness_status: 'ready' | 'warning' | 'critical' | 'unknown'
+  last_heartbeat_at: string | null
+  heartbeat_critical_count: number
+  heartbeat_warning_count: number
+  heartbeat_stale_count: number
+  heartbeat_missing_count: number
 }
 
 interface AdminCommandCenter {
   generated_at: string
   totals: CommandCenterTotals
   data_trust: CommandCenterDataTrust
+  last_heartbeat_at: string | null
   money: CommandCenterMoneyPulse
   stock_risk: CommandCenterStockRisk
   attention: CommandCenterAttentionItem[]
@@ -189,10 +201,10 @@ function formatDateTime(value: string | null) {
 }
 
 function trustTone(status: string) {
-  if (status === 'fresh') return 'text-green-700 bg-green-100 border-green-200 dark:text-green-300 dark:bg-green-900/30 dark:border-green-800'
-  if (status === 'delayed') return 'text-amber-700 bg-amber-100 border-amber-200 dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-800'
+  if (status === 'fresh' || status === 'ready') return 'text-green-700 bg-green-100 border-green-200 dark:text-green-300 dark:bg-green-900/30 dark:border-green-800'
+  if (status === 'delayed' || status === 'warning') return 'text-amber-700 bg-amber-100 border-amber-200 dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-800'
   if (status === 'unsafe') return 'text-red-700 bg-red-100 border-red-200 dark:text-red-300 dark:bg-red-900/30 dark:border-red-800'
-  if (status === 'stale') return 'text-red-700 bg-red-100 border-red-200 dark:text-red-300 dark:bg-red-900/30 dark:border-red-800'
+  if (status === 'stale' || status === 'critical') return 'text-red-700 bg-red-100 border-red-200 dark:text-red-300 dark:bg-red-900/30 dark:border-red-800'
   return 'text-gray-700 bg-gray-100 border-gray-200 dark:text-gray-300 dark:bg-gray-800 dark:border-gray-700'
 }
 
@@ -280,7 +292,9 @@ function CommandCenterOverview({ command }: { command: AdminCommandCenter }) {
     command.totals.stale_devices +
     command.totals.never_synced_devices +
     command.totals.branches_without_healthy_device +
-    command.data_trust.projection_failed_count
+    command.data_trust.projection_failed_count +
+    command.totals.heartbeat_warning_devices +
+    command.totals.heartbeat_critical_devices
 
   return (
     <div className="space-y-4 mb-6">
@@ -300,7 +314,7 @@ function CommandCenterOverview({ command }: { command: AdminCommandCenter }) {
           </div>
         </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <CommandCenterCard
             label="Fleet Coverage"
             value={`${command.totals.synced_last_24h}/${command.totals.active_devices}`}
@@ -314,6 +328,13 @@ function CommandCenterOverview({ command }: { command: AdminCommandCenter }) {
             detail={`${command.totals.never_synced_devices} never synced · ${command.totals.stale_devices} stale`}
             icon={FiAlertTriangle}
             tone={attentionCount ? 'red' : 'green'}
+          />
+          <CommandCenterCard
+            label="Install Health"
+            value={`${command.totals.heartbeat_ready_devices}/${command.totals.active_devices}`}
+            detail={`${command.totals.heartbeat_critical_devices} critical · ${command.totals.heartbeat_warning_devices} warning`}
+            icon={FiServer}
+            tone={command.totals.heartbeat_critical_devices ? 'red' : command.totals.heartbeat_warning_devices ? 'amber' : 'green'}
           />
           <CommandCenterCard
             label="Today Revenue"
@@ -348,6 +369,7 @@ function DataTrustPanel({ command }: { command: AdminCommandCenter }) {
     ['Accepted / projected', `${formatNumber(command.data_trust.ingested_event_count)} / ${formatNumber(command.data_trust.projected_event_count)}`],
     ['Backlog / failures', `${formatNumber(command.data_trust.unprojected_event_count)} / ${formatNumber(command.data_trust.projection_failed_count)}`],
     ['Duplicate deliveries', formatNumber(command.data_trust.duplicate_delivery_count)],
+    ['Last heartbeat', formatDateTime(command.last_heartbeat_at)],
   ]
 
   return (
@@ -418,6 +440,7 @@ function OrganizationPulse({ organizations }: { organizations: CommandCenterOrga
             <tr>
               <th className="text-left font-medium px-4 py-2">Pharmacy</th>
               <th className="text-left font-medium px-4 py-2">Sync</th>
+              <th className="text-left font-medium px-4 py-2">Install</th>
               <th className="text-right font-medium px-4 py-2">Devices</th>
               <th className="text-right font-medium px-4 py-2">Today</th>
               <th className="text-right font-medium px-4 py-2">7 Days</th>
@@ -436,10 +459,21 @@ function OrganizationPulse({ organizations }: { organizations: CommandCenterOrga
                     {org.sync_status}
                   </span>
                 </td>
+                <td className="px-4 py-3">
+                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${trustTone(org.readiness_status)}`}>
+                    {org.readiness_status}
+                  </span>
+                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{formatDateTime(org.last_heartbeat_at)}</div>
+                </td>
                 <td className="px-4 py-3 text-right text-gray-700 dark:text-gray-300">
                   {org.active_device_count}/{org.device_count}
                   {(org.stale_device_count || org.never_synced_device_count) ? (
                     <div className="text-xs text-red-500">{org.stale_device_count + org.never_synced_device_count} attention</div>
+                  ) : null}
+                  {(org.heartbeat_critical_count || org.heartbeat_warning_count || org.heartbeat_stale_count || org.heartbeat_missing_count) ? (
+                    <div className="text-xs text-amber-600">
+                      {org.heartbeat_critical_count + org.heartbeat_warning_count + org.heartbeat_stale_count + org.heartbeat_missing_count} health
+                    </div>
                   ) : null}
                 </td>
                 <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">{formatCurrency(org.today_revenue)}</td>

@@ -12,6 +12,9 @@ const apiMocks = vi.hoisted(() => ({
   getCloudExpiryRisk: vi.fn(),
   getCloudStockVelocity: vi.fn(),
   getCloudDeadStock: vi.fn(),
+  getCloudProfitSummary: vi.fn(),
+  getCloudStockValue: vi.fn(),
+  getCloudStockoutImpact: vi.fn(),
   getCloudRevenueComparison: vi.fn(),
   getCloudReconciliation: vi.fn(),
   acknowledgeCloudReconciliationIssue: vi.fn(),
@@ -24,12 +27,12 @@ const apiMocks = vi.hoisted(() => ({
   getAIWeeklyReportDeliveries: vi.fn(),
   getAIWeeklyReportDeliverySetting: vi.fn(),
   updateAIWeeklyReportDeliverySetting: vi.fn(),
-  getAIExternalProviderSettings: vi.fn(),
-  updateAIExternalProviderSettings: vi.fn(),
   getAIManagerBriefing: vi.fn(),
   getAIFindings: vi.fn(),
   updateAIFinding: vi.fn(),
   chatWithAIManager: vi.fn(),
+  listChatSessions: vi.fn(),
+  getSessionMessages: vi.fn(),
 }))
 
 const authMock = vi.hoisted(() => ({
@@ -89,6 +92,7 @@ describe('CloudDashboardPage', () => {
       sales_count: 12,
       total_revenue: 580.5,
       total_items: 31,
+      average_transaction_value: 48.38,
     })
     apiMocks.getCloudBranchSales.mockResolvedValue([
       { branch_id: 1, sales_count: 7, total_revenue: 300, total_items: 18 },
@@ -433,35 +437,45 @@ describe('CloudDashboardPage', () => {
       created_at: '2026-05-03T18:00:00Z',
       updated_at: '2026-05-03T18:10:00Z',
     })
-    apiMocks.getAIExternalProviderSettings.mockResolvedValue({
-      id: null,
-      organization_id: 22,
-      external_ai_enabled: false,
-      allowed_providers: [],
-      preferred_provider: null,
-      preferred_model: null,
-      consent_text: null,
-      consented_by_user_id: null,
-      consented_at: null,
-      updated_by_user_id: null,
-      created_at: null,
-      updated_at: null,
-    })
-    apiMocks.updateAIExternalProviderSettings.mockResolvedValue({
-      id: 12,
-      organization_id: 22,
-      external_ai_enabled: true,
-      allowed_providers: ['groq'],
-      preferred_provider: 'groq',
-      preferred_model: 'llama-3.3-70b-versatile',
-      consent_text: 'Owner approved external AI for aggregate manager reporting.',
-      consented_by_user_id: 7,
-      consented_at: '2026-05-03T18:20:00Z',
-      updated_by_user_id: 7,
-      created_at: '2026-05-03T18:20:00Z',
-      updated_at: '2026-05-03T18:20:00Z',
-    })
     apiMocks.getCloudDeadStock.mockResolvedValue([])
+    apiMocks.getCloudProfitSummary.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      period_days: 30,
+      total_revenue: 580.5,
+      estimated_cost: 240,
+      estimated_gross_profit: 340.5,
+      gross_margin_percent: 58.7,
+      products_with_cost_data: 4,
+      products_without_cost_data: 0,
+    })
+    apiMocks.getCloudStockValue.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      total_cost_value: 1250,
+      total_retail_value: 2100,
+      products_valued: 8,
+      total_active_products: 8,
+    })
+    apiMocks.getCloudStockoutImpact.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      period_days: 30,
+      stockout_product_count: 1,
+      total_daily_revenue_at_risk: 35,
+      items: [
+        {
+          branch_id: 1,
+          branch_name: 'North Branch',
+          product_id: 8,
+          product_name: 'Stockout Tablets',
+          sku: 'OUT-8',
+          selling_price: 17.5,
+          average_daily_units_sold: 2,
+          daily_revenue_at_risk: 35,
+        },
+      ],
+    })
     apiMocks.getAIManagerBriefing.mockResolvedValue({
       organization_id: 22,
       branch_id: null,
@@ -507,7 +521,10 @@ describe('CloudDashboardPage', () => {
       model: 'llama-3.3-70b-versatile',
       fallback_used: false,
       refused: false,
+      session_id: 77,
     })
+    apiMocks.listChatSessions.mockResolvedValue([])
+    apiMocks.getSessionMessages.mockResolvedValue([])
   })
 
   it('loads cloud reporting sections using the current user organization', async () => {
@@ -516,13 +533,21 @@ describe('CloudDashboardPage', () => {
     expect(await screen.findByText(/cloud dashboard/i)).toBeInTheDocument()
     expect(await screen.findByText('GH₵ 580.50')).toBeInTheDocument()
     expect(await screen.findByText('31')).toBeInTheDocument()
-    expect(await screen.findByText('12 sales')).toBeInTheDocument()
+    expect(await screen.findByText(/sales count/i)).toBeInTheDocument()
     expect(await screen.findByText(/ingested events/i)).toBeInTheDocument()
     expect(await screen.findByText(/low stock tablets/i)).toBeInTheDocument()
     expect(await screen.findByText(/expiry risk syrup/i)).toBeInTheDocument()
     expect(await screen.findByText(/fast moving tablets/i)).toBeInTheDocument()
+    expect(await screen.findByText(/gross profit/i)).toBeInTheDocument()
+    expect(await screen.findByText('GH₵ 340.50')).toBeInTheDocument()
+    expect(await screen.findByText(/stock value/i)).toBeInTheDocument()
+    expect(await screen.findByText('GH₵ 1,250.00')).toBeInTheDocument()
+    expect(await screen.findByText(/stockout daily loss/i)).toBeInTheDocument()
+    expect(await screen.findByText('GH₵ 35.00')).toBeInTheDocument()
+    expect(await screen.findByText(/data health summary/i)).toBeInTheDocument()
+    expect(await screen.findByText(/^unsafe$/i)).toBeInTheDocument()
     expect(await screen.findByText(/2 days/i)).toBeInTheDocument()
-    expect(await screen.findByText(/north branch/i)).toBeInTheDocument()
+    expect((await screen.findAllByText(/north branch/i)).length).toBeGreaterThan(0)
     expect(await screen.findByText(/-80%/i)).toBeInTheDocument()
     expect((await screen.findAllByText(/reconciliation/i)).length).toBeGreaterThan(0)
     expect(await screen.findByText(/negative product stock/i)).toBeInTheDocument()
@@ -553,6 +578,15 @@ describe('CloudDashboardPage', () => {
       )
       expect(apiMocks.getCloudStockVelocity).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, period_days: 30, limit: 10, include_stable: false })
+      )
+      expect(apiMocks.getCloudProfitSummary).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22 })
+      )
+      expect(apiMocks.getCloudStockValue).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22 })
+      )
+      expect(apiMocks.getCloudStockoutImpact).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, period_days: 30, limit: 20 })
       )
       expect(apiMocks.getCloudRevenueComparison).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, period_days: 30, limit: 10 })
@@ -741,39 +775,16 @@ describe('CloudDashboardPage', () => {
     expect(await screen.findByText(/delivery settings saved/i)).toBeInTheDocument()
   })
 
-  it('allows admins to manage tenant external AI provider policy', async () => {
+  it('does not expose provider/model AI configuration to pharmacy admins', async () => {
     authMock.user = {
       ...authMock.user,
       role: 'admin',
     }
-    const user = userEvent.setup()
     render(<CloudDashboardPage />)
 
-    expect(await screen.findByRole('heading', { name: /external ai policy/i })).toBeInTheDocument()
-    expect(apiMocks.getAIExternalProviderSettings).toHaveBeenCalledWith({
-      organization_id: 22,
-    })
-
-    await user.click(screen.getByLabelText(/external ai enabled/i))
-    await user.click(screen.getByLabelText(/^groq$/i))
-    await user.selectOptions(screen.getByLabelText(/preferred provider/i), 'groq')
-    await user.type(screen.getByLabelText(/preferred model/i), 'llama-3.3-70b-versatile')
-    const consentRecord = screen.getByLabelText(/consent record/i)
-    await user.clear(consentRecord)
-    await user.type(consentRecord, 'Owner approved external AI for aggregate manager reporting.')
-    await user.click(screen.getByRole('button', { name: /save ai policy/i }))
-
-    await waitFor(() => {
-      expect(apiMocks.updateAIExternalProviderSettings).toHaveBeenCalledWith({
-        organization_id: 22,
-        external_ai_enabled: true,
-        allowed_providers: ['groq'],
-        preferred_provider: 'groq',
-        preferred_model: 'llama-3.3-70b-versatile',
-        consent_text: 'Owner approved external AI for aggregate manager reporting.',
-      })
-    })
-    expect(await screen.findByText(/external ai policy saved/i)).toBeInTheDocument()
+    expect(await screen.findByText(/report delivery settings/i)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /external ai policy/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/preferred model/i)).not.toBeInTheDocument()
   })
 
   it('sends scoped AI manager chat requests and renders provider metadata', async () => {

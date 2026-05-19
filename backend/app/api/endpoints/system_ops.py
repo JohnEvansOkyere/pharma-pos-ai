@@ -30,6 +30,7 @@ from app.schemas.system import (
     RestoreDrillCreate,
     RestoreDrillRecord,
     RestoreDrillStatus,
+    SystemHeartbeatEnqueueResult,
     SyncRunResult,
     SyncStatus,
     SystemDiagnostics,
@@ -37,6 +38,7 @@ from app.schemas.system import (
 from app.services.audit_service import AuditService
 from app.services.full_snapshot_sync_service import FullSnapshotSyncService
 from app.services.scheduler import scheduler
+from app.services.system_heartbeat_service import SystemHeartbeatService
 from app.services.sync_upload_service import SyncUploadService
 
 router = APIRouter(prefix="/system", tags=["System"])
@@ -353,6 +355,37 @@ def enqueue_cloud_snapshot(
             message="Full catalog snapshot enqueued for cloud sync",
             **result,
         )
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.post("/enqueue-heartbeat", response_model=SystemHeartbeatEnqueueResult)
+def enqueue_system_heartbeat(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trigger_backup),
+):
+    """Enqueue local installation health telemetry for cloud sync."""
+    try:
+        event = SystemHeartbeatService.enqueue_heartbeat(
+            db,
+            scheduler_running=bool(scheduler.scheduler.running),
+            scheduler_job_count=len(scheduler.scheduler.get_jobs()),
+        )
+        db.commit()
+        return SystemHeartbeatEnqueueResult(
+            success=True,
+            event_id=event.event_id,
+            local_sequence_number=event.local_sequence_number,
+            readiness_status=event.payload.get("readiness_status", "unknown"),
+            sync_pending_count=int(event.payload.get("sync_pending_count") or 0),
+            sync_failed_count=int(event.payload.get("sync_failed_count") or 0),
+            oldest_unsent_event_age_minutes=event.payload.get("oldest_unsent_event_age_minutes"),
+            message="System heartbeat enqueued for cloud sync",
+        )
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception:
         db.rollback()
         raise

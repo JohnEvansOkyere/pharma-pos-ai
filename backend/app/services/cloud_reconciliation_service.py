@@ -16,7 +16,9 @@ from app.models.cloud_projection import (
     CloudInventoryMovementFact,
     CloudProductSnapshot,
     CloudReconciliationAcknowledgement,
+    CloudSaleFact,
 )
+from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.services.cloud_projection_service import CloudProjectionService
 from app.services.audit_service import AuditService
@@ -325,6 +327,13 @@ class CloudReconciliationService:
                 branch_id=branch_id,
                 limit=limit,
             )
+        elif normalized_type == "repair_sale_item_counts":
+            result = CloudReconciliationService._repair_sale_item_counts(
+                db,
+                organization_id=organization_id,
+                branch_id=branch_id,
+                limit=limit,
+            )
         elif normalized_type == "rebuild_product_stock_total":
             if not issue_key:
                 raise ValueError("issue_key is required for product stock total rebuild")
@@ -436,6 +445,91 @@ class CloudReconciliationService:
             "failed": failed,
             "skipped": skipped,
             "message": "Failed projection retry complete",
+            "details": details,
+        }
+
+    @staticmethod
+    def _repair_sale_item_counts(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        limit: int,
+    ) -> Dict[str, Any]:
+        query = (
+            db.query(CloudSaleFact, IngestedSyncEvent)
+            .join(IngestedSyncEvent, CloudSaleFact.source_event_id == IngestedSyncEvent.id)
+            .filter(
+                CloudSaleFact.organization_id == organization_id,
+                IngestedSyncEvent.event_type == SyncEventType.SALE_CREATED,
+            )
+        )
+        if branch_id is not None:
+            query = query.filter(CloudSaleFact.branch_id == branch_id)
+
+        rows = query.order_by(CloudSaleFact.created_at.asc(), CloudSaleFact.id.asc()).limit(limit).all()
+
+        attempted = repaired = failed = skipped = 0
+        details: List[dict] = []
+        for fact, event in rows:
+            attempted += 1
+            try:
+                items = event.payload.get("items") if isinstance(event.payload, dict) else None
+                if not isinstance(items, list):
+                    skipped += 1
+                    details.append(
+                        {
+                            "event_id": event.event_id,
+                            "sale_fact_id": fact.id,
+                            "status": "skipped",
+                            "reason": "sale payload has no item list",
+                        }
+                    )
+                    continue
+
+                expected_units = CloudProjectionService._sale_item_units(items)
+                if fact.item_count == expected_units:
+                    skipped += 1
+                    details.append(
+                        {
+                            "event_id": event.event_id,
+                            "sale_fact_id": fact.id,
+                            "status": "already_correct",
+                            "item_count": fact.item_count,
+                        }
+                    )
+                    continue
+
+                previous_units = fact.item_count
+                fact.item_count = expected_units
+                fact.payload = event.payload
+                repaired += 1
+                details.append(
+                    {
+                        "event_id": event.event_id,
+                        "sale_fact_id": fact.id,
+                        "status": "repaired",
+                        "previous_item_count": previous_units,
+                        "item_count": expected_units,
+                    }
+                )
+            except Exception as exc:
+                failed += 1
+                details.append(
+                    {
+                        "event_id": getattr(event, "event_id", None),
+                        "sale_fact_id": getattr(fact, "id", None),
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+
+        return {
+            "attempted": attempted,
+            "repaired": repaired,
+            "failed": failed,
+            "skipped": skipped,
+            "message": "Sale item count repair complete",
             "details": details,
         }
 

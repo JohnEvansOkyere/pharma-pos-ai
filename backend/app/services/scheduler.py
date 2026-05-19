@@ -13,6 +13,7 @@ from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.cloud_projection_service import CloudProjectionService
 from app.services.notification_service import NotificationService
+from app.services.system_heartbeat_service import SystemHeartbeatService
 from app.services.sync_upload_service import SyncUploadService
 from app.core.config import settings
 
@@ -82,6 +83,14 @@ class SchedulerService:
         )
 
         if settings.CLOUD_SYNC_ENABLED:
+            self.scheduler.add_job(
+                self.enqueue_system_heartbeat,
+                "interval",
+                minutes=settings.CLOUD_HEARTBEAT_INTERVAL_MINUTES,
+                id="enqueue_system_heartbeat",
+                name="Enqueue system heartbeat",
+                replace_existing=True,
+            )
             self.scheduler.add_job(
                 self.upload_sync_events,
                 "interval",
@@ -220,6 +229,25 @@ class SchedulerService:
             logger.info("Cloud sync upload result: %s", result)
         except Exception as e:
             logger.exception("Error in cloud sync upload task")
+        finally:
+            db.close()
+
+    @staticmethod
+    def enqueue_system_heartbeat():
+        """Task to record local installation telemetry into the sync outbox."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running system heartbeat enqueue task")
+            event = SystemHeartbeatService.enqueue_heartbeat(
+                db,
+                scheduler_running=bool(scheduler.scheduler.running),
+                scheduler_job_count=len(scheduler.scheduler.get_jobs()),
+            )
+            db.commit()
+            logger.info("System heartbeat queued as sync event %s", event.event_id)
+        except Exception as e:
+            db.rollback()
+            logger.exception("Error in system heartbeat task")
         finally:
             db.close()
 

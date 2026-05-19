@@ -81,6 +81,8 @@ class CloudDeadStockService:
             else:
                 continue
 
+            cost_price = float(product.cost_price) if product.cost_price is not None else None
+            value_at_risk = round(cost_price * product.total_stock, 2) if cost_price is not None else None
             items.append(
                 {
                     "branch_id": product.branch_id,
@@ -95,6 +97,7 @@ class CloudDeadStockService:
                     "average_daily_units_sold": round(avg_daily, 4),
                     "days_since_last_sale": days_since_last_sale,
                     "last_sale_date": last_sale_date.isoformat() if last_sale_date else None,
+                    "value_at_risk": value_at_risk,
                     "status": status,
                 }
             )

@@ -116,6 +116,17 @@ class CloudSnapshotEnqueueResult(BaseModel):
     message: str
 
 
+class SystemHeartbeatEnqueueResult(BaseModel):
+    success: bool
+    event_id: str
+    local_sequence_number: int
+    readiness_status: str
+    sync_pending_count: int
+    sync_failed_count: int
+    oldest_unsent_event_age_minutes: Optional[int] = None
+    message: str
+
+
 class AuditLogEntry(BaseModel):
     id: int
     organization_id: Optional[int] = None

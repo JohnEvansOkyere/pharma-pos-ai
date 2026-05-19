@@ -12,6 +12,7 @@ class AIManagerChatRequest(BaseModel):
     organization_id: int
     branch_id: Optional[int] = None
     period_days: int = Field(30, ge=1, le=365)
+    session_id: Optional[int] = None
 
 
 class AIManagerDataScope(BaseModel):
@@ -23,6 +24,7 @@ class AIManagerDataScope(BaseModel):
 
 class AIManagerChatResponse(BaseModel):
     answer: str
+    session_id: int
     data_scope: AIManagerDataScope
     tool_results: Dict[str, Any]
     safety_notes: List[str]
@@ -30,6 +32,25 @@ class AIManagerChatResponse(BaseModel):
     model: Optional[str] = None
     fallback_used: bool = False
     refused: bool = False
+
+
+class AIChatMessageResponse(BaseModel):
+    id: int
+    session_id: int
+    role: str
+    content: str
+    created_at: datetime
+
+
+class AIChatSessionResponse(BaseModel):
+    id: int
+    organization_id: int
+    branch_id: Optional[int] = None
+    user_id: int
+    title: Optional[str] = None
+    message_count: int = 0
+    closed_at: Optional[datetime] = None
+    created_at: datetime
 
 
 class AIWeeklyReportGenerateRequest(BaseModel):

@@ -21,7 +21,12 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import require_vendor_admin
 from app.core.config import settings
 from app.db.base import get_db
-from app.models.cloud_projection import CloudBatchSnapshot, CloudProductSnapshot, CloudSaleFact
+from app.models.cloud_projection import (
+    CloudBatchSnapshot,
+    CloudDeviceHeartbeatSnapshot,
+    CloudProductSnapshot,
+    CloudSaleFact,
+)
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import Branch, Device, DeviceStatus, Organization
 from app.models.user import User
@@ -217,6 +222,7 @@ def get_command_center(
     yesterday_start = _start_of_utc_day(today - timedelta(days=1))
     seven_day_start = now - timedelta(days=7)
     stale_cutoff = now - timedelta(hours=24)
+    heartbeat_stale_cutoff = now - timedelta(minutes=30)
     near_expiry_cutoff = today + timedelta(days=expiry_warning_days)
 
     orgs = db.query(Organization).order_by(Organization.name).all()
@@ -239,6 +245,10 @@ def get_command_center(
     devices_by_branch: Dict[int, List[Device]] = {}
     devices_by_org: Dict[int, List[Device]] = {}
     branches_by_org: Dict[int, List[Branch]] = {}
+    heartbeat_by_device = {
+        snapshot.source_device_id: snapshot
+        for snapshot in db.query(CloudDeviceHeartbeatSnapshot).all()
+    }
     for branch in branches:
         branches_by_org.setdefault(branch.organization_id, []).append(branch)
     for device in devices:
@@ -306,6 +316,94 @@ def get_command_center(
             device_name=device.name,
             last_seen_at=device.last_seen_at,
         ))
+
+    active_heartbeat_snapshots = [
+        heartbeat_by_device.get(device.id)
+        for device in active_devices
+        if heartbeat_by_device.get(device.id) is not None
+    ]
+    heartbeat_ready_devices = sum(
+        1 for snapshot in active_heartbeat_snapshots
+        if snapshot.readiness_status == "ready" and _aware(snapshot.server_time) >= heartbeat_stale_cutoff
+    )
+    heartbeat_warning_devices = sum(
+        1 for snapshot in active_heartbeat_snapshots
+        if snapshot.readiness_status == "warning" and _aware(snapshot.server_time) >= heartbeat_stale_cutoff
+    )
+    heartbeat_critical_devices = sum(
+        1 for snapshot in active_heartbeat_snapshots
+        if snapshot.readiness_status == "critical" and _aware(snapshot.server_time) >= heartbeat_stale_cutoff
+    )
+    heartbeat_stale_devices = sum(
+        1 for snapshot in active_heartbeat_snapshots
+        if _aware(snapshot.server_time) < heartbeat_stale_cutoff
+    )
+    heartbeat_missing_devices = len(active_devices) - len(active_heartbeat_snapshots)
+    last_heartbeat_at = max(
+        (_aware(snapshot.server_time) for snapshot in active_heartbeat_snapshots if snapshot.server_time),
+        default=None,
+    )
+
+    for device in active_devices:
+        snapshot = heartbeat_by_device.get(device.id)
+        if snapshot is None:
+            attention.append(CommandCenterAttentionItem(
+                severity="medium",
+                kind="heartbeat_missing",
+                title=f"{device.name} has no heartbeat",
+                detail="Device sync reached the cloud before local diagnostics heartbeat telemetry was available.",
+                organization_id=device.organization_id,
+                organization_name=device.organization.name if device.organization else None,
+                branch_id=device.branch_id,
+                branch_name=device.branch.name if device.branch else None,
+                device_id=device.id,
+                device_name=device.name,
+                last_seen_at=device.last_seen_at,
+            ))
+            continue
+        heartbeat_at = _aware(snapshot.server_time)
+        if heartbeat_at < heartbeat_stale_cutoff:
+            attention.append(CommandCenterAttentionItem(
+                severity="medium",
+                kind="heartbeat_stale",
+                title=f"{device.name} heartbeat is stale",
+                detail="The device has not uploaded recent local diagnostics telemetry.",
+                organization_id=device.organization_id,
+                organization_name=device.organization.name if device.organization else None,
+                branch_id=device.branch_id,
+                branch_name=device.branch.name if device.branch else None,
+                device_id=device.id,
+                device_name=device.name,
+                last_seen_at=snapshot.server_time,
+            ))
+        elif snapshot.readiness_status == "critical":
+            attention.append(CommandCenterAttentionItem(
+                severity="critical",
+                kind="heartbeat_critical",
+                title=f"{device.name} local health is critical",
+                detail="Heartbeat reports a database, scheduler, or core local service failure.",
+                organization_id=device.organization_id,
+                organization_name=device.organization.name if device.organization else None,
+                branch_id=device.branch_id,
+                branch_name=device.branch.name if device.branch else None,
+                device_id=device.id,
+                device_name=device.name,
+                last_seen_at=snapshot.server_time,
+            ))
+        elif snapshot.readiness_status == "warning":
+            attention.append(CommandCenterAttentionItem(
+                severity="medium",
+                kind="heartbeat_warning",
+                title=f"{device.name} local health needs review",
+                detail="Heartbeat reports stale backup/restore verification, failed sync events, or old unsent outbox data.",
+                organization_id=device.organization_id,
+                organization_name=device.organization.name if device.organization else None,
+                branch_id=device.branch_id,
+                branch_name=device.branch.name if device.branch else None,
+                device_id=device.id,
+                device_name=device.name,
+                last_seen_at=snapshot.server_time,
+            ))
 
     # SQLAlchemy boolean aggregation differs by database; keep portable counts as
     # separate simple queries. This endpoint is small and admin-only.
@@ -434,6 +532,37 @@ def get_command_center(
             if _aware(d.last_seen_at) is not None and _aware(d.last_seen_at) < stale_cutoff
         ]
         org_never_synced = [d for d in org_active_devices if d.last_seen_at is None]
+        org_heartbeats = [
+            heartbeat_by_device.get(device.id)
+            for device in org_active_devices
+            if heartbeat_by_device.get(device.id) is not None
+        ]
+        org_recent_heartbeats = [
+            snapshot for snapshot in org_heartbeats
+            if _aware(snapshot.server_time) >= heartbeat_stale_cutoff
+        ]
+        org_heartbeat_critical = [
+            snapshot for snapshot in org_recent_heartbeats
+            if snapshot.readiness_status == "critical"
+        ]
+        org_heartbeat_warning = [
+            snapshot for snapshot in org_recent_heartbeats
+            if snapshot.readiness_status == "warning"
+        ]
+        org_heartbeat_stale_count = len(org_heartbeats) - len(org_recent_heartbeats)
+        org_heartbeat_missing_count = len(org_active_devices) - len(org_heartbeats)
+        org_last_heartbeat = max(
+            (_aware(snapshot.server_time) for snapshot in org_heartbeats if snapshot.server_time),
+            default=None,
+        )
+        org_readiness_status = "unknown"
+        if org_active_devices:
+            if org_heartbeat_critical:
+                org_readiness_status = "critical"
+            elif org_heartbeat_warning or org_heartbeat_stale_count or org_heartbeat_missing_count:
+                org_readiness_status = "warning"
+            elif org_recent_heartbeats:
+                org_readiness_status = "ready"
         latest_seen = max((_aware(d.last_seen_at) for d in org_devices if d.last_seen_at), default=None)
         org_sync_status = "unknown"
         if org_active_devices:
@@ -459,6 +588,12 @@ def get_command_center(
             trailing_7d_revenue=trailing_revenue_by_org.get(org.id, 0.0),
             projection_failed_count=projection_failures_by_org.get(org.id, 0),
             sync_status=org_sync_status,
+            readiness_status=org_readiness_status,
+            last_heartbeat_at=org_last_heartbeat,
+            heartbeat_critical_count=len(org_heartbeat_critical),
+            heartbeat_warning_count=len(org_heartbeat_warning),
+            heartbeat_stale_count=org_heartbeat_stale_count,
+            heartbeat_missing_count=org_heartbeat_missing_count,
         ))
 
     severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -485,12 +620,18 @@ def get_command_center(
         never_synced_devices=len(never_synced_devices),
         branches_without_devices=branches_without_devices,
         branches_without_healthy_device=branches_without_healthy_device,
+        heartbeat_ready_devices=heartbeat_ready_devices,
+        heartbeat_warning_devices=heartbeat_warning_devices,
+        heartbeat_critical_devices=heartbeat_critical_devices,
+        heartbeat_stale_devices=heartbeat_stale_devices,
+        heartbeat_missing_devices=heartbeat_missing_devices,
     )
 
     return AdminCommandCenterResponse(
         generated_at=now,
         totals=totals,
         data_trust=data_trust,
+        last_heartbeat_at=last_heartbeat_at,
         money=money,
         stock_risk=stock_risk,
         attention=attention,

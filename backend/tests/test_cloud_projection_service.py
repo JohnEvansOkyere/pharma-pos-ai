@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.models import Branch, Device, Organization
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
+    CloudDeviceHeartbeatSnapshot,
     CloudInventoryMovementFact,
     CloudProductSnapshot,
     CloudSaleFact,
@@ -112,7 +113,7 @@ def test_project_sale_created_builds_cloud_sale_fact_idempotently(db_session):
     assert fact.local_sale_id == 25
     assert fact.invoice_number == "INV-20260429-000025"
     assert fact.payment_method == "cash"
-    assert fact.item_count == 2
+    assert fact.item_count == 3
     assert str(fact.total_amount) == "80.50"
     assert fact.occurred_at.replace(tzinfo=timezone.utc) == occurred_at
     movement_facts = db_session.query(CloudInventoryMovementFact).filter(
@@ -163,6 +164,73 @@ def test_project_stock_received_builds_inventory_movement_fact(db_session):
     assert fact.quantity_delta == 30
     assert fact.stock_after == 40
     assert event.projected_at is not None
+
+
+def test_project_system_heartbeat_updates_device_snapshot(db_session):
+    organization, branch, device = _tenant_device(db_session)
+    first_payload = {
+        "device_uid": device.device_uid,
+        "server_time": datetime(2026, 5, 19, 8, 0, tzinfo=timezone.utc).isoformat(),
+        "readiness_status": "warning",
+        "app_version": "1.0.0",
+        "environment": "production",
+        "database_connected": True,
+        "scheduler_enabled": True,
+        "scheduler_running": True,
+        "scheduler_job_count": 8,
+        "cloud_sync_enabled": True,
+        "cloud_sync_configured": True,
+        "sync_pending_count": 4,
+        "sync_failed_count": 1,
+        "oldest_unsent_event_age_minutes": 25,
+        "latest_backup_time": datetime(2026, 5, 19, 7, 0, tzinfo=timezone.utc).isoformat(),
+        "latest_backup_age_hours": 1.0,
+        "backup_is_recent": True,
+        "restore_recovery_ready": False,
+        "last_restore_drill_at": None,
+        "free_disk_bytes": 9_000_000_000,
+        "total_disk_bytes": 20_000_000_000,
+        "uptime_seconds": 120,
+    }
+    second_payload = {**first_payload, "readiness_status": "ready", "sync_pending_count": 0, "sync_failed_count": 0}
+    _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="12121212-1212-1212-1212-121212121201",
+        sequence=1,
+        event_type=SyncEventType.SYSTEM_HEARTBEAT,
+        aggregate_type="system",
+        aggregate_id=0,
+        payload=first_payload,
+    )
+    _ingested_event(
+        db_session,
+        organization,
+        branch,
+        device,
+        event_id="12121212-1212-1212-1212-121212121202",
+        sequence=2,
+        event_type=SyncEventType.SYSTEM_HEARTBEAT,
+        aggregate_type="system",
+        aggregate_id=0,
+        payload=second_payload,
+    )
+
+    result = CloudProjectionService.project_pending(db_session, limit=10)
+    snapshot = db_session.query(CloudDeviceHeartbeatSnapshot).filter_by(source_device_id=device.id).one()
+
+    assert result["projected"] == 2
+    assert snapshot.device_uid == device.device_uid
+    assert snapshot.readiness_status == "ready"
+    assert snapshot.database_connected is True
+    assert snapshot.scheduler_running is True
+    assert snapshot.sync_pending_count == 0
+    assert snapshot.sync_failed_count == 0
+    assert snapshot.latest_backup_age_hours == 1
+    assert snapshot.free_disk_bytes == 9_000_000_000
+    assert db_session.query(CloudDeviceHeartbeatSnapshot).count() == 1
 
 
 def test_project_product_batch_and_sale_updates_stock_snapshots(db_session):

@@ -18,11 +18,13 @@ from app.models.cloud_projection import (
     CloudSaleFact,
 )
 from app.models.sync_ingestion import IngestedSyncEvent
+from app.models.sync_event import SyncEventType
 from app.schemas.cloud_reports import (
     CloudBranchSalesSummary,
     CloudExpiryRiskItem,
     CloudInventoryMovementSummary,
     CloudLowStockItem,
+    CloudProfitSummary,
     CloudReconciliationAcknowledgementResponse,
     CloudReconciliationIssueActionRequest,
     CloudReconciliationRepairRequest,
@@ -31,7 +33,10 @@ from app.schemas.cloud_reports import (
     CloudDeadStockItem,
     CloudRevenueComparison,
     CloudSalesSummary,
+    CloudStockoutImpact,
+    CloudStockoutImpactItem,
     CloudStockRiskSummary,
+    CloudStockValueSummary,
     CloudStockVelocityItem,
     CloudSyncHealth,
 )
@@ -82,12 +87,15 @@ def get_cloud_sales_summary(
     query = _apply_time_filters(query, CloudSaleFact, start_at, end_at)
     row = query.one()
 
+    sales_count = int(row.sales_count or 0)
+    total_revenue = float(row.total_revenue or 0)
     return CloudSalesSummary(
         organization_id=organization_id,
         branch_id=effective_branch_id,
-        sales_count=int(row.sales_count or 0),
-        total_revenue=float(row.total_revenue or 0),
+        sales_count=sales_count,
+        total_revenue=total_revenue,
         total_items=int(row.total_items or 0),
+        average_transaction_value=round(total_revenue / sales_count, 2) if sales_count > 0 else 0.0,
     )
 
 
@@ -491,6 +499,221 @@ def get_cloud_dead_stock(
         limit=limit,
     )
     return [CloudDeadStockItem(**item) for item in items]
+
+
+@router.get("/profit-summary", response_model=CloudProfitSummary)
+def get_cloud_profit_summary(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    """
+    Estimated gross profit from cloud sale facts and projected movement costs.
+    Revenue = sum of CloudSaleFact.total_amount.
+    Cost = sum(|quantity_delta| × cost_price) from SALE_CREATED movement facts
+    joined to product snapshots. Products without cost data are excluded from
+    the cost estimate; the count is reported so the caller knows the confidence.
+    """
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+
+    # Revenue from sale facts
+    revenue_query = db.query(
+        func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("total_revenue"),
+    ).filter(CloudSaleFact.organization_id == organization_id)
+    if effective_branch_id is not None:
+        revenue_query = revenue_query.filter(CloudSaleFact.branch_id == effective_branch_id)
+    revenue_query = _apply_time_filters(revenue_query, CloudSaleFact, start_at, end_at)
+    revenue_row = revenue_query.one()
+    total_revenue = float(revenue_row.total_revenue or 0)
+
+    # Cost from SALE_CREATED movement facts × product cost_price
+    movement_time = func.coalesce(CloudInventoryMovementFact.occurred_at, CloudInventoryMovementFact.created_at)
+    cost_query = (
+        db.query(
+            CloudProductSnapshot.local_product_id,
+            CloudProductSnapshot.branch_id,
+            CloudProductSnapshot.cost_price,
+            func.coalesce(
+                func.sum(-CloudInventoryMovementFact.quantity_delta), 0
+            ).label("units_sold"),
+        )
+        .join(
+            CloudInventoryMovementFact,
+            (CloudInventoryMovementFact.organization_id == CloudProductSnapshot.organization_id)
+            & (CloudInventoryMovementFact.branch_id == CloudProductSnapshot.branch_id)
+            & (CloudInventoryMovementFact.local_product_id == CloudProductSnapshot.local_product_id),
+        )
+        .filter(
+            CloudProductSnapshot.organization_id == organization_id,
+            CloudInventoryMovementFact.event_type == SyncEventType.SALE_CREATED.value,
+            CloudInventoryMovementFact.quantity_delta < 0,
+        )
+    )
+    if effective_branch_id is not None:
+        cost_query = cost_query.filter(CloudProductSnapshot.branch_id == effective_branch_id)
+    if start_at is not None:
+        cost_query = cost_query.filter(movement_time >= start_at)
+    if end_at is not None:
+        cost_query = cost_query.filter(movement_time <= end_at)
+
+    cost_rows = cost_query.group_by(
+        CloudProductSnapshot.local_product_id,
+        CloudProductSnapshot.branch_id,
+        CloudProductSnapshot.cost_price,
+    ).all()
+
+    estimated_cost = 0.0
+    products_with_cost = set()
+    products_without_cost = set()
+    for row in cost_rows:
+        key = (row.branch_id, row.local_product_id)
+        if row.cost_price is not None:
+            estimated_cost += float(row.cost_price) * float(row.units_sold or 0)
+            products_with_cost.add(key)
+        else:
+            products_without_cost.add(key)
+
+    gross_profit = total_revenue - estimated_cost
+    margin_pct = round(gross_profit / total_revenue * 100, 1) if total_revenue > 0 else None
+
+    period_days = (
+        int((end_at - start_at).total_seconds() / 86400) if start_at and end_at else 30
+    )
+
+    return CloudProfitSummary(
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        period_days=period_days,
+        total_revenue=round(total_revenue, 2),
+        estimated_cost=round(estimated_cost, 2),
+        estimated_gross_profit=round(gross_profit, 2),
+        gross_margin_percent=margin_pct,
+        products_with_cost_data=len(products_with_cost),
+        products_without_cost_data=len(products_without_cost),
+    )
+
+
+@router.get("/stock-value", response_model=CloudStockValueSummary)
+def get_cloud_stock_value(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    """Total capital tied up in inventory based on cost and retail prices."""
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    query = db.query(CloudProductSnapshot).filter(
+        CloudProductSnapshot.organization_id == organization_id,
+        CloudProductSnapshot.is_active.is_(True),
+        CloudProductSnapshot.total_stock > 0,
+    )
+    if effective_branch_id is not None:
+        query = query.filter(CloudProductSnapshot.branch_id == effective_branch_id)
+
+    products = query.all()
+    total_cost_value = 0.0
+    total_retail_value = 0.0
+    products_valued = 0
+    for p in products:
+        if p.cost_price is not None:
+            total_cost_value += float(p.cost_price) * max(p.total_stock, 0)
+            products_valued += 1
+        if p.selling_price is not None:
+            total_retail_value += float(p.selling_price) * max(p.total_stock, 0)
+
+    return CloudStockValueSummary(
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        total_cost_value=round(total_cost_value, 2),
+        total_retail_value=round(total_retail_value, 2),
+        products_valued=products_valued,
+        total_active_products=len(products),
+    )
+
+
+@router.get("/stockout-impact", response_model=CloudStockoutImpact)
+def get_cloud_stockout_impact(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    period_days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    """
+    Estimated daily revenue lost to current stockouts.
+    For each product with total_stock <= 0 that has a known sales velocity,
+    daily_revenue_at_risk = average_daily_units_sold × selling_price.
+    """
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+
+    # Get velocity data for out-of-stock products
+    velocity_rows = CloudStockVelocityService.stock_velocity(
+        db,
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        period_days=period_days,
+        limit=500,
+        include_stable=True,
+    )
+    out_of_stock = [r for r in velocity_rows if r["status"] == "out_of_stock" and r["average_daily_units_sold"] > 0]
+
+    # Fetch selling prices for affected products
+    if out_of_stock:
+        product_keys = [(r["branch_id"], r["product_id"]) for r in out_of_stock]
+        branch_ids = list({k[0] for k in product_keys})
+        product_ids = list({k[1] for k in product_keys})
+        price_rows = db.query(
+            CloudProductSnapshot.branch_id,
+            CloudProductSnapshot.local_product_id,
+            CloudProductSnapshot.selling_price,
+        ).filter(
+            CloudProductSnapshot.organization_id == organization_id,
+            CloudProductSnapshot.branch_id.in_(branch_ids),
+            CloudProductSnapshot.local_product_id.in_(product_ids),
+        ).all()
+        price_map = {(r.branch_id, r.local_product_id): r.selling_price for r in price_rows}
+    else:
+        price_map = {}
+
+    branch_ids_seen = list({r["branch_id"] for r in out_of_stock})
+    branch_names: dict[int, str] = {}
+    if branch_ids_seen:
+        from app.models.tenancy import Branch
+        branches = db.query(Branch.id, Branch.name).filter(Branch.id.in_(branch_ids_seen)).all()
+        branch_names = {b.id: b.name for b in branches}
+
+    items: list[CloudStockoutImpactItem] = []
+    for row in out_of_stock:
+        sp = price_map.get((row["branch_id"], row["product_id"]))
+        selling_price = float(sp) if sp is not None else None
+        daily_at_risk = round(row["average_daily_units_sold"] * (selling_price or 0), 2)
+        items.append(CloudStockoutImpactItem(
+            branch_id=row["branch_id"],
+            branch_name=branch_names.get(row["branch_id"], f"Branch {row['branch_id']}"),
+            product_id=row["product_id"],
+            product_name=row["product_name"],
+            sku=row["sku"],
+            selling_price=selling_price,
+            average_daily_units_sold=row["average_daily_units_sold"],
+            daily_revenue_at_risk=daily_at_risk,
+        ))
+
+    items.sort(key=lambda x: -x.daily_revenue_at_risk)
+    items = items[:limit]
+    total_daily = round(sum(i.daily_revenue_at_risk for i in items), 2)
+
+    return CloudStockoutImpact(
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        period_days=period_days,
+        stockout_product_count=len(items),
+        total_daily_revenue_at_risk=total_daily,
+        items=items,
+    )
 
 
 def _acknowledgement_response(acknowledgement) -> CloudReconciliationAcknowledgementResponse:

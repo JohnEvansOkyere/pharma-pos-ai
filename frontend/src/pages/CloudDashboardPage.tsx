@@ -34,6 +34,7 @@ interface CloudSalesSummary {
   sales_count: number
   total_revenue: number
   total_items: number
+  average_transaction_value: number
 }
 
 interface CloudBranchSalesSummary {
@@ -132,7 +133,49 @@ interface CloudDeadStockItem {
   average_daily_units_sold: number
   days_since_last_sale: number | null
   last_sale_date: string | null
+  value_at_risk: number | null
   status: string
+}
+
+interface CloudProfitSummary {
+  organization_id: number
+  branch_id: number | null
+  period_days: number
+  total_revenue: number
+  estimated_cost: number
+  estimated_gross_profit: number
+  gross_margin_percent: number | null
+  products_with_cost_data: number
+  products_without_cost_data: number
+}
+
+interface CloudStockValueSummary {
+  organization_id: number
+  branch_id: number | null
+  total_cost_value: number
+  total_retail_value: number
+  products_valued: number
+  total_active_products: number
+}
+
+interface CloudStockoutImpactItem {
+  branch_id: number
+  branch_name: string
+  product_id: number
+  product_name: string
+  sku: string
+  selling_price: number | null
+  average_daily_units_sold: number
+  daily_revenue_at_risk: number
+}
+
+interface CloudStockoutImpact {
+  organization_id: number
+  branch_id: number | null
+  period_days: number
+  stockout_product_count: number
+  total_daily_revenue_at_risk: number
+  items: CloudStockoutImpactItem[]
 }
 
 interface CloudBranchRevenueComparisonItem {
@@ -283,29 +326,6 @@ interface DeliverySettingsFormState {
   is_active: boolean
 }
 
-interface AIExternalProviderSetting {
-  id: number | null
-  organization_id: number
-  external_ai_enabled: boolean
-  allowed_providers: string[]
-  preferred_provider: string | null
-  preferred_model: string | null
-  consent_text: string | null
-  consented_by_user_id: number | null
-  consented_at: string | null
-  updated_by_user_id: number | null
-  created_at: string | null
-  updated_at: string | null
-}
-
-interface AIExternalProviderFormState {
-  external_ai_enabled: boolean
-  allowed_providers: string[]
-  preferred_provider: string
-  preferred_model: string
-  consent_text: string
-}
-
 interface AIManagerChatResponse {
   answer: string
   data_scope: {
@@ -369,6 +389,16 @@ interface ChatMessage {
   response?: AIManagerChatResponse
 }
 
+interface AIChatSession {
+  id: number
+  organization_id: number
+  branch_id: number | null
+  title: string | null
+  message_count: number
+  closed_at: string | null
+  created_at: string
+}
+
 type LoadState = 'idle' | 'loading' | 'loaded'
 
 const suggestedPrompts = [
@@ -386,16 +416,6 @@ const emptyDeliverySettingsForm: DeliverySettingsFormState = {
   telegram_enabled: false,
   telegram_chat_ids: '',
   is_active: true,
-}
-
-const defaultAIConsentText = 'The pharmacy administrator enabled external AI processing for aggregate business reporting. Prompts must not include patient-identifiable, prescription-sensitive, or controlled-drug dispensing details.'
-
-const emptyAIExternalProviderForm: AIExternalProviderFormState = {
-  external_ai_enabled: false,
-  allowed_providers: [],
-  preferred_provider: 'groq',
-  preferred_model: '',
-  consent_text: defaultAIConsentText,
 }
 
 function formatCurrency(value: number) {
@@ -452,16 +472,6 @@ function deliveryFormFromSetting(setting: AIWeeklyReportDeliverySetting): Delive
   }
 }
 
-function aiProviderFormFromSetting(setting: AIExternalProviderSetting): AIExternalProviderFormState {
-  return {
-    external_ai_enabled: setting.external_ai_enabled,
-    allowed_providers: setting.allowed_providers ?? [],
-    preferred_provider: setting.preferred_provider ?? 'groq',
-    preferred_model: setting.preferred_model ?? '',
-    consent_text: setting.consent_text ?? defaultAIConsentText,
-  }
-}
-
 export default function CloudDashboardPage() {
   const { user } = useAuthStore()
   const defaultOrganizationId = user?.organization_id
@@ -479,6 +489,9 @@ export default function CloudDashboardPage() {
   const [expiryRiskItems, setExpiryRiskItems] = useState<CloudExpiryRiskItem[]>([])
   const [stockVelocityItems, setStockVelocityItems] = useState<CloudStockVelocityItem[]>([])
   const [deadStockItems, setDeadStockItems] = useState<CloudDeadStockItem[]>([])
+  const [profitSummary, setProfitSummary] = useState<CloudProfitSummary | null>(null)
+  const [stockValue, setStockValue] = useState<CloudStockValueSummary | null>(null)
+  const [stockoutImpact, setStockoutImpact] = useState<CloudStockoutImpact | null>(null)
   const [revenueComparison, setRevenueComparison] = useState<CloudRevenueComparison | null>(null)
   const [reconciliationSummary, setReconciliationSummary] = useState<CloudReconciliationSummary | null>(null)
   const [weeklyReports, setWeeklyReports] = useState<AIWeeklyManagerReport[]>([])
@@ -499,12 +512,6 @@ export default function CloudDashboardPage() {
   const [deliverySettingsError, setDeliverySettingsError] = useState<string | null>(null)
   const [deliverySettingsMessage, setDeliverySettingsMessage] = useState<string | null>(null)
   const [isSavingDeliverySettings, setIsSavingDeliverySettings] = useState(false)
-  const [aiProviderSetting, setAIProviderSetting] = useState<AIExternalProviderSetting | null>(null)
-  const [aiProviderForm, setAIProviderForm] = useState<AIExternalProviderFormState>(emptyAIExternalProviderForm)
-  const [aiProviderState, setAIProviderState] = useState<LoadState>('idle')
-  const [aiProviderError, setAIProviderError] = useState<string | null>(null)
-  const [aiProviderMessage, setAIProviderMessage] = useState<string | null>(null)
-  const [isSavingAIProvider, setIsSavingAIProvider] = useState(false)
   const [briefing, setBriefing] = useState<AIManagerBriefing | null>(null)
   const [persistedFindings, setPersistedFindings] = useState<AIPersistedFinding[]>([])
   const [isSavingFindings, setIsSavingFindings] = useState(false)
@@ -518,12 +525,17 @@ export default function CloudDashboardPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [isChatLoading, setIsChatLoading] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null)
+  const [chatSessions, setChatSessions] = useState<AIChatSession[]>([])
+  const [showSessionHistory, setShowSessionHistory] = useState(false)
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
 
   const organizationId = Number(organizationInput)
   const hasValidOrganization = Number.isInteger(organizationId) && organizationId > 0
   const branchId = selectedBranchId === 'all' ? undefined : Number(selectedBranchId)
   const isBranchLocked = user?.branch_id != null
   const isAdmin = user?.role === 'admin'
+  const canUseAI = user?.role === 'admin' || user?.role === 'manager'
 
   const branchOptions = useMemo(() => {
     const ids = new Set<number>()
@@ -558,14 +570,10 @@ export default function CloudDashboardPage() {
       setDeliverySettings(null)
       setDeliveryForm(emptyDeliverySettingsForm)
       setDeliverySettingsState('idle')
-      setAIProviderSetting(null)
-      setAIProviderForm(emptyAIExternalProviderForm)
-      setAIProviderState('idle')
       return
     }
 
     loadDeliverySettings()
-    loadAIProviderSettings()
   }, [isAdmin, organizationInput, selectedBranchId])
 
   useEffect(() => {
@@ -581,6 +589,17 @@ export default function CloudDashboardPage() {
     setReviewMessage(null)
     loadReportDeliveries(selectedReport.id)
   }, [selectedReport?.id])
+
+  useEffect(() => {
+    if (!hasValidOrganization || !canUseAI) {
+      setChatSessions([])
+      return
+    }
+    api
+      .listChatSessions({ organization_id: organizationId, ...(branchId ? { branch_id: branchId } : {}) })
+      .then((sessions: AIChatSession[]) => setChatSessions(sessions))
+      .catch(() => {})
+  }, [hasValidOrganization, organizationInput, selectedBranchId, canUseAI])
 
   const loadCloudReports = async () => {
     setLoadState('loading')
@@ -629,6 +648,13 @@ export default function CloudDashboardPage() {
         period_days: periodDays,
         limit: 20,
       }),
+      api.getCloudProfitSummary(baseParams),
+      api.getCloudStockValue(syncParams),
+      api.getCloudStockoutImpact({
+        ...syncParams,
+        period_days: periodDays,
+        limit: 20,
+      }),
       api.getCloudRevenueComparison({
         ...syncParams,
         period_days: periodDays,
@@ -660,6 +686,9 @@ export default function CloudDashboardPage() {
       expiryRiskResult,
       stockVelocityResult,
       deadStockResult,
+      profitResult,
+      stockValueResult,
+      stockoutImpactResult,
       revenueComparisonResult,
       reconciliationResult,
       weeklyReportsResult,
@@ -727,6 +756,24 @@ export default function CloudDashboardPage() {
     } else {
       setDeadStockItems([])
       failures.push('Dead stock')
+    }
+
+    if (profitResult.status === 'fulfilled') {
+      setProfitSummary(profitResult.value)
+    } else {
+      setProfitSummary(null)
+    }
+
+    if (stockValueResult.status === 'fulfilled') {
+      setStockValue(stockValueResult.value)
+    } else {
+      setStockValue(null)
+    }
+
+    if (stockoutImpactResult.status === 'fulfilled') {
+      setStockoutImpact(stockoutImpactResult.value)
+    } else {
+      setStockoutImpact(null)
     }
 
     if (revenueComparisonResult.status === 'fulfilled') {
@@ -822,6 +869,27 @@ export default function CloudDashboardPage() {
   }))
   const hasCriticalReconciliation =
     (reconciliationSummary?.critical_issue_count ?? 0) > 0 || (reconciliationSummary?.high_issue_count ?? 0) > 0
+  const metricTrust = useMemo(() => {
+    if ((syncHealth?.projection_failed_count ?? 0) > 0 || hasCriticalReconciliation) {
+      return { status: 'unsafe' as const, label: 'Unsafe', detail: 'Projection or reconciliation issue' }
+    }
+
+    if (!syncHealth?.last_received_at) {
+      return { status: 'unknown' as const, label: 'Unknown', detail: 'No synced event received' }
+    }
+
+    const ageHours = (Date.now() - new Date(syncHealth.last_received_at).getTime()) / 36e5
+    if (!Number.isFinite(ageHours)) {
+      return { status: 'unknown' as const, label: 'Unknown', detail: 'Invalid sync timestamp' }
+    }
+    if (ageHours > 48) {
+      return { status: 'stale' as const, label: 'Stale', detail: `${Math.round(ageHours)}h since sync` }
+    }
+    if (ageHours > 6) {
+      return { status: 'delayed' as const, label: 'Delayed', detail: `${Math.round(ageHours)}h since sync` }
+    }
+    return { status: 'fresh' as const, label: 'Fresh', detail: 'Recently synced' }
+  }, [syncHealth, hasCriticalReconciliation])
 
   const generateWeeklyReport = async () => {
     if (!hasValidOrganization || isGeneratingReport) return
@@ -947,49 +1015,6 @@ export default function CloudDashboardPage() {
     }
   }
 
-  const loadAIProviderSettings = async () => {
-    setAIProviderState('loading')
-    setAIProviderError(null)
-    setAIProviderMessage(null)
-    try {
-      const setting: AIExternalProviderSetting = await api.getAIExternalProviderSettings({
-        organization_id: organizationId,
-      })
-      setAIProviderSetting(setting)
-      setAIProviderForm(aiProviderFormFromSetting(setting))
-    } catch (error) {
-      setAIProviderError('External AI settings could not be loaded.')
-    } finally {
-      setAIProviderState('loaded')
-    }
-  }
-
-  const saveAIProviderSettings = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!hasValidOrganization || isSavingAIProvider) return
-
-    setIsSavingAIProvider(true)
-    setAIProviderError(null)
-    setAIProviderMessage(null)
-    try {
-      const setting: AIExternalProviderSetting = await api.updateAIExternalProviderSettings({
-        organization_id: organizationId,
-        external_ai_enabled: aiProviderForm.external_ai_enabled,
-        allowed_providers: aiProviderForm.allowed_providers,
-        preferred_provider: aiProviderForm.preferred_provider,
-        preferred_model: aiProviderForm.preferred_model,
-        consent_text: aiProviderForm.consent_text,
-      })
-      setAIProviderSetting(setting)
-      setAIProviderForm(aiProviderFormFromSetting(setting))
-      setAIProviderMessage('External AI policy saved.')
-    } catch (error) {
-      setAIProviderError('External AI policy could not be saved.')
-    } finally {
-      setIsSavingAIProvider(false)
-    }
-  }
-
   const updateReconciliationIssue = async (
     issue: CloudReconciliationIssue,
     action: 'acknowledge' | 'resolve' | 'repair',
@@ -1043,12 +1068,29 @@ export default function CloudDashboardPage() {
     setIsChatLoading(true)
 
     try {
-      const response: AIManagerChatResponse = await api.chatWithAIManager({
+      const response: AIManagerChatResponse & { session_id: number } = await api.chatWithAIManager({
         message: trimmedMessage,
         organization_id: organizationId,
         ...(branchId ? { branch_id: branchId } : {}),
         period_days: periodDays,
+        ...(currentSessionId ? { session_id: currentSessionId } : {}),
       })
+
+      // Track session — first message creates a new one on the backend
+      if (!currentSessionId) {
+        setCurrentSessionId(response.session_id)
+        const newSession: AIChatSession = {
+          id: response.session_id,
+          organization_id: organizationId,
+          branch_id: branchId ?? null,
+          title: trimmedMessage.slice(0, 100),
+          message_count: 1,
+          closed_at: null,
+          created_at: new Date().toISOString(),
+        }
+        setChatSessions((current) => [newSession, ...current])
+      }
+
       setChatMessages((current) => [
         ...current,
         {
@@ -1062,6 +1104,39 @@ export default function CloudDashboardPage() {
       setChatError('AI assistant request failed.')
     } finally {
       setIsChatLoading(false)
+    }
+  }
+
+  const startNewChat = () => {
+    setCurrentSessionId(null)
+    setChatMessages([])
+    setChatError(null)
+    setShowSessionHistory(false)
+  }
+
+  const loadSession = async (session: AIChatSession) => {
+    if (session.id === currentSessionId) {
+      setShowSessionHistory(false)
+      return
+    }
+    setIsLoadingSession(true)
+    try {
+      const messages: Array<{ id: number; role: string; content: string; created_at: string }> =
+        await api.getSessionMessages(session.id)
+      setCurrentSessionId(session.id)
+      setChatMessages(
+        messages.map((m) => ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        }))
+      )
+      setChatError(null)
+      setShowSessionHistory(false)
+    } catch {
+      setChatError('Could not load session messages.')
+    } finally {
+      setIsLoadingSession(false)
     }
   }
 
@@ -1331,67 +1406,114 @@ export default function CloudDashboardPage() {
       )}
 
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3, 4].map((item) => (
             <div key={item} className="card h-32 p-6 skeleton" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            title="Cloud Revenue"
-            value={formatCurrency(salesSummary?.total_revenue ?? 0)}
-            detail={`${formatNumber(salesSummary?.sales_count ?? 0)} sales`}
-            icon={FiDollarSign}
-            tone="green"
-          />
-          <MetricCard
-            title="Items Sold"
-            value={formatNumber(salesSummary?.total_items ?? 0)}
-            detail={`${periodDays} day synced window`}
-            icon={FiShoppingCart}
-            tone="blue"
-          />
-          <MetricCard
-            title="Net Stock Movement"
-            value={formatNumber(inventorySummary?.net_quantity_delta ?? 0)}
-            detail={`${formatNumber(inventorySummary?.movement_count ?? 0)} movement rows`}
-            icon={FiDatabase}
-            tone="indigo"
-          />
-          <MetricCard
-            title="Projection Failures"
-            value={formatNumber(syncHealth?.projection_failed_count ?? 0)}
-            detail={`${formatNumber(syncHealth?.duplicate_delivery_count ?? 0)} duplicate deliveries`}
-            icon={syncHealth?.projection_failed_count ? FiAlertTriangle : FiActivity}
-            tone={syncHealth?.projection_failed_count ? 'red' : 'slate'}
-          />
-          <MetricCard
-            title="Reconciliation"
-            value={formatNumber(reconciliationSummary?.issue_count ?? 0)}
-            detail={`${formatNumber(reconciliationSummary?.critical_issue_count ?? 0)} critical · ${formatNumber(reconciliationSummary?.high_issue_count ?? 0)} high`}
-            icon={hasCriticalReconciliation ? FiAlertTriangle : FiShield}
-            tone={hasCriticalReconciliation ? 'red' : 'slate'}
-          />
-          <MetricCard
-            title="Stock Risk"
-            value={formatNumber((stockRiskSummary?.out_of_stock_count ?? 0) + (stockRiskSummary?.low_stock_count ?? 0))}
-            detail={`${formatNumber(stockRiskSummary?.expired_batch_count ?? 0)} expired batches`}
-            icon={FiAlertTriangle}
-            tone={(stockRiskSummary?.out_of_stock_count || stockRiskSummary?.expired_batch_count) ? 'red' : 'slate'}
-          />
-          <MetricCard
-            title="Expiry Value Risk"
-            value={formatCurrency(stockRiskSummary?.value_at_risk ?? 0)}
-            detail={`${formatNumber(stockRiskSummary?.near_expiry_batch_count ?? 0)} near-expiry batches`}
-            icon={FiCalendar}
-            tone={(stockRiskSummary?.near_expiry_batch_count || stockRiskSummary?.expired_batch_count) ? 'red' : 'slate'}
-          />
-        </div>
+        <section className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Business Performance</h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Decision KPIs from synced pharmacy data</p>
+          </div>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            <MetricCard
+              title="Total Revenue"
+              value={formatCurrency(salesSummary?.total_revenue ?? 0)}
+              detail={`${periodDays} day synced window`}
+              icon={FiDollarSign}
+              tone="green"
+            />
+            <MetricCard
+              title="Gross Profit"
+              value={formatCurrency(profitSummary?.estimated_gross_profit ?? 0)}
+              detail={profitSummary?.gross_margin_percent != null
+                ? `${profitSummary.gross_margin_percent}% margin`
+                : `${periodDays}D margin unavailable`}
+              icon={FiDollarSign}
+              tone={(profitSummary?.estimated_gross_profit ?? 0) > 0 ? 'green' : 'slate'}
+            />
+            <MetricCard
+              title="Sales Count"
+              value={formatNumber(salesSummary?.sales_count ?? 0)}
+              detail="Completed synced sales"
+              icon={FiActivity}
+              tone="blue"
+            />
+            <MetricCard
+              title="Units Sold"
+              value={formatNumber(salesSummary?.total_items ?? 0)}
+              detail="Quantity sold, not line count"
+              icon={FiShoppingCart}
+              tone="blue"
+            />
+            <MetricCard
+              title="Avg Transaction"
+              value={formatCurrency(salesSummary?.average_transaction_value ?? 0)}
+              detail="Revenue per sale"
+              icon={FiShoppingCart}
+              tone="blue"
+            />
+            <MetricCard
+              title="Stock Value"
+              value={formatCurrency(stockValue?.total_cost_value ?? 0)}
+              detail={`Retail value ${formatCurrency(stockValue?.total_retail_value ?? 0)}`}
+              icon={FiDatabase}
+              tone="indigo"
+            />
+            <MetricCard
+              title="Stock Risk"
+              value={formatNumber((stockRiskSummary?.out_of_stock_count ?? 0) + (stockRiskSummary?.low_stock_count ?? 0))}
+              detail={`${formatNumber(stockRiskSummary?.out_of_stock_count ?? 0)} out · ${formatNumber(stockRiskSummary?.low_stock_count ?? 0)} low`}
+              icon={FiAlertTriangle}
+              tone={(stockRiskSummary?.out_of_stock_count || stockRiskSummary?.low_stock_count) ? 'red' : 'slate'}
+            />
+            <MetricCard
+              title="Expiry Value Risk"
+              value={formatCurrency(stockRiskSummary?.value_at_risk ?? 0)}
+              detail={`${formatNumber(stockRiskSummary?.near_expiry_batch_count ?? 0)} near · ${formatNumber(stockRiskSummary?.expired_batch_count ?? 0)} expired`}
+              icon={FiCalendar}
+              tone={(stockRiskSummary?.near_expiry_batch_count || stockRiskSummary?.expired_batch_count) ? 'red' : 'slate'}
+            />
+            <MetricCard
+              title="Stockout Daily Loss"
+              value={formatCurrency(stockoutImpact?.total_daily_revenue_at_risk ?? 0)}
+              detail={`${formatNumber(stockoutImpact?.stockout_product_count ?? 0)} products out of stock`}
+              icon={FiAlertTriangle}
+              tone={(stockoutImpact?.total_daily_revenue_at_risk ?? 0) > 0 ? 'red' : 'slate'}
+            />
+          </div>
+        </section>
       )}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="card p-6 xl:col-span-2">
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Data Health</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">Trust, sync, and reconciliation details grouped away from business KPIs</p>
+        </div>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+          <DataHealthPanel
+            trust={metricTrust}
+            syncHealth={syncHealth}
+            reconciliationSummary={reconciliationSummary}
+            inventorySummary={inventorySummary}
+          />
+          <ReconciliationPanel
+            reconciliation={reconciliationSummary}
+            actionKey={reconciliationActionKey}
+            error={reconciliationActionError}
+            message={reconciliationActionMessage}
+            canRunRepairs={isAdmin}
+            onAcknowledge={(issue, notes) => updateReconciliationIssue(issue, 'acknowledge', notes)}
+            onResolve={(issue, notes) => updateReconciliationIssue(issue, 'resolve', notes)}
+            onRepair={(issue, notes) => updateReconciliationIssue(issue, 'repair', notes)}
+          />
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-6">
+        <div className="card p-6">
           <div className="mb-6 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
@@ -1429,49 +1551,9 @@ export default function CloudDashboardPage() {
           )}
         </div>
 
-        <div className="space-y-6">
-          <div className="card p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Sync Health
-              </h2>
-              <FiCloud className="h-5 w-5 text-gray-400" />
-            </div>
-            <div className="space-y-4">
-              <StatusRow label="Ingested events" value={formatNumber(syncHealth?.ingested_event_count ?? 0)} />
-              <StatusRow label="Projected events" value={formatNumber(syncHealth?.projected_event_count ?? 0)} />
-              <StatusRow label="Last received" value={formatDateTime(syncHealth?.last_received_at ?? null)} />
-              <StatusRow label="Last projected" value={formatDateTime(syncHealth?.last_projected_at ?? null)} />
-            </div>
-          </div>
-
-          <div className="card p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Stock Movement
-              </h2>
-              <FiCalendar className="h-5 w-5 text-gray-400" />
-            </div>
-            <div className="space-y-4">
-              <StatusRow label="Positive quantity" value={formatNumber(inventorySummary?.total_positive_quantity ?? 0)} />
-              <StatusRow label="Negative quantity" value={formatNumber(inventorySummary?.total_negative_quantity ?? 0)} />
-              <StatusRow label="Net quantity" value={formatNumber(inventorySummary?.net_quantity_delta ?? 0)} />
-            </div>
-          </div>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <ReconciliationPanel
-          reconciliation={reconciliationSummary}
-          actionKey={reconciliationActionKey}
-          error={reconciliationActionError}
-          message={reconciliationActionMessage}
-          canRunRepairs={isAdmin}
-          onAcknowledge={(issue, notes) => updateReconciliationIssue(issue, 'acknowledge', notes)}
-          onResolve={(issue, notes) => updateReconciliationIssue(issue, 'resolve', notes)}
-          onRepair={(issue, notes) => updateReconciliationIssue(issue, 'repair', notes)}
-        />
+      <div className="grid grid-cols-1 gap-6">
         <WeeklyReportsPanel
           reports={weeklyReports}
           selectedReport={selectedReport}
@@ -1496,7 +1578,7 @@ export default function CloudDashboardPage() {
       </div>
 
       {isAdmin && (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6">
           <DeliverySettingsPanel
             form={deliveryForm}
             setting={deliverySettings}
@@ -1507,17 +1589,6 @@ export default function CloudDashboardPage() {
             isSaving={isSavingDeliverySettings}
             onSubmit={saveDeliverySettings}
             onChange={setDeliveryForm}
-          />
-          <AIExternalProviderPanel
-            form={aiProviderForm}
-            setting={aiProviderSetting}
-            state={aiProviderState}
-            error={aiProviderError}
-            message={aiProviderMessage}
-            disabled={!hasValidOrganization || isSavingAIProvider}
-            isSaving={isSavingAIProvider}
-            onSubmit={saveAIProviderSettings}
-            onChange={setAIProviderForm}
           />
         </div>
       )}
@@ -1553,9 +1624,20 @@ export default function CloudDashboardPage() {
           rows={deadStockItems.map((item) => ({
             key: `${item.branch_id}-${item.product_id}`,
             primary: item.product_name,
-            secondary: `${item.sku} · ${item.branch_name || `Branch ${item.branch_id}`} · ${item.total_stock} on hand`,
+            secondary: `${item.sku} · ${item.branch_name || `Branch ${item.branch_id}`} · ${item.total_stock} on hand${item.value_at_risk != null ? ` · ${formatCurrency(item.value_at_risk)} tied up` : ''}`,
             value: item.last_sale_date ? `Last sale ${item.last_sale_date}` : 'Never sold',
             status: item.status === 'dead_stock' ? 'Dead stock' : 'Slow mover',
+          }))}
+        />
+        <RiskTable
+          title="Stockout Revenue Loss"
+          emptyText="No out-of-stock products with known sales velocity"
+          rows={(stockoutImpact?.items ?? []).map((item) => ({
+            key: `${item.branch_id}-${item.product_id}`,
+            primary: item.product_name,
+            secondary: `${item.sku} · ${item.branch_name} · ${item.average_daily_units_sold.toFixed(1)} units/day`,
+            value: `${formatCurrency(item.daily_revenue_at_risk)}/day`,
+            status: 'Out of stock',
           }))}
         />
         <RiskTable
@@ -1582,108 +1664,155 @@ export default function CloudDashboardPage() {
         />
       </div>
 
-      <div className="card p-6">
-        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-              <FiMessageSquare className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-              AI Manager Assistant
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Read-only answers from approved cloud reporting data
-            </p>
-          </div>
-          <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-            Scope: Org {hasValidOrganization ? organizationId : '-'} · {branchId ? `Branch ${branchId}` : 'Permitted branches'} · {periodDays}D
-          </div>
-        </div>
-
-        <div className="mb-4 flex flex-wrap gap-2">
-          {suggestedPrompts.map((prompt) => (
-            <button
-              key={prompt}
-              type="button"
-              onClick={() => sendAIMessage(prompt)}
-              disabled={!hasValidOrganization || isChatLoading}
-              className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700"
-            >
-              {prompt}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-4 max-h-96 space-y-4 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
-          {chatMessages.length === 0 ? (
-            <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-              Ask about branch performance, sync health, or inventory movement.
+      {canUseAI && (
+        <div className="card p-6">
+          <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+                <FiMessageSquare className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+                AI Manager Assistant
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Read-only answers from approved cloud reporting data
+              </p>
             </div>
-          ) : (
-            chatMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                Scope: Org {hasValidOrganization ? organizationId : '-'} · {branchId ? `Branch ${branchId}` : 'Permitted branches'} · {periodDays}D
+              </div>
+              {chatSessions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowSessionHistory((v) => !v)}
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-600 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700"
+                >
+                  History ({chatSessions.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={startNewChat}
+                disabled={chatMessages.length === 0}
+                className="rounded-lg border border-primary-200 px-3 py-2 text-xs text-primary-700 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-primary-700 dark:text-primary-300 dark:hover:bg-primary-900/20"
               >
-                <div
-                  className={`max-w-3xl rounded-lg px-4 py-3 text-sm ${
-                    message.role === 'user'
-                      ? 'bg-primary-600 text-white'
-                      : 'border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100'
+                + New Chat
+              </button>
+            </div>
+          </div>
+
+          {showSessionHistory && chatSessions.length > 0 && (
+            <div className="mb-4 max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900">
+              {chatSessions.map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  onClick={() => loadSession(session)}
+                  className={`flex w-full items-center justify-between px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                    session.id === currentSessionId ? 'bg-primary-50 dark:bg-primary-900/20' : ''
                   }`}
                 >
-                  <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-                  {message.response && (
-                    <div className="mt-3 space-y-2 border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                      <div className="flex flex-wrap gap-x-4 gap-y-1">
-                        <span>Provider: {message.response.provider}</span>
-                        <span>Model: {message.response.model || 'not configured'}</span>
-                        <span>Fallback: {message.response.fallback_used ? 'yes' : 'no'}</span>
-                        <span>Refused: {message.response.refused ? 'yes' : 'no'}</span>
-                      </div>
-                      <div>
-                        Data scope: Org {message.response.data_scope.organization_id}, {message.response.data_scope.branch_id ? `Branch ${message.response.data_scope.branch_id}` : 'permitted branches'}, {message.response.data_scope.period_days}D
-                      </div>
-                      <ul className="space-y-1">
-                        {message.response.safety_notes.map((note) => (
-                          <li key={note}>{note}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-          {isChatLoading && (
-            <div className="text-sm text-gray-500 dark:text-gray-400">
-              Assistant is checking approved report data...
+                  <span className="truncate text-gray-800 dark:text-gray-200">
+                    {session.title || 'Untitled conversation'}
+                  </span>
+                  <span className="ml-3 shrink-0 text-xs text-gray-400 dark:text-gray-500">
+                    {new Date(session.created_at).toLocaleDateString()} · {session.message_count} msg
+                  </span>
+                </button>
+              ))}
             </div>
           )}
-        </div>
 
-        {chatError && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
-            {chatError}
+          <div className="mb-4 flex flex-wrap gap-2">
+            {suggestedPrompts.map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => sendAIMessage(prompt)}
+                disabled={!hasValidOrganization || isChatLoading}
+                className="rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {prompt}
+              </button>
+            ))}
           </div>
-        )}
 
-        <form onSubmit={handleAISubmit} className="flex flex-col gap-3 md:flex-row">
-          <input
-            className="input min-h-11 flex-1"
-            value={chatInput}
-            onChange={(event) => setChatInput(event.target.value)}
-            placeholder="Ask the assistant about synced sales, branches, inventory movement, or sync health"
-            disabled={!hasValidOrganization || isChatLoading}
-          />
-          <button
-            type="submit"
-            disabled={!hasValidOrganization || !chatInput.trim() || isChatLoading}
-            className="btn-primary flex min-h-11 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <FiSend className="h-4 w-4" />
-            Send
-          </button>
-        </form>
-      </div>
+          <div className="mb-4 max-h-96 space-y-4 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900">
+            {isLoadingSession ? (
+              <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                Loading conversation...
+              </div>
+            ) : chatMessages.length === 0 ? (
+              <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                Ask about branch performance, sync health, or inventory movement.
+              </div>
+            ) : (
+              chatMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`max-w-3xl rounded-lg px-4 py-3 text-sm ${
+                      message.role === 'user'
+                        ? 'bg-primary-600 text-white'
+                        : 'border border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+                    {message.response && (
+                      <div className="mt-3 space-y-2 border-t border-gray-200 pt-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          <span>Provider: {message.response.provider}</span>
+                          <span>Model: {message.response.model || 'not configured'}</span>
+                          <span>Fallback: {message.response.fallback_used ? 'yes' : 'no'}</span>
+                          <span>Refused: {message.response.refused ? 'yes' : 'no'}</span>
+                        </div>
+                        <div>
+                          Data scope: Org {message.response.data_scope.organization_id}, {message.response.data_scope.branch_id ? `Branch ${message.response.data_scope.branch_id}` : 'permitted branches'}, {message.response.data_scope.period_days}D
+                        </div>
+                        <ul className="space-y-1">
+                          {message.response.safety_notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+            {isChatLoading && (
+              <div className="text-sm text-gray-500 dark:text-gray-400">
+                Assistant is checking approved report data...
+              </div>
+            )}
+          </div>
+
+          {chatError && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+              {chatError}
+            </div>
+          )}
+
+          <form onSubmit={handleAISubmit} className="flex flex-col gap-3 md:flex-row">
+            <input
+              className="input min-h-11 flex-1"
+              value={chatInput}
+              onChange={(event) => setChatInput(event.target.value)}
+              placeholder="Ask the assistant about synced sales, branches, inventory movement, or sync health"
+              disabled={!hasValidOrganization || isChatLoading}
+            />
+            <button
+              type="submit"
+              disabled={!hasValidOrganization || !chatInput.trim() || isChatLoading}
+              className="btn-primary flex min-h-11 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FiSend className="h-4 w-4" />
+              Send
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
@@ -1717,6 +1846,99 @@ function MetricCard({ title, value, detail, icon: Icon, tone }: MetricCardProps)
         </div>
         <div className={`rounded-lg p-3 ${toneClasses[tone]}`}>
           <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface DataHealthPanelProps {
+  trust: {
+    status: 'fresh' | 'delayed' | 'stale' | 'unsafe' | 'unknown'
+    label: string
+    detail: string
+  }
+  syncHealth: CloudSyncHealth | null
+  reconciliationSummary: CloudReconciliationSummary | null
+  inventorySummary: CloudInventoryMovementSummary | null
+}
+
+function DataHealthPanel({ trust, syncHealth, reconciliationSummary, inventorySummary }: DataHealthPanelProps) {
+  const trustClasses = {
+    fresh: 'bg-green-50 text-green-700 ring-green-200 dark:bg-green-900/20 dark:text-green-300 dark:ring-green-800',
+    delayed: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:ring-amber-800',
+    stale: 'bg-orange-50 text-orange-700 ring-orange-200 dark:bg-orange-900/20 dark:text-orange-300 dark:ring-orange-800',
+    unsafe: 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-900/20 dark:text-red-300 dark:ring-red-800',
+    unknown: 'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-900/30 dark:text-slate-300 dark:ring-slate-700',
+  }
+
+  return (
+    <div className="card p-6">
+      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FiShield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
+            Data Health Summary
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Sync freshness, projection status, reconciliation, and inventory activity.
+          </p>
+        </div>
+        <span className={`inline-flex rounded px-3 py-1.5 text-sm font-semibold ring-1 ${trustClasses[trust.status]}`} title={trust.detail}>
+          {trust.label}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+            <FiCloud className="h-4 w-4 text-gray-400" />
+            Freshness
+          </div>
+          <div className="space-y-3">
+            <StatusRow label="Trust reason" value={trust.detail} />
+            <StatusRow label="Last received" value={formatDateTime(syncHealth?.last_received_at ?? null)} />
+            <StatusRow label="Last projected" value={formatDateTime(syncHealth?.last_projected_at ?? null)} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+            <FiActivity className="h-4 w-4 text-gray-400" />
+            Sync Pipeline
+          </div>
+          <div className="space-y-3">
+            <StatusRow label="Ingested events" value={formatNumber(syncHealth?.ingested_event_count ?? 0)} />
+            <StatusRow label="Projected events" value={formatNumber(syncHealth?.projected_event_count ?? 0)} />
+            <StatusRow label="Projection failures" value={formatNumber(syncHealth?.projection_failed_count ?? 0)} />
+            <StatusRow label="Duplicate deliveries" value={formatNumber(syncHealth?.duplicate_delivery_count ?? 0)} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+            <FiShield className="h-4 w-4 text-gray-400" />
+            Reconciliation
+          </div>
+          <div className="space-y-3">
+            <StatusRow label="Open issues" value={formatNumber(reconciliationSummary?.issue_count ?? 0)} />
+            <StatusRow label="Critical" value={formatNumber(reconciliationSummary?.critical_issue_count ?? 0)} />
+            <StatusRow label="High" value={formatNumber(reconciliationSummary?.high_issue_count ?? 0)} />
+            <StatusRow label="Resolved" value={formatNumber(reconciliationSummary?.resolved_issue_count ?? 0)} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-800 dark:text-gray-100">
+            <FiDatabase className="h-4 w-4 text-gray-400" />
+            Inventory Activity
+          </div>
+          <div className="space-y-3">
+            <StatusRow label="Movement rows" value={formatNumber(inventorySummary?.movement_count ?? 0)} />
+            <StatusRow label="Positive quantity" value={formatNumber(inventorySummary?.total_positive_quantity ?? 0)} />
+            <StatusRow label="Negative quantity" value={formatNumber(inventorySummary?.total_negative_quantity ?? 0)} />
+            <StatusRow label="Net quantity" value={formatNumber(inventorySummary?.net_quantity_delta ?? 0)} />
+          </div>
         </div>
       </div>
     </div>
@@ -2275,162 +2497,6 @@ function DeliverySettingsPanel({
           >
             <FiCheckCircle className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
             Save settings
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
-const aiProviderOptions = [
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'claude', label: 'Claude' },
-  { value: 'groq', label: 'Groq' },
-]
-
-function AIExternalProviderPanel({
-  form,
-  setting,
-  state,
-  error,
-  message,
-  disabled,
-  isSaving,
-  onSubmit,
-  onChange,
-}: {
-  form: AIExternalProviderFormState
-  setting: AIExternalProviderSetting | null
-  state: LoadState
-  error: string | null
-  message: string | null
-  disabled: boolean
-  isSaving: boolean
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  onChange: (next: AIExternalProviderFormState) => void
-}) {
-  const isLoading = state === 'loading'
-  const toggleAllowedProvider = (provider: string, enabled: boolean) => {
-    const allowed = enabled
-      ? Array.from(new Set([...form.allowed_providers, provider]))
-      : form.allowed_providers.filter((item) => item !== provider)
-    onChange({ ...form, allowed_providers: allowed })
-  }
-
-  return (
-    <div className="card p-6">
-      <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-            <FiShield className="h-5 w-5 text-primary-600 dark:text-primary-400" />
-            External AI Policy
-          </h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            Tenant-level provider control for AI reports and chat
-          </p>
-        </div>
-        <div className="rounded-lg bg-gray-100 px-3 py-2 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-          {setting?.consented_at
-            ? `Consented: ${formatDateTime(setting.consented_at)}`
-            : 'External AI disabled'}
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
-          {error}
-        </div>
-      )}
-
-      {message && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-100">
-          <FiCheckCircle className="h-4 w-4" />
-          {message}
-        </div>
-      )}
-
-      <form onSubmit={onSubmit} className="space-y-5">
-        <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-          <input
-            type="checkbox"
-            checked={form.external_ai_enabled}
-            onChange={(event) => onChange({ ...form, external_ai_enabled: event.target.checked })}
-            disabled={disabled || isLoading}
-            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-          />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-100">External AI enabled</span>
-        </label>
-
-        <div>
-          <span className="label">Allowed providers</span>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {aiProviderOptions.map((provider) => (
-              <label key={provider.value} className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <input
-                  type="checkbox"
-                  checked={form.allowed_providers.includes(provider.value)}
-                  onChange={(event) => toggleAllowedProvider(provider.value, event.target.checked)}
-                  disabled={disabled || isLoading}
-                  className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                />
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-100">{provider.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <label className="block">
-            <span className="label">Preferred provider</span>
-            <select
-              className="input h-10 w-full"
-              value={form.preferred_provider}
-              onChange={(event) => onChange({ ...form, preferred_provider: event.target.value })}
-              disabled={disabled || isLoading}
-            >
-              {aiProviderOptions.map((provider) => (
-                <option key={provider.value} value={provider.value}>
-                  {provider.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="label">Preferred model</span>
-            <input
-              className="input h-10 w-full"
-              value={form.preferred_model}
-              onChange={(event) => onChange({ ...form, preferred_model: event.target.value })}
-              disabled={disabled || isLoading}
-            />
-          </label>
-        </div>
-
-        <label className="block">
-          <span className="label">Consent record</span>
-          <textarea
-            className="input min-h-28 resize-y"
-            value={form.consent_text}
-            onChange={(event) => onChange({ ...form, consent_text: event.target.value })}
-            disabled={disabled || isLoading}
-          />
-        </label>
-
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="text-xs text-gray-500 dark:text-gray-400">
-            {setting?.updated_by_user_id
-              ? `Last updated by user ${setting.updated_by_user_id}`
-              : 'No saved external AI policy'}
-          </div>
-
-          <button
-            type="submit"
-            disabled={disabled || isLoading}
-            className="btn-primary flex h-10 items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <FiCheckCircle className={`h-4 w-4 ${isSaving ? 'animate-pulse' : ''}`} />
-            Save AI policy
           </button>
         </div>
       </form>

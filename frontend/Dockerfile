@@ -17,6 +17,8 @@ COPY . .
 # Set API URL to use nginx proxy (empty string means use relative /api path)
 ARG VITE_API_URL=""
 ENV VITE_API_URL=$VITE_API_URL
+ARG VITE_APP_MODE="local_pos"
+ENV VITE_APP_MODE=$VITE_APP_MODE
 
 # Build the application
 RUN npm run build

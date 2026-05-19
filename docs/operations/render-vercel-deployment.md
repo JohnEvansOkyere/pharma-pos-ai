@@ -36,6 +36,7 @@ DATABASE_BACKEND=postgresql
 DATABASE_URL=postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres
 SECRET_KEY=<generated-secret>
 ENVIRONMENT=production
+APP_MODE=cloud_reporting
 DEBUG=false
 TIMEZONE=Africa/Accra
 BACKEND_CORS_ORIGINS=["https://your-vercel-app.vercel.app","http://localhost:3000","http://localhost:5173"]
@@ -74,9 +75,11 @@ Required Vercel environment variable:
 
 ```env
 VITE_API_URL=https://your-render-backend.onrender.com/api
+VITE_APP_MODE=cloud_reporting
 ```
 
 Only `VITE_*` values are exposed to the browser. Do not put backend secrets in Vercel.
+`VITE_APP_MODE=cloud_reporting` hides local POS/product/sales workflows in the deployed portal; those workflows stay available only on local pharmacy installations.
 
 The frontend includes `frontend/vercel.json` so client-side routes such as `/cloud-dashboard` and `/settings` load correctly on page refresh.
 
@@ -91,6 +94,7 @@ POSTGRES_PORT=5432
 POSTGRES_DB=pharma_pos
 POSTGRES_USER=pharma_user
 POSTGRES_PASSWORD=<local-password>
+APP_MODE=local_pos
 ```
 
 Then configure sync to the Render backend:

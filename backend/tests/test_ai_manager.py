@@ -29,6 +29,7 @@ from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
 from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIFindingStatusUpdate, AIManagerChatRequest
+from app.services.ai_llm_provider import AIManagerLLMProvider
 
 
 def _tenant(db_session):
@@ -572,24 +573,14 @@ def test_admin_can_manage_tenant_external_ai_settings(db_session):
     assert audit_entry.extra_data["allowed_providers"] == ["openai", "groq"]
 
 
-def test_enabled_tenant_external_ai_uses_allowed_provider_fallback(monkeypatch, db_session):
+def test_server_configured_external_ai_uses_available_api_key_without_tenant_policy(monkeypatch, db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
     manager = _manager(db_session, organization.id)
-    admin = _admin(db_session, organization.id)
-    monkeypatch.setattr(settings, "GROQ_API_KEY", None)
-
-    upsert_external_provider_settings(
-        AIExternalProviderSettingUpsert(
-            organization_id=organization.id,
-            external_ai_enabled=True,
-            allowed_providers=["groq"],
-            preferred_provider="groq",
-            preferred_model="llama-3.3-70b-versatile",
-        ),
-        db=db_session,
-        current_user=admin,
-    )
+    monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", "groq")
+    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", "")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "test-groq-key")
+    monkeypatch.setattr(AIManagerLLMProvider, "_groq", lambda *, prompt, model, history: "External Groq summary.")
 
     response = chat_with_ai_manager(
         AIManagerChatRequest(
@@ -602,7 +593,8 @@ def test_enabled_tenant_external_ai_uses_allowed_provider_fallback(monkeypatch, 
 
     assert response.provider == "groq"
     assert response.model == "llama-3.3-70b-versatile"
-    assert response.fallback_used is True
+    assert response.fallback_used is False
+    assert response.answer == "External Groq summary."
 
 
 def test_branch_manager_cannot_change_tenant_external_ai_settings(db_session):

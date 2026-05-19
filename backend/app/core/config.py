@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # Application
     APP_NAME: str = "GYSBIN PHARMACY ANNEX"
     APP_VERSION: str = "1.0.0"
+    APP_MODE: str = "local_pos"  # local_pos or cloud_reporting
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
 
@@ -75,6 +76,7 @@ class Settings(BaseSettings):
     CLOUD_SYNC_TIMEOUT_SECONDS: int = 15
     CLOUD_SYNC_MAX_RETRIES: int = 10
     CLOUD_SYNC_INTERVAL_MINUTES: int = 5
+    CLOUD_HEARTBEAT_INTERVAL_MINUTES: int = 5
     CLOUD_SYNC_REQUIRE_TOKEN: bool = True
     CLOUD_PROJECTION_ENABLED: bool = False
     CLOUD_PROJECTION_INTERVAL_MINUTES: int = 5
@@ -130,6 +132,10 @@ class Settings(BaseSettings):
         """Build derived settings and enforce production-safe defaults."""
         environment = self.ENVIRONMENT.lower()
         backend = self.DATABASE_BACKEND.lower()
+        self.APP_MODE = self.APP_MODE.strip().lower()
+
+        if self.APP_MODE not in {"local_pos", "cloud_reporting"}:
+            raise ValueError("APP_MODE must be either 'local_pos' or 'cloud_reporting'.")
 
         if backend != "postgresql":
             raise ValueError(

@@ -1,6 +1,6 @@
 # Go-Live Checklist — 5-Shop Pharmacy Rollout
 
-> **Last updated:** 2026-05-19 03:10 UTC
+> **Last updated:** 2026-05-19 17:11 UTC
 > **Source audits:** `docs/audits/2026-05-15-production-readiness-audit.md`, `docs/audits/2026-05-15-production-readiness-audit-v2.md`, `docs/ai/AI_CLOUD_DASHBOARD_ASSESSMENT_2026-05-18.md`, `docs/ai/2026-05-19-cloud-ai-dashboard-audit.md`
 > **Status:** 🟡 **CONDITIONALLY READY** — All critical code defects resolved. Operational verification and credential rotation remain.
 
@@ -54,11 +54,9 @@
 
 ### Regulatory Compliance
 
-- [x] **P1-03:** Server-side prescription and narcotic enforcement in `create_sale()` ✅ *(2026-05-15 19:45 UTC)*
-  - Fixed: `PRESCRIPTION_REQUIRED` products require `has_prescription=True` + prescription number
-  - Fixed: Narcotic products require prescription + customer name
-  - Fixed: `requires_id` products require customer ID number
-  - Fixed: All schema fields now mapped to Sale constructor
+- [x] **P1-03:** Prescription, customer-ID, and controlled-drug checkout gates superseded by current client workflow ✅ *(updated 2026-05-19 09:50 UTC)*
+  - Product decision: `prescription_status`, `requires_id`, and `is_narcotic` remain catalog metadata only for the current Ghana deployment.
+  - Current POS behavior: sale creation does not block checkout solely because those flags are set.
   - File: `backend/app/api/endpoints/sales.py`
 
 ### Database Safety
@@ -169,7 +167,7 @@
 ### Test Coverage
 
 - [/] Frontend test files exist for key pages — 21 tests passing *(2026-05-15 20:16 UTC)*
-- [x] Backend tests pass — 97/99, 2 pre-existing unrelated failures in AI weekly report retry *(2026-05-15 20:14 UTC)*
+- [x] Backend tests pass — 122/122 passing ✅ *(2026-05-19 09:50 UTC)*
 - [ ] Sales flow has regression coverage (backend)
 - [ ] Sale void/refund flow has regression coverage (backend)
 - [ ] Dashboard financial endpoint stability has regression coverage (backend)
@@ -322,7 +320,7 @@
 
 ### 6.2 Command-Center Contract — Questions the Home Screen Must Answer
 
-- [/] **Can every pharmacy operate right now?** Cloud reachability is shown for orgs, devices, stale devices, never-synced devices, and branches without healthy devices; true local health still needs heartbeat telemetry. *(updated 2026-05-18 21:37 UTC)*
+- [/] **Can every pharmacy operate right now?** Cloud reachability is shown for orgs, devices, stale devices, never-synced devices, and branches without healthy devices; local heartbeat telemetry now reports database, scheduler, outbox, backup, restore-drill, disk, uptime, and readiness state. Remaining gap: branch operating-hours rules and field verification on deployed machines. *(updated 2026-05-19 09:50 UTC)*
 - [/] **Can I trust the cloud data I am looking at?** Upload freshness, projection lag, failed projections, unprojected events, duplicates, and data-trust status are shown; full reconciliation severity beside every metric is still pending. *(updated 2026-05-18 21:37 UTC)*
 - [/] **Where is money at risk today?** Today/yesterday/trailing-7-day revenue and per-client revenue are shown; sales drop-offs, no-sales-during-hours alerts, void/refund spikes, and concentration analytics remain pending. *(updated 2026-05-18 21:37 UTC)*
 - [/] **Where is stock at risk today?** Fleet stock risk totals now show out-of-stock, low-stock, expiry counts, quantity on hand, and value at risk; ranked branch/product drilldowns remain pending. *(updated 2026-05-18 21:37 UTC)*
@@ -416,7 +414,7 @@
 
 #### Local Installation Telemetry — Requires New Heartbeat / Diagnostic Sync Events
 
-- [ ] Client heartbeat telemetry event carrying:
+- [/] Client heartbeat telemetry event carrying:
   - app version
   - database connectivity status
   - local scheduler status
@@ -426,15 +424,15 @@
   - last restore drill time / status
   - free disk space
   - server clock skew
-  - uptime / last restart. *(2026-05-18 21:26 UTC)*
-- [ ] Installation readiness score per device / branch using heartbeat data, not just “last seen”. *(2026-05-18 21:26 UTC)*
-- [ ] Alert when a machine is online but:
+  - uptime / last restart. *(updated 2026-05-19 09:50 UTC — all listed telemetry is synced except true clock-skew calculation; server clock timestamp is included for future drift comparison)*
+- [/] Installation readiness score per device / branch using heartbeat data, not just “last seen”. *(updated 2026-05-19 09:50 UTC — device heartbeat readiness is projected; command center shows fleet/org readiness counts and attention items, but a dedicated branch drilldown remains pending)*
+- [/] Alert when a machine is online but:
   - backups are stale
   - restore drills are overdue
   - outbox backlog is growing
   - disk space is low
   - scheduler is stopped
-  - software version is behind the supported release. *(2026-05-18 21:26 UTC)*
+  - software version is behind the supported release. *(updated 2026-05-19 09:50 UTC — heartbeat warnings cover stale backups, overdue restore drills, failed/old outbox data, and scheduler/database failures; low-disk thresholds and supported-version policy remain pending)*
 
 #### Client Lifecycle & Support
 
@@ -495,8 +493,8 @@
 - [x] **Already available from current tenancy models:** organizations, branches, devices, device status, and `last_seen_at` ✅ *(2026-05-18 21:26 UTC)*
 - [x] **New admin command-center aggregate:** `/admin/command-center` combines tenancy, ingested sync events, projected sales facts, product snapshots, and batch snapshots into one admin-only fleet summary ✅ *(2026-05-18 21:37 UTC)*
 - [ ] **Requires richer queries over existing ingested events:** per-device event counts, per-device projection counts, stale ranking, sequence-gap detection, unprojected backlog, and fleet-level alert rollups. *(2026-05-18 21:26 UTC)*
-- [ ] **Requires new synced telemetry events from local installs:** backup age, restore-drill age, local outbox backlog, app version, scheduler status, disk space, uptime, and clock skew. *(2026-05-18 21:26 UTC)*
-- [ ] **Requires additional projected business facts before it can be trusted in the cloud:** refunds, voids, richer payment mix, and any revenue/anomaly metric that depends on those event types. *(2026-05-18 21:26 UTC)*
+- [/] **Requires new synced telemetry events from local installs:** backup age, restore-drill age, local outbox backlog, app version, scheduler status, disk space, uptime, and clock skew. *(updated 2026-05-19 09:50 UTC — heartbeat event and projection are implemented; true clock-skew comparison remains pending)*
+- [/] **Requires additional projected business facts before it can be trusted in the cloud:** refunds, voids, richer payment mix, and any revenue/anomaly metric that depends on those event types. *(updated 2026-05-19 09:50 UTC — `SALE_REVERSED` already syncs and restores cloud stock movement/snapshots; dedicated financial reversal/void anomaly facts and richer payment analytics remain pending)*
 
 ---
 
@@ -586,13 +584,69 @@
 
 ### 7.4 P3 Conversation Quality
 
-- [ ] Persist AI chat sessions and messages. *(2026-05-19 01:44 UTC)*
-- [ ] Pass recent conversation history to the LLM for follow-up continuity. *(2026-05-19 01:44 UTC)*
+- [x] Persist AI chat sessions and messages. ✅ *(2026-05-19 13:00 UTC)*
+  - Done: `AIChatSession` and `AIChatMessage` persist cloud dashboard AI conversations per user/org/branch scope.
+- [x] Pass recent conversation history to the LLM for follow-up continuity. ✅ *(2026-05-19 13:00 UTC)*
+  - Done: chat requests load the latest session messages and pass conversation history into OpenAI/Groq/Claude adapters.
 - [ ] Replace raw dict prompts with structured evidence packs and output schema. *(2026-05-19 01:44 UTC)*
 - [x] Add branch and product names beside branch/product metrics returned to the AI and dashboard. ✅ *(2026-05-19 UTC)*
   - Done: AI manager `_branch_sales` returns `branch_name`. Stock velocity service returns `branch_name`. Weekly report `_branch_sales` returns `branch_name`. AI manager branch keyword response uses branch name.
   - Done: Dead stock and velocity dashboard RiskTables show branch name from API.
   - Pending: branch names in raw LLM evidence pack (raw dict prompt still uses IDs in some tool_results). Product names are already present in velocity/dead_stock/stock_risk items.
+
+---
+
+## Phase 8: Cloud Reporting Portal / CEO Source of Truth
+
+> **Goal:** keep the deployed cloud app from looking like a second pharmacy POS with a separate product/sales database. The cloud deployment should be a reporting and owner-intelligence portal fed by local sync projections. The local installation remains the operational source for dispensing, products, stock receipt, sales, voids, refunds, and day-to-day till work.
+
+### 8.1 P0 Confusion Guardrails
+
+- [x] Add explicit app mode: `local_pos` for pharmacy installations and `cloud_reporting` for the deployed reporting portal. ✅ *(2026-05-19 11:33 UTC)*
+  - Fixed: backend `APP_MODE` and frontend `VITE_APP_MODE` are now explicit deployment choices.
+- [x] In `cloud_reporting` mode, hide local operational pages from the frontend: POS, Products, Sales, Stock Adjustments, Suppliers, Notifications, local Dashboard, and local Settings unless a specific cloud-safe setting is required. ✅ *(2026-05-19 11:33 UTC)*
+  - Fixed: cloud reporting mode sidebar shows only cloud reporting/admin routes and operational routes redirect away.
+- [x] In `cloud_reporting` mode, backend must reject unsafe local operational write endpoints so users cannot create cloud-only sales/products by accident. ✅ *(2026-05-19 11:33 UTC)*
+  - Fixed: unsafe writes to local operational endpoints return `403` in cloud reporting mode.
+- [x] Make cloud-reporting default landing route go to `/cloud-dashboard` for pharmacy admins/managers and `/clients` for vendor admin users. ✅ *(2026-05-19 11:33 UTC)*
+- [x] Document required deployment env values for local POS and cloud reporting deployments. ✅ *(2026-05-19 11:33 UTC)*
+  - Fixed: Render runbook and env examples document `APP_MODE`; Vercel runbook documents `VITE_APP_MODE`.
+
+### 8.2 P0 Dashboard Metric Semantics
+
+- [x] Reconcile local dashboard vs cloud dashboard item-count semantics. The cloud "items sold" KPI must clearly match local behavior: either units sold or sale-line count, not a hidden mixture. ✅ *(2026-05-19 14:56 UTC)*
+  - Fixed: cloud sale projection now stores `CloudSaleFact.item_count` as total units sold (`sum(item.quantity)`), matching local dashboard `total_items_sold`.
+  - Fixed: admin reconciliation repair type `repair_sale_item_counts` recalculates existing already-projected cloud sale facts from the accepted `SALE_CREATED` payload so old line-count values can be corrected without changing local POS data. ✅ *(2026-05-19 17:11 UTC)*
+- [x] Add tests proving cloud sales summary totals use completed sale facts, original business time, and the selected item-count definition. ✅ *(2026-05-19 14:56 UTC)*
+  - Done: projection tests now prove split sale lines store unit totals; cloud report tests verify average transaction value and business-time sales summary behavior.
+- [x] Add a visible data freshness/trust state to CEO KPI blocks so stale sync is not mistaken for live business performance. ✅ *(2026-05-19 14:56 UTC)*
+  - Done: the cloud dashboard has a dedicated **Data Health** section with one trust state (`Fresh`, `Delayed`, `Stale`, `Unsafe`, or `Unknown`) plus sync freshness, projection, reconciliation, and inventory activity details.
+  - Updated: business KPI cards no longer show technical sync/reconciliation cards beside revenue/profit. *(2026-05-19 15:40 UTC)*
+
+### 8.3 P1 CEO KPI Coverage
+
+> **Decision audit (2026-05-19):** Five KPIs were identified as genuinely affecting owner decisions that are not yet on the dashboard. Each was validated against available cloud projection data before being added here.
+
+- [x] **Gross Profit KPI card** — `sum(sale_revenue) - sum(cost_price × units_sold from movement facts)`. Without margin, revenue is vanity; a high-revenue branch with 5% margin is worse than a lower-revenue branch at 40%. ✅ *(2026-05-19)*
+  - `GET /cloud-reports/profit-summary` → `CloudProfitSummary` (revenue, cost, gross_profit, margin_%, products with/without cost data)
+  - New KPI card on cloud dashboard.
+- [x] **Total Stock Value card** — `sum(cost_price × total_stock)` across active product snapshots. Shows how much capital is locked in inventory across the fleet. ✅ *(2026-05-19)*
+  - `GET /cloud-reports/stock-value` → `CloudStockValueSummary` (cost value, retail value, products_valued)
+  - New KPI card on cloud dashboard.
+- [x] **Dead Stock Value (GHS)** — added `value_at_risk = cost_price × total_stock` to Dead Stock & Slow Movers table. ✅ *(2026-05-19)*
+  - `CloudDeadStockService` now includes `value_at_risk` per item; shown inline in the table secondary line.
+- [x] **Average Transaction Value card** — `total_revenue ÷ sales_count` added to `CloudSalesSummary` response and new KPI card. ✅ *(2026-05-19)*
+- [x] **Stockout Revenue Estimate** — `average_daily_units_sold × selling_price` per out-of-stock product with velocity. ✅ *(2026-05-19)*
+  - `GET /cloud-reports/stockout-impact` → `CloudStockoutImpact` (total daily loss, per-product breakdown)
+  - New KPI card (daily loss total) and new Stockout Revenue Loss RiskTable on cloud dashboard.
+- [ ] Add branch ranking and comparison sections: top/bottom branch by revenue, day-over-day change, biggest drop, no-reported-sales state qualified by freshness. *(2026-05-19 11:29 UTC)*
+- [ ] Add cloud-safe drilldowns for stock value, slow movers, expiry risk, and dead stock without exposing local POS write workflows. *(2026-05-19 11:29 UTC)*
+
+### 8.4 P1 AI Reporting and Charts
+
+- [ ] Keep AI on the cloud dashboard/reporting side only; it must not mutate sales, stock, products, or users. *(2026-05-19 11:29 UTC)*
+- [ ] Let AI generate chart/report definitions only from structured backend evidence packs, with chart data coming from trusted backend endpoints rather than invented LLM numbers. *(2026-05-19 11:29 UTC)*
+- [ ] Add exportable CEO report output with embedded freshness/reconciliation warnings. *(2026-05-19 11:29 UTC)*
 
 ---
 

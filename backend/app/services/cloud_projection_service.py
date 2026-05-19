@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
+    CloudDeviceHeartbeatSnapshot,
     CloudInventoryMovementFact,
     CloudProductSnapshot,
     CloudSaleFact,
@@ -109,6 +110,8 @@ class CloudProjectionService:
             stock_projected = CloudProjectionService._apply_sale_stock_effect(db, event)
             movement_projected = CloudProjectionService._project_sale_movement_facts(db, event)
             return sale_projected or stock_projected or movement_projected
+        if event.event_type == SyncEventType.SYSTEM_HEARTBEAT:
+            return CloudProjectionService._project_system_heartbeat(db, event)
         if event.event_type in CloudProjectionService.PRODUCT_EVENT_TYPES:
             return CloudProjectionService._project_product_event(db, event)
         if event.event_type in CloudProjectionService.BATCH_EVENT_TYPES:
@@ -120,15 +123,80 @@ class CloudProjectionService:
         return False
 
     @staticmethod
+    def _project_system_heartbeat(db: Session, event: IngestedSyncEvent) -> bool:
+        payload = event.payload
+        server_time = CloudProjectionService._parse_datetime(payload.get("server_time")) or event.received_at
+        latest_backup_time = CloudProjectionService._parse_datetime(payload.get("latest_backup_time"))
+        last_restore_drill_at = CloudProjectionService._parse_datetime(payload.get("last_restore_drill_at"))
+        snapshot = db.query(CloudDeviceHeartbeatSnapshot).filter(
+            CloudDeviceHeartbeatSnapshot.source_device_id == event.source_device_id
+        ).first()
+        if snapshot is None:
+            snapshot = CloudDeviceHeartbeatSnapshot(
+                organization_id=event.organization_id,
+                branch_id=event.branch_id,
+                source_device_id=event.source_device_id,
+                device_uid=str(payload.get("device_uid") or event.source_device_id),
+                last_source_event_id=event.id,
+                payload=payload,
+                server_time=server_time,
+            )
+            db.add(snapshot)
+
+        snapshot.organization_id = event.organization_id
+        snapshot.branch_id = event.branch_id
+        snapshot.device_uid = str(payload.get("device_uid") or snapshot.device_uid)
+        snapshot.readiness_status = str(payload.get("readiness_status") or "unknown")
+        snapshot.app_version = payload.get("app_version")
+        snapshot.environment = payload.get("environment")
+        snapshot.database_connected = bool(payload.get("database_connected"))
+        snapshot.scheduler_enabled = bool(payload.get("scheduler_enabled"))
+        snapshot.scheduler_running = bool(payload.get("scheduler_running"))
+        snapshot.scheduler_job_count = int(payload.get("scheduler_job_count") or 0)
+        snapshot.cloud_sync_enabled = bool(payload.get("cloud_sync_enabled"))
+        snapshot.cloud_sync_configured = bool(payload.get("cloud_sync_configured"))
+        snapshot.sync_pending_count = int(payload.get("sync_pending_count") or 0)
+        snapshot.sync_failed_count = int(payload.get("sync_failed_count") or 0)
+        snapshot.oldest_unsent_event_age_minutes = CloudProjectionService._optional_int(
+            payload.get("oldest_unsent_event_age_minutes")
+        )
+        snapshot.latest_backup_time = latest_backup_time
+        snapshot.latest_backup_age_hours = CloudProjectionService._optional_int(
+            payload.get("latest_backup_age_hours")
+        )
+        snapshot.backup_is_recent = bool(payload.get("backup_is_recent"))
+        snapshot.restore_recovery_ready = bool(payload.get("restore_recovery_ready"))
+        snapshot.last_restore_drill_at = last_restore_drill_at
+        snapshot.free_disk_bytes = CloudProjectionService._optional_int(payload.get("free_disk_bytes"))
+        snapshot.total_disk_bytes = CloudProjectionService._optional_int(payload.get("total_disk_bytes"))
+        snapshot.uptime_seconds = CloudProjectionService._optional_int(payload.get("uptime_seconds"))
+        snapshot.server_time = server_time
+        snapshot.last_source_event_id = event.id
+        snapshot.payload = payload
+        snapshot.updated_at = datetime.now(timezone.utc)
+        return True
+
+    @staticmethod
     def _project_sale_created(db: Session, event: IngestedSyncEvent) -> bool:
         existing = db.query(CloudSaleFact).filter(CloudSaleFact.source_event_id == event.id).first()
-        if existing:
-            return False
 
         payload = event.payload
         total_amount = Decimal(str(payload.get("total_amount", "0.00")))
         items = payload.get("items") or []
+        item_units = CloudProjectionService._sale_item_units(items)
         occurred_at = CloudProjectionService._parse_datetime(payload.get("occurred_at"))
+        if existing:
+            changed = False
+            if existing.item_count != item_units:
+                existing.item_count = item_units
+                changed = True
+            if occurred_at and existing.occurred_at != occurred_at:
+                existing.occurred_at = occurred_at
+                changed = True
+            if changed:
+                existing.payload = payload
+            return changed
+
         fact = CloudSaleFact(
             source_event_id=event.id,
             organization_id=event.organization_id,
@@ -138,12 +206,23 @@ class CloudProjectionService:
             invoice_number=payload.get("invoice_number") or f"event-{event.event_id}",
             total_amount=total_amount,
             payment_method=payload.get("payment_method"),
-            item_count=len(items),
+            item_count=item_units,
             payload=payload,
             occurred_at=occurred_at,
         )
         db.add(fact)
         return True
+
+    @staticmethod
+    def _sale_item_units(items: list[dict[str, Any]]) -> int:
+        total = 0
+        for item in items:
+            try:
+                quantity = int(item.get("quantity") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            total += max(quantity, 0)
+        return total
 
     @staticmethod
     def _movement_lines(event: IngestedSyncEvent) -> list[dict[str, Any]]:
@@ -603,7 +682,7 @@ class CloudProjectionService:
     def _optional_int(value: Any) -> Optional[int]:
         if value is None:
             return None
-        return int(value)
+        return int(float(value))
 
     @staticmethod
     def _optional_decimal(value: Any) -> Optional[Decimal]:

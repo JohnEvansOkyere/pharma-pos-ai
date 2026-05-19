@@ -53,6 +53,7 @@ class AIManagerService:
         branch_id: Optional[int],
         period_days: int,
         current_user: User,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         effective_branch_id = AIManagerService._effective_branch_id(current_user, branch_id)
         normalized_message = message.strip().lower()
@@ -177,6 +178,7 @@ class AIManagerService:
             deterministic_answer=deterministic_answer,
             provider=provider_policy["provider"],
             model=provider_policy["model"],
+            conversation_history=conversation_history or [],
         )
 
         return {

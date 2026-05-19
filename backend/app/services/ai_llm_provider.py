@@ -3,7 +3,7 @@ Server-side LLM provider adapter for the AI manager assistant.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -21,19 +21,30 @@ class AIManagerLLMProvider:
     CLAUDE_URL = "https://api.anthropic.com/v1/messages"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     ANTHROPIC_VERSION = "2023-06-01"
+    DEFAULT_MODELS = {
+        "openai": "gpt-4o-mini",
+        "claude": "claude-3-5-haiku-latest",
+        "groq": "llama-3.3-70b-versatile",
+    }
 
     @staticmethod
     def configured_provider() -> str:
         return settings.AI_MANAGER_PROVIDER.strip().lower()
 
     @staticmethod
-    def configured_model() -> Optional[str]:
-        return settings.AI_MANAGER_MODEL.strip() if settings.AI_MANAGER_MODEL else None
+    def configured_model(provider: Optional[str] = None) -> Optional[str]:
+        if provider and provider.strip().lower() == "deterministic":
+            return None
+        if settings.AI_MANAGER_MODEL:
+            return settings.AI_MANAGER_MODEL.strip()
+        if provider:
+            return AIManagerLLMProvider.DEFAULT_MODELS.get(provider.strip().lower())
+        return None
 
     @staticmethod
     def is_external_provider_configured(provider: Optional[str] = None, model: Optional[str] = None) -> bool:
         provider = provider or AIManagerLLMProvider.configured_provider()
-        model = model or AIManagerLLMProvider.configured_model()
+        model = model or AIManagerLLMProvider.configured_model(provider)
         if provider == "openai":
             return bool(settings.OPENAI_API_KEY and model)
         if provider == "claude":
@@ -49,15 +60,16 @@ class AIManagerLLMProvider:
         deterministic_answer: str,
         provider: Optional[str] = None,
         model: Optional[str] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         has_provider_override = provider is not None
         provider = (provider or AIManagerLLMProvider.configured_provider()).strip().lower()
         if model is not None:
             model = model.strip() or None
-        elif has_provider_override:
-            model = None
         else:
-            model = AIManagerLLMProvider.configured_model()
+            model = AIManagerLLMProvider.configured_model(provider)
+
+        history = conversation_history or []
 
         if provider == "deterministic":
             return {
@@ -77,11 +89,11 @@ class AIManagerLLMProvider:
 
         try:
             if provider == "openai":
-                answer = AIManagerLLMProvider._openai(prompt=prompt, model=model or "")
+                answer = AIManagerLLMProvider._openai(prompt=prompt, model=model or "", history=history)
             elif provider == "claude":
-                answer = AIManagerLLMProvider._claude(prompt=prompt, model=model or "")
+                answer = AIManagerLLMProvider._claude(prompt=prompt, model=model or "", history=history)
             elif provider == "groq":
-                answer = AIManagerLLMProvider._groq(prompt=prompt, model=model or "")
+                answer = AIManagerLLMProvider._groq(prompt=prompt, model=model or "", history=history)
             else:
                 raise AIProviderUnavailable(f"Unsupported AI provider: {provider}")
         except Exception:
@@ -100,16 +112,13 @@ class AIManagerLLMProvider:
         }
 
     @staticmethod
-    def _chat_completion(url: str, *, api_key: str, model: str, prompt: str) -> str:
+    def _chat_completion(url: str, *, api_key: str, model: str, prompt: str, history: List[Dict[str, str]]) -> str:
+        messages = [{"role": "system", "content": AIManagerLLMProvider._system_instructions()}]
+        messages.extend({"role": m["role"], "content": m["content"]} for m in history)
+        messages.append({"role": "user", "content": prompt})
         payload = {
             "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": AIManagerLLMProvider._system_instructions(),
-                },
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "max_tokens": settings.AI_MANAGER_MAX_TOKENS,
             "temperature": 0.2,
         }
@@ -124,31 +133,35 @@ class AIManagerLLMProvider:
         return data["choices"][0]["message"]["content"].strip()
 
     @staticmethod
-    def _openai(*, prompt: str, model: str) -> str:
+    def _openai(*, prompt: str, model: str, history: List[Dict[str, str]]) -> str:
         return AIManagerLLMProvider._chat_completion(
             AIManagerLLMProvider.OPENAI_URL,
             api_key=settings.OPENAI_API_KEY or "",
             model=model,
             prompt=prompt,
+            history=history,
         )
 
     @staticmethod
-    def _groq(*, prompt: str, model: str) -> str:
+    def _groq(*, prompt: str, model: str, history: List[Dict[str, str]]) -> str:
         return AIManagerLLMProvider._chat_completion(
             AIManagerLLMProvider.GROQ_URL,
             api_key=settings.GROQ_API_KEY or "",
             model=model,
             prompt=prompt,
+            history=history,
         )
 
     @staticmethod
-    def _claude(*, prompt: str, model: str) -> str:
+    def _claude(*, prompt: str, model: str, history: List[Dict[str, str]]) -> str:
+        messages = [{"role": m["role"], "content": m["content"]} for m in history]
+        messages.append({"role": "user", "content": prompt})
         payload = {
             "model": model,
             "max_tokens": settings.AI_MANAGER_MAX_TOKENS,
             "temperature": 0.2,
             "system": AIManagerLLMProvider._system_instructions(),
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
         }
         headers = {
             "x-api-key": settings.ANTHROPIC_API_KEY or "",

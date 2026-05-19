@@ -14,9 +14,12 @@ from app.api.endpoints.cloud_reports import (
     get_cloud_expiry_risk,
     get_cloud_inventory_movement_summary,
     get_cloud_low_stock,
+    get_cloud_profit_summary,
     get_cloud_reconciliation,
     get_cloud_revenue_comparison,
     get_cloud_sales_summary,
+    get_cloud_stock_value,
+    get_cloud_stockout_impact,
     get_cloud_stock_risk_summary,
     get_cloud_stock_velocity,
     get_cloud_sync_health,
@@ -188,6 +191,7 @@ def test_cloud_sales_summary_filters_by_organization_and_branch(db_session):
     assert summary.sales_count == 2
     assert summary.total_revenue == 25.5
     assert summary.total_items == 3
+    assert summary.average_transaction_value == 12.75
     assert len(branch_rows) == 1
     assert branch_rows[0].branch_id == branch_a.id
     assert branch_rows[0].sales_count == 2
@@ -642,6 +646,125 @@ def test_cloud_stock_velocity_uses_sale_movements_for_days_remaining(db_session)
     assert zero.days_of_stock_remaining is None
     assert zero.status == "no_velocity"
     assert zero.confidence == "none"
+
+
+def test_cloud_profit_stock_value_and_stockout_impact_metrics(db_session):
+    org, branch, device = _tenant(db_session, name="CEO KPI Org", branch_code="CEO")
+    sale_event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="34343434-3434-3434-3434-343434343431",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            CloudSaleFact(
+                source_event_id=sale_event.id,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                local_sale_id=1,
+                invoice_number="CEO-1",
+                total_amount=Decimal("100.00"),
+                payment_method="cash",
+                item_count=5,
+                payload={},
+                occurred_at=now - timedelta(days=1),
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=1,
+                name="Margin Tablets",
+                sku="MARGIN-1",
+                total_stock=10,
+                low_stock_threshold=2,
+                cost_price=Decimal("4.00"),
+                selling_price=Decimal("10.00"),
+                is_active=True,
+                last_source_event_id=sale_event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=2,
+                name="Stockout Syrup",
+                sku="OUT-2",
+                total_stock=0,
+                low_stock_threshold=5,
+                cost_price=Decimal("3.00"),
+                selling_price=Decimal("12.00"),
+                is_active=True,
+                last_source_event_id=sale_event.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=1,
+                local_batch_id=10,
+                quantity_delta=-5,
+                stock_after=None,
+                payload={},
+                occurred_at=now - timedelta(days=1),
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=2,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=2,
+                local_batch_id=11,
+                quantity_delta=-6,
+                stock_after=None,
+                payload={},
+                occurred_at=now - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id)
+
+    profit = get_cloud_profit_summary(
+        organization_id=org.id,
+        start_at=now - timedelta(days=7),
+        end_at=now,
+        db=db_session,
+        current_user=report_user,
+    )
+    stock_value = get_cloud_stock_value(
+        organization_id=org.id,
+        db=db_session,
+        current_user=report_user,
+    )
+    impact = get_cloud_stockout_impact(
+        organization_id=org.id,
+        period_days=3,
+        limit=10,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert profit.total_revenue == 100.0
+    assert profit.estimated_cost == 38.0
+    assert profit.estimated_gross_profit == 62.0
+    assert profit.gross_margin_percent == 62.0
+    assert stock_value.total_cost_value == 40.0
+    assert stock_value.total_retail_value == 100.0
+    assert impact.stockout_product_count == 1
+    assert impact.total_daily_revenue_at_risk == 24.0
+    assert impact.items[0].product_name == "Stockout Syrup"
 
 
 def test_cloud_stock_velocity_respects_branch_scope_and_can_hide_stable_items(db_session):
@@ -1192,6 +1315,78 @@ def test_admin_can_retry_failed_projection_repair(db_session):
     assert result.repaired == 1
     assert event.projected_at is not None
     assert event.projection_error is None
+
+
+def test_admin_can_repair_cloud_sale_item_counts_from_sale_payload(db_session):
+    org, branch, device = _tenant(db_session, name="Repair Sale Units Org", branch_code="RSU")
+    event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="99999999-9999-9999-9999-999999999994",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    event.payload = {
+        "sale_id": 314,
+        "invoice_number": "INV-RSU-314",
+        "total_amount": "120.00",
+        "payment_method": "cash",
+        "items": [
+            {"product_id": 10, "quantity": 5, "unit_price": "10.00"},
+            {"product_id": 20, "quantity": 6, "unit_price": "11.67"},
+        ],
+    }
+    db_session.add(
+        CloudSaleFact(
+            source_event_id=event.id,
+            organization_id=org.id,
+            branch_id=branch.id,
+            source_device_id=device.id,
+            local_sale_id=314,
+            invoice_number="INV-RSU-314",
+            total_amount=Decimal("120.00"),
+            payment_method="cash",
+            item_count=2,
+            payload={"old": "line-count semantics"},
+        )
+    )
+    db_session.commit()
+    user = _report_user(
+        db_session,
+        org.id,
+        branch_id=branch.id,
+        username="repair-sale-units-user",
+        role=UserRole.ADMIN,
+    )
+
+    result = repair_cloud_reconciliation_issue(
+        CloudReconciliationRepairRequest(
+            organization_id=org.id,
+            branch_id=branch.id,
+            repair_type="repair_sale_item_counts",
+            notes="Align cloud units sold with local dashboard.",
+            limit=10,
+        ),
+        db=db_session,
+        current_user=user,
+    )
+    fact = db_session.query(CloudSaleFact).filter_by(local_sale_id=314).one()
+    audit_entry = (
+        db_session.query(ActivityLog)
+        .filter(ActivityLog.action == "repair_cloud_reconciliation_issue")
+        .order_by(ActivityLog.id.desc())
+        .first()
+    )
+
+    assert result.attempted == 1
+    assert result.repaired == 1
+    assert result.skipped == 0
+    assert fact.item_count == 11
+    assert fact.payload == event.payload
+    assert audit_entry is not None
+    assert audit_entry.extra_data["repair_type"] == "repair_sale_item_counts"
 
 
 def test_cloud_dead_stock_identifies_products_with_no_sales(db_session):

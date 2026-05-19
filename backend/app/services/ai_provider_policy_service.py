@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_report import AIExternalProviderSetting
+from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.audit_service import AuditService
 
 
@@ -120,40 +121,39 @@ class AIProviderPolicyService:
 
     @staticmethod
     def resolve_provider(db: Session, *, organization_id: int) -> Dict[str, object]:
-        setting = AIProviderPolicyService.get_setting(db, organization_id=organization_id)
-        if setting is None or not setting.external_ai_enabled:
+        configured_provider = (settings.AI_MANAGER_PROVIDER or "deterministic").strip().lower()
+        provider_candidates = []
+        if configured_provider in AIProviderPolicyService.ALLOWED_PROVIDERS:
+            provider_candidates.append(configured_provider)
+        provider_candidates.extend(
+            provider
+            for provider in ["groq", "openai", "claude"]
+            if provider not in provider_candidates
+        )
+
+        for provider in provider_candidates:
+            model = AIManagerLLMProvider.configured_model(provider)
+            if AIManagerLLMProvider.is_external_provider_configured(provider, model):
+                return {
+                    "provider": provider,
+                    "model": model,
+                    "external_ai_enabled": True,
+                    "fallback_reason": None,
+                }
+
+        if configured_provider == "deterministic":
             return {
                 "provider": "deterministic",
                 "model": None,
                 "external_ai_enabled": False,
-                "fallback_reason": "external_ai_disabled",
-            }
-
-        allowed = AIProviderPolicyService.normalize_providers(setting.allowed_providers or [])
-        provider = (setting.preferred_provider or settings.AI_MANAGER_PROVIDER or "").strip().lower()
-        model = (setting.preferred_model or settings.AI_MANAGER_MODEL or "").strip() or None
-
-        if provider not in allowed:
-            return {
-                "provider": "deterministic",
-                "model": None,
-                "external_ai_enabled": False,
-                "fallback_reason": "provider_not_allowed",
-            }
-
-        if provider not in AIProviderPolicyService.ALLOWED_PROVIDERS:
-            return {
-                "provider": "deterministic",
-                "model": None,
-                "external_ai_enabled": False,
-                "fallback_reason": "unsupported_provider",
+                "fallback_reason": "no_external_api_key_configured",
             }
 
         return {
-            "provider": provider,
-            "model": model,
-            "external_ai_enabled": True,
-            "fallback_reason": None,
+            "provider": "deterministic",
+            "model": None,
+            "external_ai_enabled": False,
+            "fallback_reason": "configured_provider_unavailable",
         }
 
     @staticmethod

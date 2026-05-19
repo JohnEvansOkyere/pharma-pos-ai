@@ -8,12 +8,20 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_admin, require_organization_access, require_view_reports
+from app.api.dependencies import require_admin, require_manager, require_organization_access, require_view_reports
 from app.db.base import get_db
-from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
+from app.models.ai_report import (
+    AIChatMessage,
+    AIChatSession,
+    AIWeeklyManagerReport,
+    AIWeeklyReportDelivery,
+    AIWeeklyReportDeliverySetting,
+)
 from app.models.user import User, UserRole
 from app.schemas.ai_manager import (
     AIBriefingFinding,
+    AIChatMessageResponse,
+    AIChatSessionResponse,
     AIFindingResponse,
     AIFindingStatusUpdate,
     AIManagerBriefing,
@@ -44,19 +52,46 @@ router = APIRouter(prefix="/ai-manager", tags=["AI Manager Assistant"])
 def chat_with_ai_manager(
     payload: AIManagerChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_view_reports),
+    current_user: User = Depends(require_manager),
 ):
     """
     Answer manager questions from approved cloud reporting data.
 
-    The assistant is read-only and inherits the same organization/branch access
-    control as cloud reporting endpoints.
+    Restricted to manager role and above (not cashier/sales staff).
+    Persists the conversation in a session. Pass session_id to continue
+    an existing session; omit it to start a new one automatically.
     """
     require_organization_access(
         organization_id=payload.organization_id,
         branch_id=payload.branch_id,
         current_user=current_user,
     )
+
+    # Resolve or create session
+    session = _get_or_create_session(
+        db,
+        session_id=payload.session_id,
+        organization_id=payload.organization_id,
+        branch_id=payload.branch_id,
+        user_id=current_user.id,
+        first_message=payload.message,
+    )
+
+    # Load last 20 messages as conversation history (before adding the new one)
+    history_rows = (
+        db.query(AIChatMessage)
+        .filter(AIChatMessage.session_id == session.id)
+        .order_by(AIChatMessage.created_at.asc())
+        .limit(20)
+        .all()
+    )
+    conversation_history = [{"role": m.role, "content": m.content} for m in history_rows]
+
+    # Persist user message
+    user_msg = AIChatMessage(session_id=session.id, role="user", content=payload.message)
+    db.add(user_msg)
+    db.flush()
+
     result = AIManagerService.answer(
         db,
         message=payload.message,
@@ -64,8 +99,111 @@ def chat_with_ai_manager(
         branch_id=payload.branch_id,
         period_days=payload.period_days,
         current_user=current_user,
+        conversation_history=conversation_history,
     )
-    return AIManagerChatResponse(**result)
+
+    # Persist assistant message
+    assistant_msg = AIChatMessage(session_id=session.id, role="assistant", content=result["answer"])
+    db.add(assistant_msg)
+    db.commit()
+
+    return AIManagerChatResponse(session_id=session.id, **result)
+
+
+@router.get("/sessions", response_model=List[AIChatSessionResponse])
+def list_chat_sessions(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager),
+):
+    """List recent AI chat sessions for the current user in the given org scope."""
+    require_organization_access(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        current_user=current_user,
+    )
+    sessions = (
+        db.query(AIChatSession)
+        .filter(
+            AIChatSession.organization_id == organization_id,
+            AIChatSession.user_id == current_user.id,
+        )
+        .order_by(AIChatSession.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    result = []
+    for s in sessions:
+        count = db.query(AIChatMessage).filter(AIChatMessage.session_id == s.id).count()
+        result.append(AIChatSessionResponse(
+            id=s.id,
+            organization_id=s.organization_id,
+            branch_id=s.branch_id,
+            user_id=s.user_id,
+            title=s.title,
+            message_count=count,
+            closed_at=s.closed_at,
+            created_at=s.created_at,
+        ))
+    return result
+
+
+@router.get("/sessions/{session_id}/messages", response_model=List[AIChatMessageResponse])
+def get_session_messages(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_manager),
+):
+    """Load messages for a past AI chat session."""
+    session = db.query(AIChatSession).filter(AIChatSession.id == session_id).first()
+    if session is None or session.user_id != current_user.id:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Session not found")
+    messages = (
+        db.query(AIChatMessage)
+        .filter(AIChatMessage.session_id == session_id)
+        .order_by(AIChatMessage.created_at.asc())
+        .all()
+    )
+    return [
+        AIChatMessageResponse(
+            id=m.id,
+            session_id=m.session_id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at,
+        )
+        for m in messages
+    ]
+
+
+def _get_or_create_session(
+    db: Session,
+    *,
+    session_id: Optional[int],
+    organization_id: int,
+    branch_id: Optional[int],
+    user_id: int,
+    first_message: str,
+) -> AIChatSession:
+    if session_id is not None:
+        session = db.query(AIChatSession).filter(
+            AIChatSession.id == session_id,
+            AIChatSession.user_id == user_id,
+        ).first()
+        if session is not None:
+            return session
+    title = first_message[:100] if first_message else None
+    session = AIChatSession(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        user_id=user_id,
+        title=title,
+    )
+    db.add(session)
+    db.flush()
+    return session
 
 
 def _finding_to_response(f) -> AIFindingResponse:

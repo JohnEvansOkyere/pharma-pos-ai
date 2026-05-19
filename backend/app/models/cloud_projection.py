@@ -1,7 +1,7 @@
 """
 Cloud reporting projection models built from ingested sync events.
 """
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, BigInteger, Column, Date, DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -123,5 +123,45 @@ class CloudReconciliationAcknowledgement(Base):
     resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True, index=True)
     resolution_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CloudDeviceHeartbeatSnapshot(Base):
+    """Latest operational health telemetry projected from a local device."""
+
+    __tablename__ = "cloud_device_heartbeat_snapshots"
+    __table_args__ = (
+        UniqueConstraint("source_device_id", name="uq_cloud_device_heartbeat_source_device"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False, index=True)
+    source_device_id = Column(Integer, ForeignKey("devices.id"), nullable=False, index=True)
+    device_uid = Column(String(100), nullable=False, index=True)
+    readiness_status = Column(String(20), nullable=False, default="unknown", index=True)
+    app_version = Column(String(50), nullable=True)
+    environment = Column(String(50), nullable=True)
+    database_connected = Column(Boolean, nullable=False, default=False)
+    scheduler_enabled = Column(Boolean, nullable=False, default=False)
+    scheduler_running = Column(Boolean, nullable=False, default=False)
+    scheduler_job_count = Column(Integer, nullable=False, default=0)
+    cloud_sync_enabled = Column(Boolean, nullable=False, default=False)
+    cloud_sync_configured = Column(Boolean, nullable=False, default=False)
+    sync_pending_count = Column(Integer, nullable=False, default=0)
+    sync_failed_count = Column(Integer, nullable=False, default=0)
+    oldest_unsent_event_age_minutes = Column(Integer, nullable=True)
+    latest_backup_time = Column(DateTime(timezone=True), nullable=True)
+    latest_backup_age_hours = Column(Integer, nullable=True)
+    backup_is_recent = Column(Boolean, nullable=False, default=False)
+    restore_recovery_ready = Column(Boolean, nullable=False, default=False)
+    last_restore_drill_at = Column(DateTime(timezone=True), nullable=True)
+    free_disk_bytes = Column(BigInteger, nullable=True)
+    total_disk_bytes = Column(BigInteger, nullable=True)
+    uptime_seconds = Column(Integer, nullable=True)
+    server_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    last_source_event_id = Column(Integer, ForeignKey("ingested_sync_events.id"), nullable=False, index=True)
+    payload = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

@@ -3,10 +3,12 @@ Main FastAPI application entry point.
 """
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.app_mode import is_local_operational_write
 from app.api import api_router
 from app.services.scheduler import scheduler
 
@@ -48,6 +50,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def cloud_reporting_write_guard(request: Request, call_next):
+    """Prevent cloud deployments from acting as a second local POS database."""
+    if is_local_operational_write(
+        app_mode=settings.APP_MODE,
+        method=request.method,
+        path=request.url.path,
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": (
+                    "This deployment is running in cloud reporting mode. "
+                    "Local POS, product, stock, sales, notification, and system writes "
+                    "must be performed on the pharmacy installation."
+                )
+            },
+        )
+    return await call_next(request)
+
 # Include API router
 app.include_router(api_router, prefix="/api")
 
@@ -58,6 +81,7 @@ def root():
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "mode": settings.APP_MODE,
         "status": "running",
         "docs": "/docs",
     }

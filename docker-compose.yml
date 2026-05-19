@@ -37,6 +37,7 @@ services:
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
       APP_NAME: "Pharma POS AI"
+      APP_MODE: local_pos
       ENVIRONMENT: production
       DEBUG: "false"
       BACKEND_CORS_ORIGINS: '["http://localhost:3000","http://localhost:8080","http://frontend","http://localhost"]'
@@ -65,10 +66,12 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: /api
+        VITE_APP_MODE: local_pos
     container_name: pharma-pos-frontend
     restart: unless-stopped
     environment:
       VITE_API_URL: /api
+      VITE_APP_MODE: local_pos
     ports:
       - "8080:80"
     depends_on:

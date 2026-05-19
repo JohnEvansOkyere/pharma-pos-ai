@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { lazy, Suspense, useEffect } from 'react'
 import { useAuthStore } from './stores/authStore'
+import { getDefaultAuthenticatedPath, isCloudReportingMode } from './config/appMode'
 
 // Pages
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -40,7 +41,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (user?.role !== 'admin') {
-    return <Navigate to="/pos" replace />
+    return <Navigate to={getDefaultAuthenticatedPath(user)} replace />
   }
 
   return <>{children}</>
@@ -55,7 +56,7 @@ function VendorRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (user?.role !== 'admin' || user.organization_id) {
-    return <Navigate to="/pos" replace />
+    return <Navigate to={getDefaultAuthenticatedPath(user)} replace />
   }
 
   return <>{children}</>
@@ -70,10 +71,20 @@ function AdminOrManagerRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (user?.role !== 'admin' && user?.role !== 'manager') {
-    return <Navigate to="/pos" replace />
+    return <Navigate to={getDefaultAuthenticatedPath(user)} replace />
   }
 
   return <>{children}</>
+}
+
+function DefaultAuthenticatedRoute() {
+  const { user } = useAuthStore()
+  return <Navigate to={getDefaultAuthenticatedPath(user)} replace />
+}
+
+function DisabledLocalRoute() {
+  const { user } = useAuthStore()
+  return <Navigate to={getDefaultAuthenticatedPath(user)} replace />
 }
 
 function App() {
@@ -107,12 +118,14 @@ function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="/pos" replace />} />
-            <Route path="dashboard" element={
-              <AdminRoute>
-                <DashboardPage />
-              </AdminRoute>
-            } />
+            <Route index element={<DefaultAuthenticatedRoute />} />
+            {!isCloudReportingMode && (
+              <Route path="dashboard" element={
+                <AdminRoute>
+                  <DashboardPage />
+                </AdminRoute>
+              } />
+            )}
             <Route path="cloud-dashboard" element={
               <AdminOrManagerRoute>
                 <CloudDashboardPage />
@@ -123,21 +136,36 @@ function App() {
                 <AuditLogsPage />
               </AdminRoute>
             } />
-            <Route path="products" element={<ProductsPage />} />
-            <Route path="pos" element={<POSPage />} />
-            <Route path="sales" element={<SalesPage />} />
-            <Route path="stock-adjustments" element={
-              <AdminOrManagerRoute>
-                <StockAdjustmentsPage />
-              </AdminOrManagerRoute>
-            } />
-            <Route path="suppliers" element={<SuppliersPage />} />
-            <Route path="notifications" element={<NotificationsPage />} />
-            <Route path="settings" element={
-              <AdminOrManagerRoute>
-                <SettingsPage />
-              </AdminOrManagerRoute>
-            } />
+            {isCloudReportingMode ? (
+              <>
+                <Route path="dashboard" element={<DisabledLocalRoute />} />
+                <Route path="products" element={<DisabledLocalRoute />} />
+                <Route path="pos" element={<DisabledLocalRoute />} />
+                <Route path="sales" element={<DisabledLocalRoute />} />
+                <Route path="stock-adjustments" element={<DisabledLocalRoute />} />
+                <Route path="suppliers" element={<DisabledLocalRoute />} />
+                <Route path="notifications" element={<DisabledLocalRoute />} />
+                <Route path="settings" element={<DisabledLocalRoute />} />
+              </>
+            ) : (
+              <>
+                <Route path="products" element={<ProductsPage />} />
+                <Route path="pos" element={<POSPage />} />
+                <Route path="sales" element={<SalesPage />} />
+                <Route path="stock-adjustments" element={
+                  <AdminOrManagerRoute>
+                    <StockAdjustmentsPage />
+                  </AdminOrManagerRoute>
+                } />
+                <Route path="suppliers" element={<SuppliersPage />} />
+                <Route path="notifications" element={<NotificationsPage />} />
+                <Route path="settings" element={
+                  <AdminOrManagerRoute>
+                    <SettingsPage />
+                  </AdminOrManagerRoute>
+                } />
+              </>
+            )}
             <Route path="clients" element={
               <VendorRoute>
                 <ClientsPage />
@@ -145,7 +173,7 @@ function App() {
             } />
           </Route>
 
-          <Route path="*" element={<Navigate to="/pos" replace />} />
+          <Route path="*" element={<DefaultAuthenticatedRoute />} />
         </Routes>
       </Suspense>
     </BrowserRouter>

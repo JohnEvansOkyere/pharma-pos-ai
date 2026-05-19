@@ -13,6 +13,7 @@ class CloudSalesSummary(BaseModel):
     sales_count: int
     total_revenue: float
     total_items: int
+    average_transaction_value: float = 0.0
 
 
 class CloudBranchSalesSummary(BaseModel):
@@ -112,6 +113,7 @@ class CloudDeadStockItem(BaseModel):
     average_daily_units_sold: float
     days_since_last_sale: Optional[int] = None
     last_sale_date: Optional[str] = None
+    value_at_risk: Optional[float] = None  # cost_price × total_stock
     status: str  # "dead_stock" or "slow_mover"
 
 
@@ -231,3 +233,44 @@ class CloudReconciliationAcknowledgementResponse(BaseModel):
     resolution_notes: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class CloudProfitSummary(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    period_days: int
+    total_revenue: float
+    estimated_cost: float
+    estimated_gross_profit: float
+    gross_margin_percent: Optional[float] = None  # None when revenue is zero
+    products_with_cost_data: int
+    products_without_cost_data: int
+
+
+class CloudStockValueSummary(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    total_cost_value: float        # sum(cost_price × total_stock)
+    total_retail_value: float      # sum(selling_price × total_stock)
+    products_valued: int           # products with cost_price data
+    total_active_products: int
+
+
+class CloudStockoutImpactItem(BaseModel):
+    branch_id: int
+    branch_name: str
+    product_id: int
+    product_name: str
+    sku: str
+    selling_price: Optional[float]
+    average_daily_units_sold: float
+    daily_revenue_at_risk: float   # average_daily_units_sold × selling_price
+
+
+class CloudStockoutImpact(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    period_days: int
+    stockout_product_count: int
+    total_daily_revenue_at_risk: float
+    items: List[CloudStockoutImpactItem]

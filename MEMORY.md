@@ -33,6 +33,7 @@ backend/
 │   ├── main.py                  # FastAPI app, lifespan, CORS, health check
 │   ├── core/
 │   │   ├── config.py            # Pydantic settings (env-driven)
+│   │   ├── app_mode.py          # local_pos vs cloud_reporting route/write guards
 │   │   ├── security.py          # JWT create/decode, bcrypt password hashing
 │   │   └── money.py             # Decimal rounding helpers (round_money, to_decimal)
 │   ├── db/
@@ -46,7 +47,7 @@ backend/
 │   │   ├── sync_event.py        # SyncEvent, SyncEventCounter (outbox pattern)
 │   │   ├── sync_ingestion.py    # IngestedSyncEvent (cloud ingestion)
 │   │   ├── tenancy.py           # Organization, Branch, Device
-│   │   ├── cloud_projection.py  # CloudSaleFact, CloudProductSnapshot, etc.
+│   │   ├── cloud_projection.py  # Cloud facts/snapshots incl. sale, stock, reconciliation, heartbeat
 │   │   ├── ai_report.py         # AIWeeklyManagerReport, delivery settings
 │   │   ├── stock_adjustment.py  # StockAdjustment, AdjustmentType
 │   │   ├── stock_take.py        # StockTake, StockTakeItem
@@ -75,26 +76,30 @@ backend/
 │   │       ├── suppliers.py     # Supplier CRUD
 │   │       ├── insights.py      # Dead stock, reorder suggestions, profit analysis
 │   │       └── system_ops.py    # Backup, restore drills, diagnostics, audit logs, sync
-│   └── services/                # 17 service modules
+│   └── services/                # 21 service modules
 │       ├── audit_service.py     # Tamper-evident SHA-256 hash chain audit logging
 │       ├── inventory_service.py # FEFO batch queries, stock recalculation, movement records
 │       ├── sync_outbox_service.py # Monotonic sequence + payload hash outbox events
 │       ├── sync_upload_service.py # Upload pending sync events to cloud API
+│       ├── system_heartbeat_service.py # Enqueue local install health telemetry through sync outbox
 │       ├── full_snapshot_sync_service.py # Enqueue one-time catalog/batch snapshots for cloud hydration
 │       ├── cloud_projection_service.py # Project ingested events into reporting tables
+│       ├── cloud_reconciliation_service.py # Cross-check local vs cloud data
 │       ├── cloud_sales_trend_service.py # Cloud revenue comparison + branch anomaly detection
 │       ├── cloud_stock_velocity_service.py # Cloud velocity + days-of-stock calculations
-│       ├── cloud_reconciliation_service.py # Cross-check local vs cloud data
+│       ├── cloud_dead_stock_service.py # Cloud dead-stock and slow-mover detection
 │       ├── notification_service.py # Background expiry/low-stock/dead-stock alerts
 │       ├── scheduler.py         # APScheduler background jobs
 │       ├── ai_manager_service.py # Deterministic + LLM manager assistant
+│       ├── ai_briefing_service.py # Ranked owner briefing findings from deterministic cloud evidence
+│       ├── ai_finding_service.py # Persistent finding upsert/status workflow
 │       ├── ai_llm_provider.py   # OpenAI/Claude/Groq HTTP adapters
 │       ├── ai_provider_policy_service.py # Tenant-level AI provider policy
 │       ├── ai_weekly_report_service.py # Weekly manager report generation
 │       ├── ai_report_delivery_service.py # Email/Telegram delivery with retries
 │       └── ai_insights.py       # Rule-based dead stock, reorder, sales patterns
 ├── alembic/                     # Database migrations (PostgreSQL)
-│   └── env.py                   # ⚠️ KNOWN ISSUE: imports only 10 of 25 models
+│   └── env.py                   # Imports app.models so Alembic sees all mapped models
 ├── Dockerfile
 ├── requirements.txt
 └── .env                         # ⚠️ NOT committed. Contains secrets, DB credentials
@@ -109,6 +114,8 @@ frontend/
 │   ├── main.tsx                 # React root
 │   ├── services/
 │   │   └── api.ts               # Axios API client (singleton, auth interceptor)
+│   ├── config/
+│   │   └── appMode.ts           # frontend local_pos vs cloud_reporting route behavior
 │   ├── stores/
 │   │   ├── authStore.ts         # Zustand auth state (login, logout, loadUser)
 │   │   ├── cartStore.ts         # Zustand POS cart (FEFO-aware, retail/wholesale)
@@ -196,7 +203,7 @@ The original design compared the `Authorization` header against a single `CLOUD_
 The `/admin/*` API endpoints and `ClientsPage.tsx` are vendor-facing (John only, admin role). They live on Render/Vercel and manage the cloud-side tenancy records. The local pharmacy dashboard at `localhost:8080` is for pharmacy staff and has no concept of multi-tenancy. Keeping them separate means pharmacy admins cannot accidentally see or modify other clients' data, and the vendor panel does not depend on any individual pharmacy machine being online.
 
 ### 3.15 Why The Vendor Command Center Must Separate Reachability From Trust
-The cloud side is downstream of the local-first pharmacy installs: local outbox events are uploaded to Render, then projected into cloud read models. A recent `Device.last_seen_at` only proves that a device contacted the cloud; it does not prove that the local database, scheduler, backups, or unsent outbox are healthy. Likewise, missing cloud sales can mean zero business, no connectivity, or delayed upload. The vendor dashboard should therefore show **device reachability**, **sync/data freshness**, and **reconciliation state** as separate signals, and future heartbeat telemetry should carry local diagnostics the cloud cannot infer from business events alone.
+The cloud side is downstream of the local-first pharmacy installs: local outbox events are uploaded to Render, then projected into cloud read models. A recent `Device.last_seen_at` only proves that a device contacted the cloud; it does not prove that the local database, scheduler, backups, or unsent outbox are healthy. Likewise, missing cloud sales can mean zero business, no connectivity, or delayed upload. The vendor dashboard therefore separates **device reachability**, **sync/data freshness**, **reconciliation state**, and now **heartbeat-projected local install health** so cloud views do not overstate trust.
 
 ### 3.16 Why Cloud Reporting Uses Business Time, Not Projection Time
 Cloud reporting facts now distinguish the original local business timestamp from the cloud projection row timestamp. `SALE_CREATED` payloads include `occurred_at`, and `CloudSaleFact` plus sale-created `CloudInventoryMovementFact` rows store it. Business windows in cloud reports, the vendor command center, AI chat, and weekly AI reports use `coalesce(occurred_at, created_at)` so delayed sync does not move Monday sales into Wednesday revenue. `created_at` remains useful as projection/storage time and data freshness must still be judged from sync ingestion/projection metadata.
@@ -212,6 +219,24 @@ Cloud reorder urgency now uses `CloudInventoryMovementFact` rows created from `S
 
 ### 3.19 Why Revenue Trends Compare Equal Business-Time Windows
 Cloud branch anomaly detection uses `CloudSaleFact.occurred_at` through the business-time reporting path, not projection time. `GET /cloud-reports/revenue-comparison` compares the requested current period with the immediately previous equal-length period, then classifies branch changes as `no_sales_current`, `severe_drop`, `drop`, `growth`, `new_sales`, or `stable`. This gives the dashboard and AI manager deterministic branch-drop evidence without asking an LLM to infer trends from raw rows. Operating-hours-aware no-sales alerts remain pending because they need branch opening-hours or expected-trading rules.
+
+### 3.21 Why Installation Heartbeats Use The Sync Outbox
+The cloud vendor dashboard must not treat `Device.last_seen_at` as proof that a pharmacy machine is locally healthy. `SYSTEM_HEARTBEAT` events are written to the local `sync_events` outbox first, then uploaded and projected like any other branch event. This keeps the design offline-safe: diagnostics are captured even while the internet is down, and the cloud later receives app version, database connectivity, scheduler state, outbox backlog, backup/restore status, disk capacity, uptime, and a deterministic readiness status in `CloudDeviceHeartbeatSnapshot`. The command center can now separate cloud reachability from local installation health, while true clock-skew comparison still needs a cloud-side drift rule.
+
+### 3.22 Why AI Provider Selection Is Server-Side
+External AI provider and model selection is a vendor/deployment concern, not a pharmacy customer workflow. The cloud dashboard no longer asks tenant admins to choose OpenAI/Claude/Groq or enter model names. `AIProviderPolicyService.resolve_provider()` now auto-selects an available server-side provider from configured API keys, honoring `AI_MANAGER_PROVIDER` when set to a usable provider and otherwise falling back to the first configured provider. `AIManagerLLMProvider` supplies provider-specific default models when `AI_MANAGER_MODEL` is blank. If no external API key is configured, the deterministic offline-safe assistant remains the fallback.
+
+### 3.23 Why The Deployed Cloud App Has A Reporting-Only Mode
+The same codebase can run locally at a pharmacy and in the cloud, but those deployments must not behave the same way. `APP_MODE=local_pos` keeps all POS/product/sales workflows available for the on-site installation. `APP_MODE=cloud_reporting` makes the backend reject unsafe local operational writes to POS, product, stock, notification, and system endpoints, while `VITE_APP_MODE=cloud_reporting` hides and redirects local operational pages in the browser. This prevents the deployed cloud portal from becoming a confusing second POS database with sales/products that differ from the synced local source of truth.
+
+### 3.24 Why Five Specific KPIs Were Chosen For The CEO Dashboard
+Revenue, stock counts, and risk flags already existed on the cloud dashboard. The five additional KPIs added in Phase 8.3 were chosen because each one changes a decision that cannot be correctly made from the existing data alone: (1) **Gross Profit** — revenue without margin is misleading for branch prioritisation and pricing; (2) **Total Stock Value** — managers need to know how much capital is locked in inventory before making purchasing decisions; (3) **Dead Stock Value (GHS)** — unit counts understate urgency; GHS value of idle stock makes the cost of inaction concrete; (4) **Average Transaction Value** — a falling basket average signals cashier, pricing, or stockout problems that require different responses from a falling sales count; (5) **Stockout Revenue Estimate** — converts a red "out of stock" badge into an estimated GHS loss figure, making the cost of delayed restocking explicit.
+
+### 3.25 Why Cloud "Items Sold" Means Units Sold
+The local dashboard's `total_items_sold` is `sum(SaleItem.quantity)`, not the number of sale lines. Cloud reporting now follows the same definition: `CloudSaleFact.item_count` stores the total units sold from the sale payload (`sum(item.quantity)`). This avoids a common mismatch where one sale line with quantity 11 looked like 1 item in cloud reporting but 11 items locally. New and reprojected facts use the corrected semantics automatically. Older already-projected cloud rows can be corrected through the audited admin reconciliation repair type `repair_sale_item_counts`, which recalculates `CloudSaleFact.item_count` from the accepted `SALE_CREATED` sync payload without mutating local POS data.
+
+### 3.26 Why Data Health Is Separate From CEO KPIs
+The cloud dashboard is for owner/CEO decision-making first. Business cards should answer revenue, margin, sales volume, basket size, stock value, and stock risk. Technical signals such as projection failures, duplicate deliveries, reconciliation issues, sync timestamps, and inventory movement row counts are still important, but they are grouped under a dedicated **Data Health** section so they explain whether the numbers can be trusted without competing with the business KPIs.
 
 ---
 
@@ -253,10 +278,14 @@ Cloud branch anomaly detection uses `CloudSaleFact.occurred_at` through the busi
 | P2-09  | 🟠 High    | Mandatory repository memory docs are ignored/untracked by git | `.gitignore` | ✅ Fixed |
 | AI-P0-01 | 🔴 Critical | Cloud AI/reporting used projection time for sales, omitted sale movement facts, and sale payloads lacked reliable batch IDs | `sales.py`, `cloud_projection.py`, `cloud_projection_service.py`, cloud report/AI services | ✅ Fixed |
 | AI-P0-02 | 🟠 High | No one-time full catalog/batch/current-stock snapshot sync for existing installs when cloud sync is enabled after data already exists | Sync/outbox tooling | ✅ Fixed |
-| AI-P1-01 | 🟠 High | Cloud AI is still mostly a summarizer; persistent findings, recommendations, and briefing workflow remain unbuilt | AI/cloud dashboard services | ✅ Fixed (persistent findings + decision workflow implemented) |
+| AI-P1-01 | 🟠 High | Cloud AI previously lacked persistent findings, recommendations, and briefing workflow | AI/cloud dashboard services | ✅ Fixed (persistent findings + decision workflow implemented) |
 | AI-P1-02 | 🟠 High | Cloud AI/dashboard lacked product velocity and days-of-stock remaining despite having projected sale movement facts | `cloud_stock_velocity_service.py`, `cloud_reports.py`, `ai_manager_service.py`, cloud dashboard | ✅ Fixed |
 | AI-P1-03 | 🟠 High | Cloud AI/dashboard lacked week-over-week revenue comparison and branch drop detection | `cloud_sales_trend_service.py`, `cloud_reports.py`, `ai_manager_service.py`, cloud dashboard | ✅ Fixed |
 | AI-P1-04 | 🟠 High | Cloud AI/dashboard lacked dead-stock and slow-mover detection; weekly reports had no trust warning prefix; branch names missing from weekly report branch_sales | `cloud_dead_stock_service.py`, `cloud_reports.py`, `ai_manager_service.py`, `ai_weekly_report_service.py`, cloud dashboard | ✅ Fixed |
+| OPS-P1-01 | 🟠 High | Vendor command center inferred install health from cloud contact only; no synced local heartbeat for DB, scheduler, outbox, backup, restore, disk, or uptime | `system_heartbeat_service.py`, `cloud_projection.py`, `admin_tenancy.py`, `ClientsPage.tsx` | ✅ Fixed / partial clock-skew follow-up |
+| CLOUD-P1-01 | 🟠 High | Refund/void path needed recheck before adding cloud financial anomaly work | `sales.py`, `cloud_projection_service.py` | ✅ Rechecked — `SALE_REVERSED` already syncs and projects stock movement; dedicated financial reversal facts remain pending |
+| CLOUD-P0-02 | 🔴 Critical | Deployed cloud app could look and behave like a separate POS against the cloud DB, creating cloud-only products/sales that confuse the synced reporting source of truth | `main.py`, `app_mode.py`, `App.tsx`, `Sidebar.tsx` | ✅ Fixed with explicit `local_pos` / `cloud_reporting` app modes |
+| CLOUD-P0-03 | 🔴 Critical | Cloud "items sold" counted sale lines while local dashboard counted units sold, creating mismatched KPIs for the same synced sales | `cloud_projection_service.py`, `cloud_reconciliation_service.py`, `cloud_reports.py`, `CloudDashboardPage.tsx` | ✅ Fixed; existing projected rows can be repaired with `repair_sale_item_counts` |
 
 ---
 
@@ -269,9 +298,11 @@ Cloud branch anomaly detection uses `CloudSaleFact.occurred_at` through the busi
 | `DATABASE_URL`              | PostgreSQL connection string — **do NOT set this in client .env files**. config.py builds it from POSTGRES_* vars. A hardcoded DATABASE_URL overrides POSTGRES_PASSWORD silently and causes authentication failures. | ⚠️ Leave unset |
 | `SECRET_KEY`                | JWT signing key (min 32 chars)       | ✅       |
 | `POSTGRES_DB/USER/PASSWORD` | Docker PostgreSQL setup              | ✅       |
+| `APP_MODE`                  | `local_pos` for pharmacy installations; `cloud_reporting` for deployed reporting portal write guards | ✅       |
 | `ENVIRONMENT`               | `production` or `development`        | ✅       |
 | `ENABLE_BACKGROUND_SCHEDULER` | Enable APScheduler cron jobs       | ⚠️       |
 | `CLOUD_SYNC_ENABLED`        | Enable sync upload to cloud          | Optional |
+| `CLOUD_HEARTBEAT_INTERVAL_MINUTES` | Local installation telemetry enqueue interval when cloud sync is enabled | Optional |
 | `AI_MANAGER_PROVIDER`       | `deterministic`, `openai`, `claude`, `groq` | Optional |
 | `OPENAI_API_KEY`            | OpenAI API key (if AI enabled)       | Optional |
 | `ANTHROPIC_API_KEY`         | Anthropic API key (if AI enabled)    | Optional |
@@ -367,6 +398,11 @@ docker compose up -d          # PostgreSQL + Backend + Frontend
 docker compose --profile admin-tools up -d  # Include pgAdmin
 ```
 
+### Deployment Modes
+
+- Local pharmacy installs use `APP_MODE=local_pos` and `VITE_APP_MODE=local_pos`; POS, products, sales, stock, suppliers, notifications, and local settings remain available.
+- Cloud deployments use `APP_MODE=cloud_reporting` and `VITE_APP_MODE=cloud_reporting`; frontend navigation is limited to cloud reporting/admin routes and backend unsafe local operational writes return `403`.
+
 ### Migrations
 ```bash
 cd backend
@@ -382,6 +418,16 @@ alembic revision --autogenerate -m "description"  # Generate migration
 
 | Date | Who | What | Why | Files |
 | ---- | --- | ---- | --- | ----- |
+| 2026-05-19 17:17 UTC | Dex | Added audited cloud sale item-count repair and fixed heartbeat DB probing | Existing cloud sale facts created before the units-sold correction could remain wrong even though new projections are fixed. Added `repair_sale_item_counts` so admins can recalculate projected `CloudSaleFact.item_count` values from accepted `SALE_CREATED` payloads, with audit logging and regression coverage. Also changed heartbeat telemetry to probe the active DB session so local health reflects the database the app is actually using. Verified with the full backend suite: 128 passed. | `backend/app/services/cloud_reconciliation_service.py`, `backend/app/services/system_heartbeat_service.py`, `backend/tests/test_cloud_reports.py`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 15:40 UTC | Dex | Regrouped cloud dashboard into business KPIs and a dedicated Data Health section | User clarified that CEO metrics should be clean decision-making KPIs and technical sync/reconciliation cards were noise. Removed Projection Failures, Reconciliation, and Net Stock Movement from the top KPI grid; added a Business Performance section for revenue, profit, sales count, units sold, average transaction, stock value, stock risk, expiry value risk, and stockout daily loss; added a Data Health section grouping trust state, sync freshness, projection counts, reconciliation status, and inventory movement details. Verified CloudDashboard tests and frontend production build. | `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/pages/CloudDashboardPage.test.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 14:56 UTC | Dex | Rechecked Claude's CEO KPI work, fixed cloud item-count semantics, and added KPI trust badges | Claude had implemented the Phase 8.3 CEO KPI endpoints/cards, but cloud sales projection still counted item lines while the local dashboard counted units sold. Updated projection to store unit totals, made existing facts correct on re-projection, fixed the profit endpoint's event-type filter, added backend tests for profit/stock value/stockout impact and item-count semantics, completed Phase 8.2 trust badges on KPI cards, and fixed frontend mocks. Verified with 53 focused backend tests, CloudDashboard frontend tests, frontend production build, `py_compile`, and `git diff --check`. | `backend/app/services/cloud_projection_service.py`, `backend/app/api/endpoints/cloud_reports.py`, `backend/tests/test_cloud_projection_service.py`, `backend/tests/test_cloud_reports.py`, `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/pages/CloudDashboardPage.test.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 14:30 UTC | Claude Sonnet 4.6 | Built all 5 CEO decision KPIs on the cloud dashboard (Phase 8.3) | Gross Profit card (`GET /cloud-reports/profit-summary`), Total Stock Value card (`GET /cloud-reports/stock-value`), Average Transaction Value (added to `CloudSalesSummary`), Dead Stock Value in GHS (added to `CloudDeadStockService` and table), Stockout Revenue Estimate card + table (`GET /cloud-reports/stockout-impact`). Frontend build clean, all backend modules compile. | `backend/app/schemas/cloud_reports.py`, `backend/app/api/endpoints/cloud_reports.py`, `backend/app/services/cloud_dead_stock_service.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 14:00 UTC | Claude Sonnet 4.6 | Identified and documented 5 missing CEO KPIs that affect decision-making (Phase 8.3) | Gross Profit, Total Stock Value, Dead Stock Value in GHS, Average Transaction Value, and Stockout Revenue Estimate were each validated against available cloud projection data before being added to the checklist. Each changes a decision that cannot be correctly made from existing data alone. | `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 13:00 UTC | Claude Sonnet 4.6 | Added AI chat conversation memory and role gate (Phase 7.4 P3) | Manager said AI chat must remember the conversation within a session, support "New Chat" to start fresh, show past sessions in a history list, and be restricted to manager/admin roles only (not cashier/sales staff). Added `AIChatSession` and `AIChatMessage` models, Alembic migration `m3b4c5d6e7f8`, `GET /ai-manager/sessions`, `GET /ai-manager/sessions/{id}/messages` endpoints, session-aware `POST /ai-manager/chat` (auto-creates session, loads last 20 messages as LLM context, persists messages). LLM provider now passes conversation history in messages array for OpenAI/Groq/Claude. Chat endpoint role-gated to `require_manager` (CASHIER excluded). Frontend adds session state, session history panel, "New Chat" button, and hides the chat card from non-manager users. 121 backend tests pass, frontend builds clean. | `backend/app/models/ai_report.py`, `backend/app/models/__init__.py`, `backend/alembic/versions/m3b4c5d6e7f8_add_ai_chat_sessions.py`, `backend/app/schemas/ai_manager.py`, `backend/app/services/ai_llm_provider.py`, `backend/app/services/ai_manager_service.py`, `backend/app/api/endpoints/ai_manager.py`, `backend/tests/test_ai_manager.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `MEMORY.md` |
+| 2026-05-19 11:33 UTC | Dex | Added explicit local POS vs cloud reporting deployment modes | The cloud deployment was exposing local POS/product/sales workflows backed by the cloud DB, which could confuse users and create cloud-only operational data separate from local sync projections. Added backend `APP_MODE` validation, a cloud-reporting unsafe-write guard, frontend `VITE_APP_MODE` routing/sidebar cleanup, cloud/default login routing, deployment docs/env defaults, Phase 8 checklist items, and regression coverage for the write guard. Verified with `python3 -m pytest backend/tests/test_app_mode.py`, `python3 -m py_compile backend/app/core/app_mode.py backend/app/core/config.py backend/app/main.py`, `npm run build`, and `git diff --check`. | `backend/app/core/app_mode.py`, `backend/app/core/config.py`, `backend/app/main.py`, `backend/tests/test_app_mode.py`, `backend/.env.example`, `backend/.env.client.example`, `docker-compose.yml`, `frontend/Dockerfile`, `frontend/src/config/appMode.ts`, `frontend/src/App.tsx`, `frontend/src/components/layout/Sidebar.tsx`, `frontend/src/pages/LoginPage.tsx`, `frontend/src/vite-env.d.ts`, `render.yaml`, `docs/operations/render-vercel-deployment.md`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
+| 2026-05-19 10:37 UTC | Dex | Fully removed frontend AI provider policy UI and API client code | User requested the customer-facing model/provider configuration be cleaned out, not merely hidden. Removed unused dashboard types, state, load/save handlers, panel component, API client methods, and test mocks/assertions. Backend compatibility endpoints remain, but the frontend no longer exposes or calls them. Verified focused CloudDashboard tests and frontend production build. | `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/pages/CloudDashboardPage.test.tsx`, `frontend/src/services/api.ts`, `MEMORY.md` |
+| 2026-05-19 10:30 UTC | Dex | Removed customer-facing AI model/provider configuration and made provider resolution server-side | Pharmacy customers should not need to understand provider/model choices. External AI now works from server-side API key configuration with provider-specific default models, while the dashboard no longer renders or loads the External AI Policy panel. Deterministic AI remains the fallback when no API key is configured. Verified focused AI manager tests, focused CloudDashboard tests, and frontend production build. | `backend/app/services/ai_llm_provider.py`, `backend/app/services/ai_provider_policy_service.py`, `backend/.env.example`, `backend/tests/test_ai_manager.py`, `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/pages/CloudDashboardPage.test.tsx`, `MEMORY.md` |
+| 2026-05-19 09:50 UTC | Dex | Added synced local installation heartbeat telemetry and command-center readiness | The next cloud command-center gap was distinguishing a device that merely contacted the cloud from a pharmacy machine that is locally healthy. Added `SYSTEM_HEARTBEAT` outbox events, heartbeat payload builder, scheduler job, manual enqueue endpoint, cloud heartbeat snapshot projection, command-center readiness counts/attention items, Clients page install-health display, checklist corrections, and regression tests. Rechecked refund/void: `SALE_REVERSED` already syncs and projects stock restoration; dedicated financial reversal facts remain future work. Verified with 122 backend tests passing and a frontend production build. | `backend/app/core/config.py`, `backend/app/models/sync_event.py`, `backend/app/models/cloud_projection.py`, `backend/app/models/__init__.py`, `backend/alembic/versions/l2a3b4c5d6e7_add_cloud_device_heartbeat_snapshots.py`, `backend/app/services/system_heartbeat_service.py`, `backend/app/services/scheduler.py`, `backend/app/services/cloud_projection_service.py`, `backend/app/api/endpoints/system_ops.py`, `backend/app/api/endpoints/admin_tenancy.py`, `backend/app/schemas/system.py`, `backend/app/schemas/tenancy.py`, `backend/.env.example`, `backend/.env.client.example`, `backend/tests/test_system_heartbeat_service.py`, `backend/tests/test_cloud_projection_service.py`, `backend/tests/test_admin_command_center.py`, `frontend/src/pages/ClientsPage.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-05-19 03:10 UTC | Claude Sonnet 4.6 | Implemented persistent AI findings workbench (Phase 7.3 P2) | Owner briefing was ephemeral; CEO needs to save, track, acknowledge, snooze, dismiss, and resolve findings across sessions. Added AIFinding model + migration, AIFindingService with fingerprint-based upsert (no-duplicate, no-clobber-dismissed), GET /ai-manager/findings, PATCH /ai-manager/findings/{id}, persist=true param on briefing endpoint, Saved Findings panel with action buttons in CloudDashboardPage. 3 new finding tests; 119 backend tests pass. | `backend/app/models/ai_report.py`, `backend/app/models/__init__.py`, `backend/alembic/versions/k1f2a3b4c5d6_add_ai_findings.py`, `backend/app/services/ai_finding_service.py`, `backend/app/schemas/ai_manager.py`, `backend/app/api/endpoints/ai_manager.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `backend/tests/test_ai_manager.py`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-05-19 UTC | Claude Sonnet 4.6 | Completed P0 trust gates + P1 dead-stock detection + P3 branch names | Weekly report executive summary now prepends DATA TRUST WARNING when sync/reconciliation is degraded. Added `GET /cloud-reports/dead-stock` (dead stock = zero sales; slow mover = <0.3 units/day). Integrated into AI manager tool_results and compose_answer. Added Dead Stock & Slow Movers card to cloud dashboard. Added branch names to weekly report branch_sales. Updated AI manager branch response to use branch name. 113 backend tests pass. | `backend/app/services/cloud_dead_stock_service.py` (new), `backend/app/services/ai_weekly_report_service.py`, `backend/app/services/ai_manager_service.py`, `backend/app/api/endpoints/cloud_reports.py`, `backend/app/schemas/cloud_reports.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `backend/tests/test_cloud_reports.py`, `backend/tests/test_ai_manager.py`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-05-19 02:10 UTC | Dex | Added cloud revenue comparison and branch trend anomaly detection | The next AI/dashboard hardening step was equal-window revenue comparison and branch drop detection. Added `GET /cloud-reports/revenue-comparison`, deterministic sales trend service, AI manager trend answers/tool data, cloud dashboard Branch Trend list, checklist updates, and regression tests. Verified backend AI/cloud report tests and the focused CloudDashboard frontend test. | `backend/app/api/endpoints/cloud_reports.py`, `backend/app/schemas/cloud_reports.py`, `backend/app/services/cloud_sales_trend_service.py`, `backend/app/services/ai_manager_service.py`, `backend/tests/test_cloud_reports.py`, `backend/tests/test_ai_manager.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/pages/CloudDashboardPage.test.tsx`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |

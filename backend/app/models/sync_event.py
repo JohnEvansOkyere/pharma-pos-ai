@@ -41,6 +41,7 @@ class SyncEventType(str, Enum):
     SUPPLIER_CREATED = "supplier_created"
     SUPPLIER_UPDATED = "supplier_updated"
     SUPPLIER_DELETED = "supplier_deleted"
+    SYSTEM_HEARTBEAT = "system_heartbeat"
 
 
 class SyncEventCounter(Base):

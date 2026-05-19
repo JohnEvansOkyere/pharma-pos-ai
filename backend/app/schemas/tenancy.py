@@ -184,6 +184,11 @@ class CommandCenterTotals(BaseModel):
     never_synced_devices: int = 0
     branches_without_devices: int = 0
     branches_without_healthy_device: int = 0
+    heartbeat_ready_devices: int = 0
+    heartbeat_warning_devices: int = 0
+    heartbeat_critical_devices: int = 0
+    heartbeat_stale_devices: int = 0
+    heartbeat_missing_devices: int = 0
 
 
 class CommandCenterDataTrust(BaseModel):
@@ -244,12 +249,19 @@ class CommandCenterOrganizationSummary(BaseModel):
     trailing_7d_revenue: float = 0
     projection_failed_count: int = 0
     sync_status: str = "unknown"
+    readiness_status: str = "unknown"
+    last_heartbeat_at: Optional[datetime] = None
+    heartbeat_critical_count: int = 0
+    heartbeat_warning_count: int = 0
+    heartbeat_stale_count: int = 0
+    heartbeat_missing_count: int = 0
 
 
 class AdminCommandCenterResponse(BaseModel):
     generated_at: datetime
     totals: CommandCenterTotals
     data_trust: CommandCenterDataTrust
+    last_heartbeat_at: Optional[datetime] = None
     money: CommandCenterMoneyPulse
     stock_risk: CommandCenterStockRisk
     attention: List[CommandCenterAttentionItem] = []
