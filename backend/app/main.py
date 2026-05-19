@@ -1,7 +1,6 @@
 """
 Main FastAPI application entry point.
 """
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -19,29 +18,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _run_migrations() -> None:
-    from alembic.config import Config
-    from alembic import command
-    alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
-
-
-def _on_migration_done(task: asyncio.Task) -> None:
-    try:
-        task.result()
-        logger.info("Database migrations complete")
-    except Exception as exc:
-        logger.error(f"Database migration failed: {exc}", exc_info=True)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup — migrations are run by render_start.sh before uvicorn launches.
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    # Run migrations in background so uvicorn can bind the port immediately.
-    # Render requires the port to be bound before the health check fires.
-    task = asyncio.create_task(asyncio.to_thread(_run_migrations))
-    task.add_done_callback(_on_migration_done)
     scheduler.start()
 
     yield
