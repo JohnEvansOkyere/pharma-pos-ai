@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -10,12 +10,15 @@ from app.api.dependencies.auth import require_organization_access
 from app.api.endpoints.cloud_reports import (
     acknowledge_cloud_reconciliation_issue,
     get_cloud_branch_sales,
+    get_cloud_dead_stock,
     get_cloud_expiry_risk,
     get_cloud_inventory_movement_summary,
     get_cloud_low_stock,
     get_cloud_reconciliation,
+    get_cloud_revenue_comparison,
     get_cloud_sales_summary,
     get_cloud_stock_risk_summary,
+    get_cloud_stock_velocity,
     get_cloud_sync_health,
     repair_cloud_reconciliation_issue,
     resolve_cloud_reconciliation_issue,
@@ -188,6 +191,48 @@ def test_cloud_sales_summary_filters_by_organization_and_branch(db_session):
     assert len(branch_rows) == 1
     assert branch_rows[0].branch_id == branch_a.id
     assert branch_rows[0].sales_count == 2
+
+
+def test_cloud_sales_summary_filters_by_sale_occurred_at(db_session):
+    org, branch, device = _tenant(db_session, name="Occurred Org", branch_code="OCC")
+    event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="cccccccc-cccc-cccc-cccc-ccccccccccc1",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    db_session.add(
+        CloudSaleFact(
+            source_event_id=event.id,
+            organization_id=org.id,
+            branch_id=branch.id,
+            source_device_id=device.id,
+            local_sale_id=1,
+            invoice_number="OCC-1",
+            total_amount=Decimal("25.00"),
+            payment_method="cash",
+            item_count=2,
+            payload={},
+            occurred_at=datetime(2026, 5, 18, 10, 0, tzinfo=timezone.utc),
+            created_at=datetime(2026, 5, 19, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id)
+
+    summary = get_cloud_sales_summary(
+        organization_id=org.id,
+        start_at=datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc),
+        end_at=datetime(2026, 5, 18, 23, 59, tzinfo=timezone.utc),
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert summary.sales_count == 1
+    assert summary.total_revenue == 25.0
 
 
 def test_cloud_inventory_movement_summary(db_session):
@@ -478,6 +523,345 @@ def test_cloud_stock_risk_reports_are_tenant_and_branch_scoped(db_session):
     assert low_stock[0].status == "out_of_stock"
     assert {item.batch_id for item in expiry_risk} == {10, 11}
     assert any(item.status == "expired" for item in expiry_risk)
+
+
+def test_cloud_stock_velocity_uses_sale_movements_for_days_remaining(db_session):
+    org, branch, device = _tenant(db_session, name="Velocity Org", branch_code="VEL")
+    sale_event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="77777777-7777-7777-7777-777777777771",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    adjustment_event = _ingested(
+        db_session,
+        org,
+        branch,
+        device,
+        event_id="77777777-7777-7777-7777-777777777772",
+        sequence=2,
+        event_type=SyncEventType.STOCK_ADJUSTED,
+    )
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=1,
+                name="Fast Moving Tabs",
+                sku="FAST-1",
+                total_stock=5,
+                low_stock_threshold=10,
+                reorder_level=20,
+                is_active=True,
+                last_source_event_id=sale_event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch.id,
+                local_product_id=2,
+                name="No Movement Syrup",
+                sku="ZERO-1",
+                total_stock=20,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=sale_event.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=1,
+                local_batch_id=10,
+                quantity_delta=-8,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=2,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=1,
+                local_batch_id=11,
+                quantity_delta=-6,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=2),
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=adjustment_event.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch.id,
+                source_device_id=device.id,
+                event_type=SyncEventType.STOCK_ADJUSTED.value,
+                local_product_id=1,
+                local_batch_id=10,
+                quantity_delta=-100,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id)
+
+    velocity = get_cloud_stock_velocity(
+        organization_id=org.id,
+        period_days=7,
+        limit=10,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert [item.product_id for item in velocity] == [1, 2]
+    fast = velocity[0]
+    zero = velocity[1]
+    assert fast.units_sold == 14
+    assert fast.movement_count == 2
+    assert fast.average_daily_units_sold == 2.0
+    assert fast.days_of_stock_remaining == 2.5
+    assert fast.estimated_stockout_date is not None
+    assert fast.units_needed == 15
+    assert fast.status == "critical"
+    assert fast.confidence == "low"
+    assert zero.units_sold == 0
+    assert zero.days_of_stock_remaining is None
+    assert zero.status == "no_velocity"
+    assert zero.confidence == "none"
+
+
+def test_cloud_stock_velocity_respects_branch_scope_and_can_hide_stable_items(db_session):
+    org = Organization(name="Velocity Scoped Org")
+    db_session.add(org)
+    db_session.flush()
+    branch_a = Branch(organization_id=org.id, name="Velocity A", code="VA")
+    branch_b = Branch(organization_id=org.id, name="Velocity B", code="VB")
+    db_session.add_all([branch_a, branch_b])
+    db_session.flush()
+    device_a = Device(organization_id=org.id, branch_id=branch_a.id, device_uid="velocity-a", name="Velocity A", status=DeviceStatus.ACTIVE)
+    device_b = Device(organization_id=org.id, branch_id=branch_b.id, device_uid="velocity-b", name="Velocity B", status=DeviceStatus.ACTIVE)
+    db_session.add_all([device_a, device_b])
+    db_session.commit()
+    event_a = _ingested(db_session, org, branch_a, device_a, event_id="77777777-7777-7777-7777-777777777773", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    event_b = _ingested(db_session, org, branch_b, device_b, event_id="77777777-7777-7777-7777-777777777774", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch_a.id,
+                local_product_id=1,
+                name="Branch A Stable",
+                sku="VA-STABLE",
+                total_stock=200,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=event_a.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=org.id,
+                branch_id=branch_b.id,
+                local_product_id=1,
+                name="Branch B Critical",
+                sku="VB-CRIT",
+                total_stock=1,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=event_b.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=event_a.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=1,
+                local_batch_id=1,
+                quantity_delta=-10,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=event_b.id,
+                line_number=1,
+                organization_id=org.id,
+                branch_id=branch_b.id,
+                source_device_id=device_b.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=1,
+                local_batch_id=1,
+                quantity_delta=-10,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch_b.id, username="velocity-branch-user")
+
+    velocity = get_cloud_stock_velocity(
+        organization_id=org.id,
+        period_days=10,
+        limit=10,
+        include_stable=False,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert len(velocity) == 1
+    assert velocity[0].branch_id == branch_b.id
+    assert velocity[0].product_name == "Branch B Critical"
+    assert velocity[0].status == "critical"
+
+
+def test_cloud_revenue_comparison_flags_branch_drops_and_growth(db_session):
+    org = Organization(name="Trend Org")
+    db_session.add(org)
+    db_session.flush()
+    branch_drop = Branch(organization_id=org.id, name="Drop Branch", code="DROP")
+    branch_growth = Branch(organization_id=org.id, name="Growth Branch", code="GROW")
+    db_session.add_all([branch_drop, branch_growth])
+    db_session.flush()
+    device_drop = Device(organization_id=org.id, branch_id=branch_drop.id, device_uid="trend-drop", name="Trend Drop", status=DeviceStatus.ACTIVE)
+    device_growth = Device(organization_id=org.id, branch_id=branch_growth.id, device_uid="trend-growth", name="Trend Growth", status=DeviceStatus.ACTIVE)
+    db_session.add_all([device_drop, device_growth])
+    db_session.commit()
+    drop_previous_event = _ingested(db_session, org, branch_drop, device_drop, event_id="12121212-1212-1212-1212-121212121211", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    drop_current_event = _ingested(db_session, org, branch_drop, device_drop, event_id="12121212-1212-1212-1212-121212121212", sequence=2, event_type=SyncEventType.SALE_CREATED)
+    growth_previous_event = _ingested(db_session, org, branch_growth, device_growth, event_id="12121212-1212-1212-1212-121212121213", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    growth_current_event = _ingested(db_session, org, branch_growth, device_growth, event_id="12121212-1212-1212-1212-121212121214", sequence=2, event_type=SyncEventType.SALE_CREATED)
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            CloudSaleFact(
+                source_event_id=drop_previous_event.id,
+                organization_id=org.id,
+                branch_id=branch_drop.id,
+                source_device_id=device_drop.id,
+                local_sale_id=1,
+                invoice_number="DROP-PREV",
+                total_amount=Decimal("100.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=now - timedelta(days=10),
+            ),
+            CloudSaleFact(
+                source_event_id=drop_current_event.id,
+                organization_id=org.id,
+                branch_id=branch_drop.id,
+                source_device_id=device_drop.id,
+                local_sale_id=2,
+                invoice_number="DROP-CUR",
+                total_amount=Decimal("10.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=now - timedelta(days=2),
+            ),
+            CloudSaleFact(
+                source_event_id=growth_previous_event.id,
+                organization_id=org.id,
+                branch_id=branch_growth.id,
+                source_device_id=device_growth.id,
+                local_sale_id=1,
+                invoice_number="GROW-PREV",
+                total_amount=Decimal("20.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=now - timedelta(days=10),
+            ),
+            CloudSaleFact(
+                source_event_id=growth_current_event.id,
+                organization_id=org.id,
+                branch_id=branch_growth.id,
+                source_device_id=device_growth.id,
+                local_sale_id=2,
+                invoice_number="GROW-CUR",
+                total_amount=Decimal("80.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=now - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id)
+
+    comparison = get_cloud_revenue_comparison(
+        organization_id=org.id,
+        period_days=7,
+        limit=10,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert comparison.current_revenue == 90.0
+    assert comparison.previous_revenue == 120.0
+    assert comparison.revenue_change == -30.0
+    assert comparison.revenue_change_percent == -25.0
+    assert comparison.anomaly_count == 1
+    assert comparison.branches[0].branch_id == branch_drop.id
+    assert comparison.branches[0].status == "severe_drop"
+    growth = next(item for item in comparison.branches if item.branch_id == branch_growth.id)
+    assert growth.status == "growth"
+    assert growth.revenue_change_percent == 300.0
+
+
+def test_cloud_revenue_comparison_respects_branch_scope(db_session):
+    org, branch, device = _tenant(db_session, name="Trend Scoped Org", branch_code="TS")
+    event = _ingested(db_session, org, branch, device, event_id="13131313-1313-1313-1313-131313131313", sequence=1, event_type=SyncEventType.SALE_CREATED)
+    now = datetime.now(timezone.utc)
+    db_session.add(
+        CloudSaleFact(
+            source_event_id=event.id,
+            organization_id=org.id,
+            branch_id=branch.id,
+            source_device_id=device.id,
+            local_sale_id=1,
+            invoice_number="TS-1",
+            total_amount=Decimal("50.00"),
+            payment_method="cash",
+            item_count=1,
+            payload={},
+            occurred_at=now - timedelta(days=1),
+        )
+    )
+    db_session.commit()
+    report_user = _report_user(db_session, org.id, branch_id=branch.id, username="trend-branch-user")
+
+    comparison = get_cloud_revenue_comparison(
+        organization_id=org.id,
+        period_days=7,
+        limit=10,
+        db=db_session,
+        current_user=report_user,
+    )
+
+    assert comparison.branch_id == branch.id
+    assert comparison.branch_count == 1
+    assert comparison.branches[0].branch_id == branch.id
+    assert comparison.branches[0].status == "new_sales"
 
 
 def test_cloud_reconciliation_flags_projection_and_snapshot_inconsistencies(db_session):
@@ -808,4 +1192,139 @@ def test_admin_can_retry_failed_projection_repair(db_session):
     assert result.repaired == 1
     assert event.projected_at is not None
     assert event.projection_error is None
-    assert product.name == "Projection Repair Tabs"
+
+
+def test_cloud_dead_stock_identifies_products_with_no_sales(db_session):
+    org, branch, device = _tenant(db_session, name="Dead Stock Org", branch_code="DSO")
+    user = _report_user(db_session, org.id, username="dead-stock-user")
+    sale_event = _ingested(
+        db_session, org, branch, device,
+        event_id="dd000001-0000-0000-0000-000000000001",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    now = datetime.now(timezone.utc)
+    # Product 1: has stock but no sale movements → dead stock.
+    # Product 2: has stock and a recent sale movement → should NOT appear.
+    db_session.add_all([
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=branch.id, local_product_id=101,
+            name="Stagnant Drops", sku="STAG-1", total_stock=50, low_stock_threshold=5,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=branch.id, local_product_id=102,
+            name="Active Tabs", sku="ACT-2", total_stock=30, low_stock_threshold=5,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+        CloudInventoryMovementFact(
+            source_event_id=sale_event.id, line_number=1,
+            organization_id=org.id, branch_id=branch.id, source_device_id=device.id,
+            local_product_id=102, quantity_delta=-10,
+            event_type=SyncEventType.SALE_CREATED.value, payload={},
+            occurred_at=now - timedelta(days=1),
+        ),
+    ])
+    db_session.commit()
+
+    result = get_cloud_dead_stock(
+        organization_id=org.id, branch_id=None, period_days=30, limit=50,
+        db=db_session, current_user=user,
+    )
+
+    product_names = [item.product_name for item in result]
+    assert "Stagnant Drops" in product_names, "Product with no sales must be flagged"
+    assert "Active Tabs" not in product_names, "Product with recent sales must not be flagged"
+    stagnant = next(item for item in result if item.product_name == "Stagnant Drops")
+    assert stagnant.status == "dead_stock"
+    assert stagnant.units_sold_in_period == 0
+    assert stagnant.branch_name == branch.name
+
+
+def test_cloud_dead_stock_slow_mover_below_threshold(db_session):
+    org, branch, device = _tenant(db_session, name="Slow Mover Org", branch_code="SMO")
+    user = _report_user(db_session, org.id, username="slow-mover-user")
+    sale_event = _ingested(
+        db_session, org, branch, device,
+        event_id="dd000002-0000-0000-0000-000000000002",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    now = datetime.now(timezone.utc)
+    # Product 1: 1 unit sold over 30 days → avg 0.033/day → slow_mover.
+    # Product 2: 20 units sold over 30 days → avg 0.67/day → above threshold → excluded.
+    db_session.add_all([
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=branch.id, local_product_id=201,
+            name="Slow Ointment", sku="SLOW-1", total_stock=100, low_stock_threshold=5,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=branch.id, local_product_id=202,
+            name="Fast Capsule", sku="FAST-2", total_stock=50, low_stock_threshold=5,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+        CloudInventoryMovementFact(
+            source_event_id=sale_event.id, line_number=1,
+            organization_id=org.id, branch_id=branch.id, source_device_id=device.id,
+            local_product_id=201, quantity_delta=-1,
+            event_type=SyncEventType.SALE_CREATED.value, payload={},
+            occurred_at=now - timedelta(days=5),
+        ),
+        CloudInventoryMovementFact(
+            source_event_id=sale_event.id, line_number=2,
+            organization_id=org.id, branch_id=branch.id, source_device_id=device.id,
+            local_product_id=202, quantity_delta=-20,
+            event_type=SyncEventType.SALE_CREATED.value, payload={},
+            occurred_at=now - timedelta(days=5),
+        ),
+    ])
+    db_session.commit()
+
+    result = get_cloud_dead_stock(
+        organization_id=org.id, branch_id=None, period_days=30, limit=50,
+        db=db_session, current_user=user,
+    )
+
+    product_names = [item.product_name for item in result]
+    assert "Slow Ointment" in product_names, "Slow mover must be flagged"
+    assert "Fast Capsule" not in product_names, "Fast mover must not be flagged"
+    slow = next(item for item in result if item.product_name == "Slow Ointment")
+    assert slow.status == "slow_mover"
+    assert slow.units_sold_in_period == 1
+
+
+def test_cloud_dead_stock_respects_branch_scope(db_session):
+    org, branch, device = _tenant(db_session, name="Dead Scope Org", branch_code="DSB")
+    other_branch = Branch(organization_id=org.id, name="Other Branch", code="OTH")
+    db_session.add(other_branch)
+    db_session.flush()
+    user = _report_user(db_session, org.id, username="dead-scope-user")
+    sale_event = _ingested(
+        db_session, org, branch, device,
+        event_id="dd000003-0000-0000-0000-000000000003",
+        sequence=1,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    db_session.add_all([
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=branch.id, local_product_id=301,
+            name="Branch 1 Dead", sku="B1D-1", total_stock=10, low_stock_threshold=2,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+        CloudProductSnapshot(
+            organization_id=org.id, branch_id=other_branch.id, local_product_id=302,
+            name="Branch 2 Dead", sku="B2D-2", total_stock=10, low_stock_threshold=2,
+            is_active=True, last_source_event_id=sale_event.id, payload={},
+        ),
+    ])
+    db_session.commit()
+
+    result = get_cloud_dead_stock(
+        organization_id=org.id, branch_id=branch.id, period_days=30, limit=50,
+        db=db_session, current_user=user,
+    )
+
+    product_names = [item.product_name for item in result]
+    assert "Branch 1 Dead" in product_names
+    assert "Branch 2 Dead" not in product_names, "Other branch items must be excluded when branch_id is scoped"

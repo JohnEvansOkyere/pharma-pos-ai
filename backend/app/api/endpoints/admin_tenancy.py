@@ -170,22 +170,24 @@ def _start_of_utc_day(value: date) -> datetime:
 
 
 def _sales_window(db: Session, start_at: datetime, end_at: Optional[datetime] = None):
+    sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
     query = db.query(
         func.count(CloudSaleFact.id).label("sales_count"),
         func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("revenue"),
-    ).filter(CloudSaleFact.created_at >= start_at)
+    ).filter(sale_time >= start_at)
     if end_at is not None:
-        query = query.filter(CloudSaleFact.created_at < end_at)
+        query = query.filter(sale_time < end_at)
     return query.one()
 
 
 def _sales_revenue_by_org(db: Session, start_at: datetime, end_at: Optional[datetime] = None) -> Dict[int, float]:
+    sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
     query = db.query(
         CloudSaleFact.organization_id,
         func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("revenue"),
-    ).filter(CloudSaleFact.created_at >= start_at)
+    ).filter(sale_time >= start_at)
     if end_at is not None:
-        query = query.filter(CloudSaleFact.created_at < end_at)
+        query = query.filter(sale_time < end_at)
     rows = query.group_by(CloudSaleFact.organization_id).all()
     return {int(row.organization_id): _money(row.revenue) for row in rows}
 

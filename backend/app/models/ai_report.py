@@ -1,7 +1,7 @@
 """
-Persisted AI-generated manager reports.
+Persisted AI-generated manager reports and findings.
 """
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -87,6 +87,45 @@ class AIWeeklyReportDeliverySetting(Base):
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class AIFinding(Base):
+    """
+    Persistent CEO workbench finding.
+
+    Upserted from the on-demand briefing service and tracked through a simple
+    status workflow: open → acknowledged / snoozed → resolved / dismissed.
+    Fingerprint ensures at most one active row per (org, scope, finding type).
+    """
+
+    __tablename__ = "ai_findings"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "fingerprint", name="uq_ai_findings_org_fingerprint"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
+    type = Column(String(50), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, index=True)
+    title = Column(String(300), nullable=False)
+    summary = Column(Text, nullable=False)
+    affected_count = Column(Integer, nullable=False, default=0)
+    action_hint = Column(Text, nullable=False, default="")
+    # fingerprint = "<branch_id or 0>:<type>" — unique per org scope
+    fingerprint = Column(String(120), nullable=False, index=True)
+    evidence = Column(JSON, nullable=False, default=dict)
+    data_trust_status = Column(String(20), nullable=False, default="ok")
+    confidence = Column(Float, nullable=False, default=1.0)
+    # status: open | acknowledged | snoozed | dismissed | resolved
+    status = Column(String(20), nullable=False, default="open", index=True)
+    due_date = Column(Date, nullable=True, index=True)
+    snoozed_until = Column(DateTime(timezone=True), nullable=True, index=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

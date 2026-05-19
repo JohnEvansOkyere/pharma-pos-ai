@@ -194,7 +194,53 @@ def test_create_sale_records_pending_sync_event(
     assert sync_event.payload["sale_id"] == sale.id
     assert sync_event.payload["invoice_number"] == sale.invoice_number
     assert sync_event.payload["items"][0]["quantity"] == 2
+    assert sync_event.payload["items"][0]["batch_id"] is not None
+    assert sync_event.payload["occurred_at"] is not None
     assert len(sync_event.payload_hash) == 64
+
+
+def test_create_sale_sync_payload_preserves_split_batch_ids(
+    db_session,
+    cashier_user,
+    category,
+    product_factory,
+    batch_factory,
+):
+    product = product_factory(category.id, name="Split Batch Product", sku="SPLIT-SALE-001")
+    early_batch = batch_factory(
+        product.id,
+        batch_number="SPLIT-B1",
+        quantity=2,
+        expiry_offset_days=60,
+    )
+    late_batch = batch_factory(
+        product.id,
+        batch_number="SPLIT-B2",
+        quantity=3,
+        expiry_offset_days=180,
+    )
+
+    sale = create_sale(
+        SaleCreate(
+            items=[SaleItemCreate(product_id=product.id, quantity=4, unit_price=3.50, discount_amount=0.00)],
+            discount_amount=0.00,
+            tax_amount=0.00,
+            amount_paid=14.00,
+        ),
+        db=db_session,
+        current_user=cashier_user,
+    )
+
+    sync_event = db_session.query(SyncEvent).filter(
+        SyncEvent.event_type == SyncEventType.SALE_CREATED,
+        SyncEvent.aggregate_id == sale.id,
+    ).one()
+
+    payload_items = sync_event.payload["items"]
+    assert [(item["batch_id"], item["quantity"]) for item in payload_items] == [
+        (early_batch.id, 2),
+        (late_batch.id, 2),
+    ]
 
 
 def test_create_sale_rolls_back_stock_and_ledger_when_audit_fails(

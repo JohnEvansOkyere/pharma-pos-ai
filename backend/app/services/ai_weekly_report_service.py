@@ -19,7 +19,7 @@ from app.models.cloud_projection import (
     CloudSaleFact,
 )
 from app.models.sync_ingestion import IngestedSyncEvent
-from app.models.tenancy import Organization
+from app.models.tenancy import Branch, Organization
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.ai_manager_service import AIManagerService
@@ -274,14 +274,15 @@ class AIWeeklyReportService:
         start: datetime,
         end: datetime,
     ) -> Dict[str, Any]:
+        sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
         query = db.query(
             func.count(CloudSaleFact.id).label("sales_count"),
             func.coalesce(func.sum(CloudSaleFact.total_amount), 0).label("total_revenue"),
             func.coalesce(func.sum(CloudSaleFact.item_count), 0).label("total_items"),
         ).filter(
             CloudSaleFact.organization_id == organization_id,
-            CloudSaleFact.created_at >= start,
-            CloudSaleFact.created_at <= end,
+            sale_time >= start,
+            sale_time <= end,
         )
         if branch_id is not None:
             query = query.filter(CloudSaleFact.branch_id == branch_id)
@@ -302,6 +303,7 @@ class AIWeeklyReportService:
         start: datetime,
         end: datetime,
     ) -> List[Dict[str, Any]]:
+        sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
         query = db.query(
             CloudSaleFact.branch_id,
             func.count(CloudSaleFact.id).label("sales_count"),
@@ -309,15 +311,23 @@ class AIWeeklyReportService:
             func.coalesce(func.sum(CloudSaleFact.item_count), 0).label("total_items"),
         ).filter(
             CloudSaleFact.organization_id == organization_id,
-            CloudSaleFact.created_at >= start,
-            CloudSaleFact.created_at <= end,
+            sale_time >= start,
+            sale_time <= end,
         )
         if branch_id is not None:
             query = query.filter(CloudSaleFact.branch_id == branch_id)
         rows = query.group_by(CloudSaleFact.branch_id).order_by(func.sum(CloudSaleFact.total_amount).desc()).all()
+
+        branch_ids = [row.branch_id for row in rows]
+        branch_names: Dict[int, str] = {}
+        if branch_ids:
+            branches = db.query(Branch.id, Branch.name).filter(Branch.id.in_(branch_ids)).all()
+            branch_names = {b.id: b.name for b in branches}
+
         return [
             {
                 "branch_id": row.branch_id,
+                "branch_name": branch_names.get(row.branch_id, f"Branch {row.branch_id}"),
                 "sales_count": int(row.sales_count or 0),
                 "total_revenue": float(row.total_revenue or Decimal("0")),
                 "total_items": int(row.total_items or 0),
@@ -335,6 +345,10 @@ class AIWeeklyReportService:
         start: datetime,
         end: datetime,
     ) -> Dict[str, Any]:
+        movement_time = func.coalesce(
+            CloudInventoryMovementFact.occurred_at,
+            CloudInventoryMovementFact.created_at,
+        )
         positive_quantity = func.coalesce(
             func.sum(case((CloudInventoryMovementFact.quantity_delta > 0, CloudInventoryMovementFact.quantity_delta), else_=0)),
             0,
@@ -350,8 +364,8 @@ class AIWeeklyReportService:
             func.coalesce(func.sum(CloudInventoryMovementFact.quantity_delta), 0).label("net_quantity_delta"),
         ).filter(
             CloudInventoryMovementFact.organization_id == organization_id,
-            CloudInventoryMovementFact.created_at >= start,
-            CloudInventoryMovementFact.created_at <= end,
+            movement_time >= start,
+            movement_time <= end,
         )
         if branch_id is not None:
             query = query.filter(CloudInventoryMovementFact.branch_id == branch_id)
@@ -557,7 +571,10 @@ class AIWeeklyReportService:
         sync = sections["sync_and_data_quality"]
         reconciliation = sync["reconciliation"]
         scope = f"organization {organization_id}" if branch_id is None else f"organization {organization_id}, branch {branch_id}"
-        return (
+
+        trust_prefix = AIWeeklyReportService._build_trust_prefix(sync, reconciliation)
+
+        return trust_prefix + (
             f"Weekly manager report for {scope}. Performance window: "
             f"{performance_start.date().isoformat()} to {performance_end.date().isoformat()}. "
             f"Projected sales were GHS {performance['total_revenue']:.2f} from {performance['sales_count']} sale(s), "
@@ -629,3 +646,39 @@ class AIWeeklyReportService:
             f"Weekly Manager Report: {performance_start.date().isoformat()} to "
             f"{performance_end.date().isoformat()} | Action Plan {action_start.isoformat()} to {action_end.isoformat()}"
         )
+
+    @staticmethod
+    def _build_trust_prefix(
+        sync: Dict[str, Any],
+        reconciliation: Dict[str, Any],
+    ) -> str:
+        """Return a DATA TRUST WARNING prefix when data quality is degraded, else empty string."""
+        warnings: List[str] = []
+        if sync.get("projection_failed_count", 0) > 0:
+            warnings.append(
+                f"{sync['projection_failed_count']} projection failure(s) — some events are not reflected in this report"
+            )
+        last_received = sync.get("last_received_at")
+        if last_received:
+            try:
+                last_ts = datetime.fromisoformat(last_received)
+                if last_ts.tzinfo is None:
+                    last_ts = last_ts.replace(tzinfo=timezone.utc)
+                stale_hours = (datetime.now(timezone.utc) - last_ts).total_seconds() / 3600
+                if stale_hours > 48:
+                    warnings.append(
+                        f"No sync events received in {stale_hours:.0f} hour(s) — figures may be outdated"
+                    )
+            except (ValueError, TypeError):
+                pass
+        elif sync.get("events_received_in_period", 0) == 0 and sync.get("ingested_event_count", 0) == 0:
+            warnings.append("No sync events have ever been received — report is based on empty cloud data")
+        critical = reconciliation.get("critical_issue_count", 0)
+        high = reconciliation.get("high_issue_count", 0)
+        if critical or high:
+            warnings.append(
+                f"Cloud reconciliation has {critical} critical and {high} high severity issue(s) — verify before making purchasing decisions"
+            )
+        if not warnings:
+            return ""
+        return "DATA TRUST WARNING: " + "; ".join(warnings) + "\n\n"

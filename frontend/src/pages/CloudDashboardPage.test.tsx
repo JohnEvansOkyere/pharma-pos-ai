@@ -10,6 +10,8 @@ const apiMocks = vi.hoisted(() => ({
   getCloudStockRiskSummary: vi.fn(),
   getCloudLowStock: vi.fn(),
   getCloudExpiryRisk: vi.fn(),
+  getCloudStockVelocity: vi.fn(),
+  getCloudRevenueComparison: vi.fn(),
   getCloudReconciliation: vi.fn(),
   acknowledgeCloudReconciliationIssue: vi.fn(),
   resolveCloudReconciliationIssue: vi.fn(),
@@ -144,6 +146,53 @@ describe('CloudDashboardPage', () => {
         status: 'near_expiry',
       },
     ])
+    apiMocks.getCloudStockVelocity.mockResolvedValue([
+      {
+        branch_id: 1,
+        product_id: 8,
+        product_name: 'Fast Moving Tablets',
+        sku: 'FAST-8',
+        total_stock: 4,
+        low_stock_threshold: 10,
+        reorder_level: 20,
+        units_sold: 14,
+        movement_count: 2,
+        average_daily_units_sold: 2,
+        days_of_stock_remaining: 2,
+        estimated_stockout_date: '2026-05-05',
+        units_needed: 16,
+        confidence: 'low',
+        status: 'critical',
+      },
+    ])
+    apiMocks.getCloudRevenueComparison.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      period_days: 30,
+      current_sales_count: 12,
+      current_revenue: 580.5,
+      previous_sales_count: 18,
+      previous_revenue: 900,
+      sales_count_change: -6,
+      revenue_change: -319.5,
+      revenue_change_percent: -35.5,
+      branch_count: 2,
+      anomaly_count: 1,
+      branches: [
+        {
+          branch_id: 1,
+          branch_name: 'North Branch',
+          current_sales_count: 3,
+          current_revenue: 100,
+          previous_sales_count: 10,
+          previous_revenue: 500,
+          sales_count_change: -7,
+          revenue_change: -400,
+          revenue_change_percent: -80,
+          status: 'severe_drop',
+        },
+      ],
+    })
     apiMocks.getCloudReconciliation.mockResolvedValue({
       organization_id: 22,
       branch_id: null,
@@ -435,6 +484,10 @@ describe('CloudDashboardPage', () => {
     expect(await screen.findByText(/ingested events/i)).toBeInTheDocument()
     expect(await screen.findByText(/low stock tablets/i)).toBeInTheDocument()
     expect(await screen.findByText(/expiry risk syrup/i)).toBeInTheDocument()
+    expect(await screen.findByText(/fast moving tablets/i)).toBeInTheDocument()
+    expect(await screen.findByText(/2 days/i)).toBeInTheDocument()
+    expect(await screen.findByText(/north branch/i)).toBeInTheDocument()
+    expect(await screen.findByText(/-80%/i)).toBeInTheDocument()
     expect((await screen.findAllByText(/reconciliation/i)).length).toBeGreaterThan(0)
     expect(await screen.findByText(/negative product stock/i)).toBeInTheDocument()
     expect(await screen.findByText(/weekly ai reports/i)).toBeInTheDocument()
@@ -461,6 +514,12 @@ describe('CloudDashboardPage', () => {
       )
       expect(apiMocks.getCloudExpiryRisk).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, days: 90, limit: 10 })
+      )
+      expect(apiMocks.getCloudStockVelocity).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, period_days: 30, limit: 10, include_stable: false })
+      )
+      expect(apiMocks.getCloudRevenueComparison).toHaveBeenCalledWith(
+        expect.objectContaining({ organization_id: 22, period_days: 30, limit: 10 })
       )
       expect(apiMocks.getCloudReconciliation).toHaveBeenCalledWith(
         expect.objectContaining({ organization_id: 22, limit: 10 })

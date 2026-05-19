@@ -23,6 +23,7 @@ class CloudSaleFact(Base):
     payment_method = Column(String(50))
     item_count = Column(Integer, nullable=False, default=0)
     payload = Column(JSON, nullable=False)
+    occurred_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -47,6 +48,7 @@ class CloudInventoryMovementFact(Base):
     stock_after = Column(Integer, nullable=True)
     reason = Column(String(300))
     payload = Column(JSON, nullable=False)
+    occurred_at = Column(DateTime(timezone=True), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 

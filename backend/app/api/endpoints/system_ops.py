@@ -26,6 +26,7 @@ from app.schemas.system import (
     AuditLogListResponse,
     BackupStatus,
     BackupTriggerResult,
+    CloudSnapshotEnqueueResult,
     RestoreDrillCreate,
     RestoreDrillRecord,
     RestoreDrillStatus,
@@ -34,6 +35,7 @@ from app.schemas.system import (
     SystemDiagnostics,
 )
 from app.services.audit_service import AuditService
+from app.services.full_snapshot_sync_service import FullSnapshotSyncService
 from app.services.scheduler import scheduler
 from app.services.sync_upload_service import SyncUploadService
 
@@ -320,6 +322,40 @@ def trigger_sync_now(
         return SyncRunResult(**SyncUploadService.upload_pending(db))
     finally:
         db.close()
+
+
+@router.post("/enqueue-cloud-snapshot", response_model=CloudSnapshotEnqueueResult)
+def enqueue_cloud_snapshot(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trigger_backup),
+):
+    """Enqueue a full product and batch snapshot for first-time cloud hydration."""
+    try:
+        result = FullSnapshotSyncService.enqueue_catalog_snapshot(
+            db,
+            include_inactive=include_inactive,
+        )
+        AuditService.log(
+            db,
+            action="enqueue_cloud_snapshot",
+            user_id=current_user.id,
+            organization_id=current_user.organization_id,
+            branch_id=current_user.branch_id,
+            entity_type="sync_event",
+            entity_id=None,
+            description="Enqueued full catalog snapshot for cloud sync",
+            extra_data=result,
+        )
+        db.commit()
+        return CloudSnapshotEnqueueResult(
+            success=True,
+            message="Full catalog snapshot enqueued for cloud sync",
+            **result,
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.get("/audit-logs", response_model=AuditLogListResponse)

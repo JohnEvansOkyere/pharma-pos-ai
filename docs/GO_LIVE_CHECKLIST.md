@@ -1,7 +1,7 @@
 # Go-Live Checklist — 5-Shop Pharmacy Rollout
 
-> **Last updated:** 2026-05-18 21:37 UTC
-> **Source audits:** `docs/audits/2026-05-15-production-readiness-audit.md`, `docs/audits/2026-05-15-production-readiness-audit-v2.md`
+> **Last updated:** 2026-05-19 03:10 UTC
+> **Source audits:** `docs/audits/2026-05-15-production-readiness-audit.md`, `docs/audits/2026-05-15-production-readiness-audit-v2.md`, `docs/ai/AI_CLOUD_DASHBOARD_ASSESSMENT_2026-05-18.md`, `docs/ai/2026-05-19-cloud-ai-dashboard-audit.md`
 > **Status:** 🟡 **CONDITIONALLY READY** — All critical code defects resolved. Operational verification and credential rotation remain.
 
 ---
@@ -497,6 +497,102 @@
 - [ ] **Requires richer queries over existing ingested events:** per-device event counts, per-device projection counts, stale ranking, sequence-gap detection, unprojected backlog, and fleet-level alert rollups. *(2026-05-18 21:26 UTC)*
 - [ ] **Requires new synced telemetry events from local installs:** backup age, restore-drill age, local outbox backlog, app version, scheduler status, disk space, uptime, and clock skew. *(2026-05-18 21:26 UTC)*
 - [ ] **Requires additional projected business facts before it can be trusted in the cloud:** refunds, voids, richer payment mix, and any revenue/anomaly metric that depends on those event types. *(2026-05-18 21:26 UTC)*
+
+---
+
+## Phase 7: Cloud AI Dashboard Audit Follow-Up
+
+> **Goal:** make cloud dashboard and AI advice trustworthy before expanding into CEO-grade recommendations. The two final AI audit reports agree that the sync/projection foundation is useful, but cloud facts needed P0 correctness fixes before the AI layer could safely calculate velocity, days-of-stock, trends, or proactive findings.
+
+### 7.1 P0 Data Correctness — Required Before Strong AI Advice
+
+- [x] Consolidate the two final cloud AI dashboard assessments into this go-live checklist. ✅ *(2026-05-19 01:44 UTC)*
+  - Sources: `docs/ai/AI_CLOUD_DASHBOARD_ASSESSMENT_2026-05-18.md`, `docs/ai/2026-05-19-cloud-ai-dashboard-audit.md`
+
+- [x] Preserve original sale business time in cloud reporting facts. ✅ *(2026-05-19 01:44 UTC)*
+  - Fixed: `SALE_CREATED` sync payload now includes `occurred_at` from the local sale timestamp.
+  - Fixed: `CloudSaleFact.occurred_at` added with migration.
+  - Fixed: cloud sales reports, vendor command center revenue windows, AI chat sales summaries, and AI weekly report sales windows use `coalesce(occurred_at, created_at)`.
+  - Files: `backend/app/api/endpoints/sales.py`, `backend/app/models/cloud_projection.py`, `backend/app/api/endpoints/cloud_reports.py`, `backend/app/api/endpoints/admin_tenancy.py`, `backend/app/services/ai_manager_service.py`, `backend/app/services/ai_weekly_report_service.py`, `backend/alembic/versions/j0e1f2a3b4c5_add_occurred_at_to_cloud_sale_facts.py`
+
+- [x] Project normal sales into cloud inventory movement facts. ✅ *(2026-05-19 01:44 UTC)*
+  - Fixed: each `SALE_CREATED` item now creates a negative `CloudInventoryMovementFact` row.
+  - Fixed: sale movement facts carry `occurred_at` so delayed sync does not distort movement windows when the timestamp is available.
+  - Files: `backend/app/models/cloud_projection.py`, `backend/app/services/cloud_projection_service.py`, `backend/alembic/versions/j0e1f2a3b4c5_add_occurred_at_to_cloud_sale_facts.py`
+
+- [x] Preserve local batch identity in sale sync payloads and projection. ✅ *(2026-05-19 01:44 UTC)*
+  - Fixed: sale payload item lines include `batch_id` captured at FEFO allocation time.
+  - Fixed: cloud projection prefers `batch_id` and falls back to `batch_number` only for older payloads.
+  - Fixed: split-batch FEFO sales preserve the correct batch ID per sale line.
+  - Files: `backend/app/api/endpoints/sales.py`, `backend/app/services/cloud_projection_service.py`
+
+- [x] Add a one-time full snapshot sync for existing installs. ✅ *(2026-05-19 01:52 UTC)*
+  - Fixed: `POST /system/enqueue-cloud-snapshot` enqueues active product and batch snapshot events into the local outbox for first-time cloud hydration.
+  - Fixed: snapshot generation recalculates sellable stock, preserves quarantined batch state, adds snapshot metadata, and writes an audit log.
+  - Files: `backend/app/api/endpoints/system_ops.py`, `backend/app/schemas/system.py`, `backend/app/services/full_snapshot_sync_service.py`, `backend/tests/test_full_snapshot_sync_service.py`
+
+- [x] Add AI trust gates before strong business advice. ✅ *(2026-05-19 02:10 UTC — chat; 2026-05-19 UTC — weekly reports)*
+  - Done: AI manager chat prepends a DATA TRUST WARNING when projection failures, stale/no sync, or critical/high reconciliation issues exist.
+  - Done: Weekly report executive summary prepends a DATA TRUST WARNING when projection failures, staleness > 48h, or critical/high reconciliation issues exist.
+  - Pending: cloud dashboard briefing/cards still need per-metric freshness badges embedded in the card UI.
+
+### 7.2 P1 Intelligence Foundation
+
+- [x] Add cloud product velocity calculation from projected sale movement facts. ✅ *(2026-05-19 02:02 UTC)*
+  - Fixed: `GET /cloud-reports/stock-velocity` calculates units sold, movement count, average daily units sold, confidence, and urgency status from `SALE_CREATED` movement facts only.
+  - Fixed: AI manager tool results now include `stock_velocity`, and the cloud dashboard shows a Stock Velocity priority list.
+  - Files: `backend/app/api/endpoints/cloud_reports.py`, `backend/app/schemas/cloud_reports.py`, `backend/app/services/cloud_stock_velocity_service.py`, `backend/app/services/ai_manager_service.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`
+- [x] Add days-of-stock remaining using current stock divided by sales velocity. ✅ *(2026-05-19 02:02 UTC)*
+  - Fixed: velocity rows return `days_of_stock_remaining`, `estimated_stockout_date`, `units_needed`, and urgency statuses including `out_of_stock`, `critical`, `urgent`, `reorder_soon`, `stable`, and `no_velocity`.
+  - Files: `backend/app/services/cloud_stock_velocity_service.py`, `backend/tests/test_cloud_reports.py`, `backend/tests/test_ai_manager.py`, `frontend/src/pages/CloudDashboardPage.test.tsx`
+- [x] Add deterministic week-over-week revenue comparison. ✅ *(2026-05-19 02:10 UTC)*
+  - Fixed: `GET /cloud-reports/revenue-comparison` compares the current period with the immediately previous equal period using cloud sale business time.
+  - Fixed: AI manager tool results now include `revenue_comparison`, and the cloud dashboard shows a Branch Trend anomaly list.
+  - Files: `backend/app/api/endpoints/cloud_reports.py`, `backend/app/schemas/cloud_reports.py`, `backend/app/services/cloud_sales_trend_service.py`, `backend/app/services/ai_manager_service.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`
+- [x] Add cloud dead-stock and slow-mover detection. ✅ *(2026-05-19 UTC)*
+  - Fixed: `GET /cloud-reports/dead-stock` returns products with positive stock and zero or very low sales velocity from projected movement facts.
+  - Fixed: products with zero sales are flagged as `dead_stock`; products below 0.3 units/day average are `slow_mover`.
+  - Fixed: AI manager recognises dead-stock/slow-mover questions and includes a summary with the top dead-stock item.
+  - Fixed: Cloud dashboard shows a "Dead Stock &amp; Slow Movers" RiskTable alongside Stock Velocity.
+  - Files: `backend/app/services/cloud_dead_stock_service.py`, `backend/app/schemas/cloud_reports.py`, `backend/app/api/endpoints/cloud_reports.py`, `backend/app/services/ai_manager_service.py`, `frontend/src/services/api.ts`, `frontend/src/pages/CloudDashboardPage.tsx`, `backend/tests/test_cloud_reports.py`
+- [/] Add branch anomaly detection for sales drops and no-sales-during-hours alerts. *(updated 2026-05-19 02:10 UTC)*
+  - Done: branch revenue comparison flags `no_sales_current`, `severe_drop`, `drop`, `growth`, `new_sales`, and `stable`.
+  - Pending: operating-hours-aware no-sales alerts still need branch opening-hours configuration or heartbeat/business-hours rules.
+
+### 7.3 P2 Persistent CEO Workbench
+
+- [x] Add persistent `ai_findings` records with severity, evidence, freshness, reconciliation state, confidence, status, and due date. ✅ *(2026-05-19 03:00 UTC)*
+  - Done: `AIFinding` model added to `ai_report.py` with fields: type, severity, title, summary, affected_count, action_hint, fingerprint, evidence (JSON), data_trust_status, confidence, status, due_date, snoozed_until, resolved_at, last_seen_at.
+  - Done: Alembic migration `k1f2a3b4c5d6_add_ai_findings.py` creates the `ai_findings` table.
+  - Done: `AIFindingService` with `upsert_findings()`, `get_findings()`, `update_status()`. Upsert refreshes open/snoozed findings without clobbering dismissed/resolved decisions. Fingerprint = `"<branch_id|0>:<type>"` ensures one row per scope per finding type.
+  - Done: `GET /ai-manager/briefing?persist=true` upserts all findings (up to 50) and then returns the top N capped view.
+  - Done: `GET /ai-manager/findings` lists active (open/acknowledged/snoozed) findings; supports `status=` filter.
+  - Done: `PATCH /ai-manager/findings/{finding_id}` updates status with auto-expire of snoozed findings on read.
+  - Files: `backend/app/models/ai_report.py`, `backend/app/models/__init__.py`, `backend/alembic/versions/k1f2a3b4c5d6_add_ai_findings.py`, `backend/app/services/ai_finding_service.py`, `backend/app/schemas/ai_manager.py`, `backend/app/api/endpoints/ai_manager.py`
+- [x] Add `ai_recommendations` / decision workflow for accept, snooze, dismiss, and resolve. ✅ *(2026-05-19 03:00 UTC)*
+  - Done: `PATCH /ai-manager/findings/{finding_id}` supports status transitions: open → acknowledged, snoozed, dismissed, resolved. Snoozed findings auto-reopen when `snoozed_until` is past. Resolved findings record `resolved_at` and `resolved_by_user_id`.
+  - Done: Cloud dashboard Owner Briefing panel has "Save Findings" button (calls persist=true briefing). Saved Findings panel below shows active findings with Acknowledge / Snooze 7d / Resolve / Dismiss action buttons.
+  - Done: 3 new finding tests (persist saves, status update, no-duplicate upsert). 119 backend tests pass.
+  - Files: `backend/app/api/endpoints/ai_manager.py`, `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/services/api.ts`, `backend/tests/test_ai_manager.py`
+- [x] Add `GET /ai-manager/briefing` for the top ranked actions. ✅ *(2026-05-19 UTC)*
+  - Done: On-demand endpoint generates ranked findings from all existing deterministic services (stock velocity, dead stock, expiry risk, revenue comparison, sync health, reconciliation). No DB persistence — always fresh.
+  - Finding types: `stock_out`, `critical_velocity`, `urgent_velocity`, `expired_batch`, `near_expiry`, `dead_stock`, `slow_mover`, `revenue_drop`, `revenue_decline`, `sync_failure`, `stale_sync`, `no_sync`, `reconciliation`.
+  - Each finding: type, severity, title, summary, affected_count, action_hint.
+  - Response includes `data_trust_status` (ok/degraded/unsafe) and `data_trust_notes`.
+  - Files: `backend/app/services/ai_briefing_service.py` (new), `backend/app/schemas/ai_manager.py`, `backend/app/api/endpoints/ai_manager.py`, `backend/tests/test_ai_manager.py`
+- [x] Show the briefing at the top of the cloud dashboard. ✅ *(2026-05-19 UTC)*
+  - Done: Owner Briefing panel renders at top of cloud dashboard when there are findings. Color-coded by severity (critical = red, high = amber, medium = gray). Shows data trust status badge, notes, and action hints.
+  - Files: `frontend/src/pages/CloudDashboardPage.tsx`, `frontend/src/services/api.ts`
+
+### 7.4 P3 Conversation Quality
+
+- [ ] Persist AI chat sessions and messages. *(2026-05-19 01:44 UTC)*
+- [ ] Pass recent conversation history to the LLM for follow-up continuity. *(2026-05-19 01:44 UTC)*
+- [ ] Replace raw dict prompts with structured evidence packs and output schema. *(2026-05-19 01:44 UTC)*
+- [x] Add branch and product names beside branch/product metrics returned to the AI and dashboard. ✅ *(2026-05-19 UTC)*
+  - Done: AI manager `_branch_sales` returns `branch_name`. Stock velocity service returns `branch_name`. Weekly report `_branch_sales` returns `branch_name`. AI manager branch keyword response uses branch name.
+  - Done: Dead stock and velocity dashboard RiskTables show branch name from API.
+  - Pending: branch names in raw LLM evidence pack (raw dict prompt still uses IDs in some tool_results). Product names are already present in velocity/dead_stock/stock_risk items.
 
 ---
 

@@ -18,6 +18,7 @@ from app.models.sync_event import SyncEvent, SyncEventCounter
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.ai_report import (
     AIExternalProviderSetting,
+    AIFinding,
     AIWeeklyManagerReport,
     AIWeeklyReportDelivery,
     AIWeeklyReportDeliverySetting,
@@ -52,6 +53,7 @@ __all__ = [
     "SyncEvent",
     "SyncEventCounter",
     "IngestedSyncEvent",
+    "AIFinding",
     "AIWeeklyManagerReport",
     "AIWeeklyReportDelivery",
     "AIWeeklyReportDeliverySetting",

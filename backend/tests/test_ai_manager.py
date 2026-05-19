@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.endpoints.ai_manager import chat_with_ai_manager, get_external_provider_settings, upsert_external_provider_settings
+from app.api.endpoints.ai_manager import (
+    chat_with_ai_manager,
+    get_ai_manager_briefing,
+    get_external_provider_settings,
+    list_ai_findings,
+    update_ai_finding_status,
+    upsert_external_provider_settings,
+)
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
@@ -21,7 +28,7 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
-from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIManagerChatRequest
+from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIFindingStatusUpdate, AIManagerChatRequest
 
 
 def _tenant(db_session):
@@ -192,7 +199,10 @@ def test_ai_manager_answers_from_cloud_reporting_data(db_session):
     )
 
     assert response.refused is False
-    assert f"branch {branch_b.id}" in response.answer.lower()
+    answer_lower = response.answer.lower()
+    assert (
+        f"branch {branch_b.id}" in answer_lower or branch_b.name.lower() in answer_lower
+    ), "Answer must reference the top branch by id or name"
     assert response.data_scope.organization_id == organization.id
     assert response.data_scope.branch_id is None
     assert response.tool_results["sales_summary"]["total_revenue"] == 400.0
@@ -272,6 +282,15 @@ def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session
         sequence=3,
         event_type=SyncEventType.PRODUCT_CREATED,
     )
+    sale_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="55555555-5555-5555-5555-555555555555",
+        sequence=4,
+        event_type=SyncEventType.SALE_CREATED,
+    )
     db_session.add_all(
         [
             CloudProductSnapshot(
@@ -299,6 +318,20 @@ def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session
                 last_source_event_id=event.id,
                 payload={},
             ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=1,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=50,
+                local_batch_id=60,
+                quantity_delta=-6,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
         ]
     )
     db_session.commit()
@@ -316,6 +349,138 @@ def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session
     assert "out-of-stock" in response.answer.lower()
     assert response.tool_results["stock_risk"]["out_of_stock_count"] == 1
     assert response.tool_results["stock_risk"]["near_expiry_batch_count"] == 1
+    assert response.tool_results["stock_velocity"][0]["product_id"] == 50
+    assert response.tool_results["stock_velocity"][0]["units_sold"] == 6
+
+
+def test_ai_manager_answers_velocity_questions_from_sale_movements(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id)
+    event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="66666666-6666-6666-6666-666666666666",
+        sequence=5,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                local_product_id=70,
+                name="Velocity Tabs",
+                sku="VEL",
+                total_stock=4,
+                low_stock_threshold=10,
+                is_active=True,
+                last_source_event_id=event.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=event.id,
+                line_number=1,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=70,
+                local_batch_id=70,
+                quantity_delta=-8,
+                stock_after=None,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Which products should I reorder based on days of stock remaining?",
+            organization_id=organization.id,
+            period_days=4,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.refused is False
+    assert "velocity tabs" in response.answer.lower()
+    assert "2.0 unit(s)/day" in response.answer
+    assert response.tool_results["stock_velocity"][0]["days_of_stock_remaining"] == 2.0
+
+
+def test_ai_manager_answers_trend_questions_from_revenue_comparison(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    manager = _manager(db_session, organization.id)
+    previous_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="77777777-7777-7777-7777-777777777775",
+        sequence=6,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    current_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="77777777-7777-7777-7777-777777777776",
+        sequence=7,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    db_session.add_all(
+        [
+            CloudSaleFact(
+                source_event_id=previous_event.id,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                local_sale_id=1,
+                invoice_number="TREND-PREV",
+                total_amount=Decimal("200.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=10),
+            ),
+            CloudSaleFact(
+                source_event_id=current_event.id,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                local_sale_id=2,
+                invoice_number="TREND-CUR",
+                total_amount=Decimal("50.00"),
+                payment_method="cash",
+                item_count=1,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Compare this week with last week and show branch drops",
+            organization_id=organization.id,
+            period_days=7,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.refused is False
+    assert "highest branch anomaly" in response.answer.lower()
+    assert response.tool_results["revenue_comparison"]["anomaly_count"] == 1
+    assert response.tool_results["revenue_comparison"]["branches"][0]["status"] == "severe_drop"
 
 
 def test_ai_manager_answers_reconciliation_questions_from_cloud_checks(db_session):
@@ -458,3 +623,210 @@ def test_branch_manager_cannot_change_tenant_external_ai_settings(db_session):
         )
 
     assert exc.value.status_code == 403
+
+
+def test_ai_manager_briefing_returns_findings_for_critical_stock(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id, username="briefing-manager")
+
+    event_a = db_session.query(IngestedSyncEvent).filter_by(
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+    ).first()
+    db_session.add(
+        CloudProductSnapshot(
+            organization_id=organization.id,
+            branch_id=branch_a.id,
+            local_product_id=999,
+            name="Empty Syrup",
+            sku="EMPTY-1",
+            total_stock=0,
+            low_stock_threshold=5,
+            is_active=True,
+            last_source_event_id=event_a.id,
+            payload={},
+        )
+    )
+    db_session.commit()
+
+    briefing = get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=None,
+        period_days=30,
+        max_findings=5,
+        persist=False,
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert briefing.organization_id == organization.id
+    assert isinstance(briefing.findings, list)
+    assert briefing.data_trust_status in {"ok", "degraded", "unsafe"}
+    finding_types = [f.type for f in briefing.findings]
+    assert "sync_failure" in finding_types, "Projection failure must be flagged in briefing"
+
+
+def test_ai_manager_briefing_respects_branch_scope(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id, username="briefing-branch-manager")
+
+    briefing_all = get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=None,
+        period_days=30,
+        max_findings=5,
+        persist=False,
+        db=db_session,
+        current_user=manager,
+    )
+    briefing_branch_a = get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=branch_a.id,
+        period_days=30,
+        max_findings=5,
+        persist=False,
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert briefing_all.branch_id is None
+    assert briefing_branch_a.branch_id == branch_a.id
+
+
+def test_ai_manager_briefing_empty_data_trust_is_unsafe(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    manager = _manager(db_session, organization.id, username="briefing-empty-manager")
+
+    briefing = get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=None,
+        period_days=30,
+        max_findings=5,
+        persist=False,
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert briefing.organization_id == organization.id
+    assert briefing.data_trust_status in {"unsafe", "degraded"}
+    assert len(briefing.findings) > 0, "No-sync finding must be present when no data exists"
+
+
+def test_ai_findings_persist_saves_and_lists(db_session):
+    """persist=True upserts findings into ai_findings; list endpoint returns them."""
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    manager = _manager(db_session, organization.id, username="findings-persist-manager")
+
+    # Generate briefing with persist=True — no sync data means a no_sync finding
+    get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=None,
+        period_days=30,
+        max_findings=50,
+        persist=True,
+        db=db_session,
+        current_user=manager,
+    )
+
+    findings = list_ai_findings(
+        organization_id=organization.id,
+        branch_id=None,
+        status=None,
+        limit=50,
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert len(findings) > 0, "At least one finding must be persisted when no sync data exists"
+    assert all(f.status == "open" for f in findings)
+    assert all(f.organization_id == organization.id for f in findings)
+
+
+def test_ai_findings_status_update_works(db_session):
+    """Updating a finding status (acknowledge, dismiss, resolve) is reflected immediately."""
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    manager = _manager(db_session, organization.id, username="findings-status-manager")
+
+    get_ai_manager_briefing(
+        organization_id=organization.id,
+        branch_id=None,
+        period_days=30,
+        max_findings=50,
+        persist=True,
+        db=db_session,
+        current_user=manager,
+    )
+
+    findings = list_ai_findings(
+        organization_id=organization.id,
+        branch_id=None,
+        status=None,
+        limit=50,
+        db=db_session,
+        current_user=manager,
+    )
+    assert findings, "Need at least one finding to test status update"
+
+    target_id = findings[0].id
+
+    updated = update_ai_finding_status(
+        finding_id=target_id,
+        payload=AIFindingStatusUpdate(status="acknowledged"),
+        organization_id=organization.id,
+        db=db_session,
+        current_user=manager,
+    )
+    assert updated.id == target_id
+    assert updated.status == "acknowledged"
+
+    # Dismiss it
+    dismissed = update_ai_finding_status(
+        finding_id=target_id,
+        payload=AIFindingStatusUpdate(status="dismissed"),
+        organization_id=organization.id,
+        db=db_session,
+        current_user=manager,
+    )
+    assert dismissed.status == "dismissed"
+
+    # Dismissed finding must not appear in the default (active) list
+    active_findings = list_ai_findings(
+        organization_id=organization.id,
+        branch_id=None,
+        status=None,
+        limit=50,
+        db=db_session,
+        current_user=manager,
+    )
+    assert all(f.id != target_id for f in active_findings), "Dismissed finding must not appear in active list"
+
+
+def test_ai_findings_upsert_does_not_duplicate(db_session):
+    """Running briefing twice with persist=True should not create duplicate rows."""
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    manager = _manager(db_session, organization.id, username="findings-dedup-manager")
+
+    for _ in range(2):
+        get_ai_manager_briefing(
+            organization_id=organization.id,
+            branch_id=None,
+            period_days=30,
+            max_findings=50,
+            persist=True,
+            db=db_session,
+            current_user=manager,
+        )
+
+    findings = list_ai_findings(
+        organization_id=organization.id,
+        branch_id=None,
+        status=None,
+        limit=200,
+        db=db_session,
+        current_user=manager,
+    )
+
+    types = [f.type for f in findings]
+    assert len(types) == len(set(types)), "Each finding type must appear at most once (no duplicates)"

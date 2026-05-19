@@ -345,6 +345,44 @@ class ApiClient {
     return response.data
   }
 
+  async getCloudStockVelocity(params: any) {
+    const response = await this.client.get('/cloud-reports/stock-velocity', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudRevenueComparison(params: any) {
+    const response = await this.client.get('/cloud-reports/revenue-comparison', {
+      params,
+    })
+    return response.data
+  }
+
+  async getCloudDeadStock(params: any) {
+    const response = await this.client.get('/cloud-reports/dead-stock', {
+      params,
+    })
+    return response.data
+  }
+
+  async getAIManagerBriefing(params: any) {
+    const response = await this.client.get('/ai-manager/briefing', {
+      params,
+    })
+    return response.data
+  }
+
+  async getAIFindings(params: { organization_id: number; branch_id?: number | null; status?: string; limit?: number }) {
+    const response = await this.client.get('/ai-manager/findings', { params })
+    return response.data
+  }
+
+  async updateAIFinding(findingId: number, payload: { status: string; snoozed_until?: string | null }, params: { organization_id: number }) {
+    const response = await this.client.patch(`/ai-manager/findings/${findingId}`, payload, { params })
+    return response.data
+  }
+
   async getCloudReconciliation(params: any) {
     const response = await this.client.get('/cloud-reports/reconciliation', {
       params,

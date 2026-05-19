@@ -4,7 +4,7 @@ Sales/POS API endpoints.
 from decimal import Decimal
 from uuid import uuid4
 from typing import List, Optional
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -362,6 +362,7 @@ def create_sale(
                     "product_name": product.name,
                     "dosage_form": product.dosage_form.value if product.dosage_form else None,
                     "strength": product.strength,
+                    "batch_id": batch.id,
                     "batch_number": batch.batch_number,
                     "expiry_date": batch.expiry_date,
                     "quantity": batch_quantity,
@@ -411,6 +412,7 @@ def create_sale(
         change_amount = round_money(amount_paid - total_amount)
 
         # Use the database-assigned sale id to derive a transaction-safe invoice.
+        sale_occurred_at = datetime.now(timezone.utc)
         db_sale = Sale(
             invoice_number=f"PENDING-{uuid4().hex}",
             user_id=current_user.id,
@@ -432,6 +434,7 @@ def create_sale(
             doctor_name=getattr(sale_data, 'doctor_name', None),
             has_prescription=getattr(sale_data, 'has_prescription', False),
             notes=sale_data.notes,
+            created_at=sale_occurred_at,
         )
 
         db.add(db_sale)
@@ -442,9 +445,14 @@ def create_sale(
         touched_products = {}
         movement_records = []
         for item_data in sale_items_data:
-            allocated_batch = item_data.pop("allocated_batch")
-            product = item_data.pop("product")
-            sale_item = SaleItem(sale_id=db_sale.id, **item_data)
+            allocated_batch = item_data["allocated_batch"]
+            product = item_data["product"]
+            sale_item_fields = {
+                key: value
+                for key, value in item_data.items()
+                if key not in {"allocated_batch", "product", "batch_id"}
+            }
+            sale_item = SaleItem(sale_id=db_sale.id, **sale_item_fields)
             db.add(sale_item)
 
             allocated_batch.quantity -= item_data["quantity"]
@@ -452,7 +460,7 @@ def create_sale(
             movement_records.append(
                 {
                     "product": product,
-                    "batch_id": allocated_batch.id,
+                    "batch_id": item_data["batch_id"],
                     "quantity": item_data["quantity"],
                     "reason": f"Sale {db_sale.invoice_number}",
                 }
@@ -487,6 +495,7 @@ def create_sale(
             payload={
                 "sale_id": db_sale.id,
                 "invoice_number": db_sale.invoice_number,
+                "occurred_at": db_sale.created_at.isoformat() if db_sale.created_at else None,
                 "pricing_mode": db_sale.pricing_mode.value,
                 "payment_method": db_sale.payment_method.value,
                 "subtotal": db_sale.subtotal,
@@ -497,6 +506,7 @@ def create_sale(
                 "items": [
                     {
                         "product_id": item["product_id"],
+                        "batch_id": item["batch_id"],
                         "batch_number": item["batch_number"],
                         "expiry_date": item["expiry_date"],
                         "quantity": item["quantity"],

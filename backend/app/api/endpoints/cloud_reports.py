@@ -28,20 +28,30 @@ from app.schemas.cloud_reports import (
     CloudReconciliationRepairRequest,
     CloudReconciliationRepairResponse,
     CloudReconciliationSummary,
+    CloudDeadStockItem,
+    CloudRevenueComparison,
     CloudSalesSummary,
     CloudStockRiskSummary,
+    CloudStockVelocityItem,
     CloudSyncHealth,
 )
+from app.services.cloud_dead_stock_service import CloudDeadStockService
 from app.services.cloud_reconciliation_service import CloudReconciliationService
+from app.services.cloud_sales_trend_service import CloudSalesTrendService
+from app.services.cloud_stock_velocity_service import CloudStockVelocityService
 
 router = APIRouter(prefix="/cloud-reports", tags=["Cloud Reports"])
 
 
 def _apply_time_filters(query, model, start_at: Optional[datetime], end_at: Optional[datetime]):
+    # Prefer source business time over projection time when the model stores it.
+    time_col = model.created_at
+    if hasattr(model, "occurred_at"):
+        time_col = func.coalesce(model.occurred_at, model.created_at)
     if start_at is not None:
-        query = query.filter(model.created_at >= start_at)
+        query = query.filter(time_col >= start_at)
     if end_at is not None:
-        query = query.filter(model.created_at <= end_at)
+        query = query.filter(time_col <= end_at)
     return query
 
 
@@ -316,6 +326,51 @@ def get_cloud_expiry_risk(
     ]
 
 
+@router.get("/stock-velocity", response_model=List[CloudStockVelocityItem])
+def get_cloud_stock_velocity(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    period_days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=500),
+    include_stable: bool = True,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    return [
+        CloudStockVelocityItem(**item)
+        for item in CloudStockVelocityService.stock_velocity(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            period_days=period_days,
+            limit=limit,
+            include_stable=include_stable,
+        )
+    ]
+
+
+@router.get("/revenue-comparison", response_model=CloudRevenueComparison)
+def get_cloud_revenue_comparison(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    period_days: int = Query(7, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=500),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_organization_access),
+):
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    return CloudRevenueComparison(
+        **CloudSalesTrendService.revenue_comparison(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            period_days=period_days,
+            limit=limit,
+        )
+    )
+
+
 @router.get("/reconciliation", response_model=CloudReconciliationSummary)
 def get_cloud_reconciliation(
     organization_id: int,
@@ -412,6 +467,30 @@ def repair_cloud_reconciliation_issue(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return CloudReconciliationRepairResponse(**result)
+
+
+@router.get("/dead-stock", response_model=List[CloudDeadStockItem])
+def get_cloud_dead_stock(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    period_days: int = Query(30, ge=1, le=365),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """
+    Products with positive stock but no sales (dead stock) or very low sales velocity
+    (slow movers) in the analysis period, derived from projected cloud movement facts.
+    """
+    effective_branch_id = _resolve_branch_scope(current_user, branch_id)
+    items = CloudDeadStockService.dead_stock(
+        db,
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        period_days=period_days,
+        limit=limit,
+    )
+    return [CloudDeadStockItem(**item) for item in items]
 
 
 def _acknowledgement_response(acknowledgement) -> CloudReconciliationAcknowledgementResponse:

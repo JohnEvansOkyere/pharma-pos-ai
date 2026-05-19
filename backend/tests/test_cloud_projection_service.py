@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from app.models import Branch, Device, Organization
 from app.models.cloud_projection import (
@@ -75,14 +75,16 @@ def _ingested_event(
 
 def test_project_sale_created_builds_cloud_sale_fact_idempotently(db_session):
     organization, branch, device = _tenant_device(db_session)
+    occurred_at = datetime(2026, 5, 18, 9, 30, tzinfo=timezone.utc)
     payload = {
         "sale_id": 25,
         "invoice_number": "INV-20260429-000025",
+        "occurred_at": occurred_at.isoformat(),
         "payment_method": "cash",
         "total_amount": "80.50",
         "items": [
-            {"product_id": 1, "quantity": 2},
-            {"product_id": 2, "quantity": 1},
+            {"product_id": 1, "batch_id": 10, "quantity": 2},
+            {"product_id": 2, "batch_id": 11, "quantity": 1},
         ],
     }
     event = _ingested_event(
@@ -112,6 +114,15 @@ def test_project_sale_created_builds_cloud_sale_fact_idempotently(db_session):
     assert fact.payment_method == "cash"
     assert fact.item_count == 2
     assert str(fact.total_amount) == "80.50"
+    assert fact.occurred_at.replace(tzinfo=timezone.utc) == occurred_at
+    movement_facts = db_session.query(CloudInventoryMovementFact).filter(
+        CloudInventoryMovementFact.source_event_id == event.id
+    ).order_by(CloudInventoryMovementFact.line_number.asc()).all()
+    assert [(fact.local_product_id, fact.local_batch_id, fact.quantity_delta) for fact in movement_facts] == [
+        (1, 10, -2),
+        (2, 11, -1),
+    ]
+    assert all(fact.occurred_at.replace(tzinfo=timezone.utc) == occurred_at for fact in movement_facts)
     assert event.projected_at is not None
     assert db_session.query(CloudSaleFact).count() == 1
 
@@ -211,9 +222,17 @@ def test_project_product_batch_and_sale_updates_stock_snapshots(db_session):
         payload={
             "sale_id": 22,
             "invoice_number": "INV-22",
+            "occurred_at": datetime(2026, 5, 18, 12, 0, tzinfo=timezone.utc).isoformat(),
             "payment_method": "cash",
             "total_amount": "12.00",
-            "items": [{"product_id": 15, "batch_number": "BATCH-EXP", "quantity": 5}],
+            "items": [
+                {
+                    "product_id": 15,
+                    "batch_id": 4,
+                    "batch_number": "BATCH-EXP",
+                    "quantity": 5,
+                }
+            ],
         },
     )
 
@@ -230,6 +249,12 @@ def test_project_product_batch_and_sale_updates_stock_snapshots(db_session):
     assert product.total_stock == 7
     assert batch.quantity == 7
     assert batch.expiry_date == date.today() + timedelta(days=20)
+    movement = db_session.query(CloudInventoryMovementFact).filter(
+        CloudInventoryMovementFact.source_event_id == sale_event.id
+    ).one()
+    assert movement.local_product_id == 15
+    assert movement.local_batch_id == 4
+    assert movement.quantity_delta == -5
 
 
 def test_project_sale_reversal_restores_stock_snapshots_with_line_items(db_session):

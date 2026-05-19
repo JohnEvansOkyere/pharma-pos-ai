@@ -1,6 +1,7 @@
 import { type ComponentType, type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
   FiActivity,
+  FiAlertCircle,
   FiAlertTriangle,
   FiBarChart2,
   FiCalendar,
@@ -97,6 +98,69 @@ interface CloudExpiryRiskItem {
   days_until_expiry: number
   value_at_risk: number
   status: string
+}
+
+interface CloudStockVelocityItem {
+  branch_id: number
+  product_id: number
+  product_name: string
+  sku: string
+  total_stock: number
+  low_stock_threshold: number
+  reorder_level: number | null
+  units_sold: number
+  movement_count: number
+  average_daily_units_sold: number
+  days_of_stock_remaining: number | null
+  estimated_stockout_date: string | null
+  units_needed: number
+  confidence: string
+  status: string
+}
+
+interface CloudDeadStockItem {
+  branch_id: number
+  branch_name: string
+  product_id: number
+  product_name: string
+  sku: string
+  total_stock: number
+  low_stock_threshold: number
+  reorder_level: number | null
+  units_sold_in_period: number
+  average_daily_units_sold: number
+  days_since_last_sale: number | null
+  last_sale_date: string | null
+  status: string
+}
+
+interface CloudBranchRevenueComparisonItem {
+  branch_id: number
+  branch_name: string
+  current_sales_count: number
+  current_revenue: number
+  previous_sales_count: number
+  previous_revenue: number
+  sales_count_change: number
+  revenue_change: number
+  revenue_change_percent: number | null
+  status: string
+}
+
+interface CloudRevenueComparison {
+  organization_id: number
+  branch_id: number | null
+  period_days: number
+  current_sales_count: number
+  current_revenue: number
+  previous_sales_count: number
+  previous_revenue: number
+  sales_count_change: number
+  revenue_change: number
+  revenue_change_percent: number | null
+  branch_count: number
+  anomaly_count: number
+  branches: CloudBranchRevenueComparisonItem[]
 }
 
 interface CloudReconciliationIssue {
@@ -256,6 +320,47 @@ interface AIManagerChatResponse {
   refused: boolean
 }
 
+interface AIBriefingFinding {
+  type: string
+  severity: string
+  title: string
+  summary: string
+  affected_count: number
+  action_hint: string
+}
+
+interface AIManagerBriefing {
+  organization_id: number
+  branch_id: number | null
+  period_days: number
+  data_trust_status: string
+  data_trust_notes: string[]
+  finding_count: number
+  findings: AIBriefingFinding[]
+  generated_at: string
+}
+
+interface AIPersistedFinding {
+  id: number
+  organization_id: number
+  branch_id: number | null
+  type: string
+  severity: string
+  title: string
+  summary: string
+  affected_count: number
+  action_hint: string
+  fingerprint: string
+  data_trust_status: string
+  confidence: number
+  status: string
+  snoozed_until: string | null
+  resolved_at: string | null
+  last_seen_at: string
+  created_at: string
+  updated_at: string
+}
+
 interface ChatMessage {
   id: number
   role: 'user' | 'assistant'
@@ -269,7 +374,7 @@ const suggestedPrompts = [
   'Which branch is performing best?',
   'Summarize sync health.',
   'Is the cloud data reliable for decisions?',
-  'Summarize inventory movement.',
+  'What are my dead stock or slow mover products?',
   'What stock risks should I investigate today?',
   'What should I investigate today?',
 ]
@@ -312,6 +417,17 @@ function startDateForDays(days: number) {
   const date = new Date()
   date.setDate(date.getDate() - days)
   return date.toISOString()
+}
+
+function formatDaysRemaining(value: number | null) {
+  if (value === null) return 'No sales velocity'
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })} days`
+}
+
+function formatPercentChange(value: number | null) {
+  if (value === null) return 'No baseline'
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`
 }
 
 function listToText(values: string[] | undefined) {
@@ -360,6 +476,9 @@ export default function CloudDashboardPage() {
   const [stockRiskSummary, setStockRiskSummary] = useState<CloudStockRiskSummary | null>(null)
   const [lowStockItems, setLowStockItems] = useState<CloudLowStockItem[]>([])
   const [expiryRiskItems, setExpiryRiskItems] = useState<CloudExpiryRiskItem[]>([])
+  const [stockVelocityItems, setStockVelocityItems] = useState<CloudStockVelocityItem[]>([])
+  const [deadStockItems, setDeadStockItems] = useState<CloudDeadStockItem[]>([])
+  const [revenueComparison, setRevenueComparison] = useState<CloudRevenueComparison | null>(null)
   const [reconciliationSummary, setReconciliationSummary] = useState<CloudReconciliationSummary | null>(null)
   const [weeklyReports, setWeeklyReports] = useState<AIWeeklyManagerReport[]>([])
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null)
@@ -385,6 +504,10 @@ export default function CloudDashboardPage() {
   const [aiProviderError, setAIProviderError] = useState<string | null>(null)
   const [aiProviderMessage, setAIProviderMessage] = useState<string | null>(null)
   const [isSavingAIProvider, setIsSavingAIProvider] = useState(false)
+  const [briefing, setBriefing] = useState<AIManagerBriefing | null>(null)
+  const [persistedFindings, setPersistedFindings] = useState<AIPersistedFinding[]>([])
+  const [isSavingFindings, setIsSavingFindings] = useState(false)
+  const [findingsMessage, setFindingsMessage] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [failedSections, setFailedSections] = useState<string[]>([])
   const [reconciliationActionError, setReconciliationActionError] = useState<string | null>(null)
@@ -494,6 +617,22 @@ export default function CloudDashboardPage() {
         days: 90,
         limit: 10,
       }),
+      api.getCloudStockVelocity({
+        ...syncParams,
+        period_days: periodDays,
+        limit: 10,
+        include_stable: false,
+      }),
+      api.getCloudDeadStock({
+        ...syncParams,
+        period_days: periodDays,
+        limit: 20,
+      }),
+      api.getCloudRevenueComparison({
+        ...syncParams,
+        period_days: periodDays,
+        limit: 10,
+      }),
       api.getCloudReconciliation({
         ...syncParams,
         limit: 10,
@@ -501,6 +640,11 @@ export default function CloudDashboardPage() {
       api.getAIWeeklyReports({
         ...syncParams,
         limit: 5,
+      }),
+      api.getAIManagerBriefing({
+        ...syncParams,
+        period_days: periodDays,
+        max_findings: 5,
       }),
     ])
 
@@ -513,8 +657,12 @@ export default function CloudDashboardPage() {
       stockRiskResult,
       lowStockResult,
       expiryRiskResult,
+      stockVelocityResult,
+      deadStockResult,
+      revenueComparisonResult,
       reconciliationResult,
       weeklyReportsResult,
+      briefingResult,
     ] = results
 
     if (salesResult.status === 'fulfilled') {
@@ -566,6 +714,27 @@ export default function CloudDashboardPage() {
       failures.push('Expiry risk')
     }
 
+    if (stockVelocityResult.status === 'fulfilled') {
+      setStockVelocityItems(stockVelocityResult.value)
+    } else {
+      setStockVelocityItems([])
+      failures.push('Stock velocity')
+    }
+
+    if (deadStockResult.status === 'fulfilled') {
+      setDeadStockItems(deadStockResult.value)
+    } else {
+      setDeadStockItems([])
+      failures.push('Dead stock')
+    }
+
+    if (revenueComparisonResult.status === 'fulfilled') {
+      setRevenueComparison(revenueComparisonResult.value)
+    } else {
+      setRevenueComparison(null)
+      failures.push('Revenue comparison')
+    }
+
     if (reconciliationResult.status === 'fulfilled') {
       setReconciliationSummary(reconciliationResult.value)
     } else {
@@ -581,8 +750,67 @@ export default function CloudDashboardPage() {
       failures.push('Weekly reports')
     }
 
+    if (briefingResult.status === 'fulfilled') {
+      setBriefing(briefingResult.value)
+    } else {
+      setBriefing(null)
+    }
+
     setFailedSections(failures)
     setLoadState('loaded')
+
+    // Load persisted findings separately (don't block dashboard)
+    if (hasValidOrganization) {
+      try {
+        const findings = await api.getAIFindings({
+          organization_id: Number(organizationInput),
+          ...(branchId ? { branch_id: branchId } : {}),
+        })
+        setPersistedFindings(Array.isArray(findings) ? findings : [])
+      } catch {
+        // Non-critical: persisted findings are optional
+      }
+    }
+  }
+
+  const saveFindings = async () => {
+    if (!hasValidOrganization || isSavingFindings) return
+    setIsSavingFindings(true)
+    setFindingsMessage(null)
+    try {
+      await api.getAIManagerBriefing({
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : {}),
+        period_days: periodDays,
+        persist: true,
+        max_findings: 50,
+      })
+      const findings = await api.getAIFindings({
+        organization_id: organizationId,
+        ...(branchId ? { branch_id: branchId } : {}),
+      })
+      setPersistedFindings(Array.isArray(findings) ? findings : [])
+      setFindingsMessage('Findings saved.')
+    } catch {
+      setFindingsMessage('Failed to save findings.')
+    } finally {
+      setIsSavingFindings(false)
+    }
+  }
+
+  const updateFindingStatus = async (findingId: number, newStatus: string, snoozeUntil?: string) => {
+    try {
+      const updated = await api.updateAIFinding(
+        findingId,
+        { status: newStatus, ...(snoozeUntil ? { snoozed_until: snoozeUntil } : {}) },
+        { organization_id: organizationId },
+      )
+      setPersistedFindings((prev) =>
+        prev.map((f) => (f.id === findingId ? { ...f, ...updated } : f)),
+      )
+    } catch {
+      // Silently fail — not critical
+    }
   }
 
   const isLoading = loadState === 'loading'
@@ -931,6 +1159,176 @@ export default function CloudDashboardPage() {
         </div>
       )}
 
+      {briefing && briefing.findings.length > 0 && (
+        <div className="card p-5">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <FiAlertCircle className="h-5 w-5 text-amber-500" />
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                Owner Briefing
+              </h2>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                briefing.data_trust_status === 'unsafe'
+                  ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                  : briefing.data_trust_status === 'degraded'
+                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                  : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+              }`}>
+                Data {briefing.data_trust_status}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 dark:text-gray-500">
+                {briefing.finding_count} finding(s) · Top {briefing.findings.length} shown · {periodDays}D window
+              </span>
+              <button
+                onClick={saveFindings}
+                disabled={isSavingFindings}
+                className="btn-secondary text-xs"
+              >
+                {isSavingFindings ? 'Saving…' : 'Save Findings'}
+              </button>
+            </div>
+          </div>
+          {findingsMessage && (
+            <p className="mb-2 text-xs text-green-700 dark:text-green-300">{findingsMessage}</p>
+          )}
+          {briefing.data_trust_notes.length > 0 && (
+            <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
+              {briefing.data_trust_notes.join(' · ')}
+            </p>
+          )}
+          <div className="space-y-2">
+            {briefing.findings.map((finding, i) => (
+              <div
+                key={`${finding.type}-${i}`}
+                className={`rounded-lg border p-3 ${
+                  finding.severity === 'critical'
+                    ? 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+                    : finding.severity === 'high'
+                    ? 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20'
+                    : 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50'
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-1">
+                  <span className={`text-sm font-semibold ${
+                    finding.severity === 'critical'
+                      ? 'text-red-800 dark:text-red-200'
+                      : finding.severity === 'high'
+                      ? 'text-amber-800 dark:text-amber-200'
+                      : 'text-gray-800 dark:text-gray-100'
+                  }`}>
+                    {finding.title}
+                  </span>
+                  <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                    finding.severity === 'critical'
+                      ? 'bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-100'
+                      : finding.severity === 'high'
+                      ? 'bg-amber-200 text-amber-800 dark:bg-amber-800 dark:text-amber-100'
+                      : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+                  }`}>
+                    {finding.severity}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">{finding.summary}</p>
+                <p className="mt-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  → {finding.action_hint}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {persistedFindings.length > 0 && (
+        <div className="card p-5">
+          <div className="mb-3 flex items-center gap-2">
+            <FiCheckCircle className="h-5 w-5 text-blue-500" />
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Saved Findings
+            </h2>
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              {persistedFindings.length} active
+            </span>
+          </div>
+          <div className="space-y-2">
+            {persistedFindings.map((finding) => (
+              <div
+                key={finding.id}
+                className={`rounded-lg border p-3 ${
+                  finding.severity === 'critical'
+                    ? 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+                    : finding.severity === 'high'
+                    ? 'border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20'
+                    : 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50'
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-1">
+                  <span className={`text-sm font-semibold ${
+                    finding.severity === 'critical'
+                      ? 'text-red-800 dark:text-red-200'
+                      : finding.severity === 'high'
+                      ? 'text-amber-800 dark:text-amber-200'
+                      : 'text-gray-800 dark:text-gray-100'
+                  }`}>
+                    {finding.title}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                      finding.severity === 'critical'
+                        ? 'bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-100'
+                        : finding.severity === 'high'
+                        ? 'bg-amber-200 text-amber-800 dark:bg-amber-800 dark:text-amber-100'
+                        : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+                    }`}>
+                      {finding.severity}
+                    </span>
+                    <span className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                      {finding.status}
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-300">{finding.summary}</p>
+                <p className="mt-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  → {finding.action_hint}
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {finding.status !== 'acknowledged' && (
+                    <button
+                      onClick={() => updateFindingStatus(finding.id, 'acknowledged')}
+                      className="rounded border border-blue-300 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/30"
+                    >
+                      Acknowledge
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      const until = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+                      updateFindingStatus(finding.id, 'snoozed', until)
+                    }}
+                    className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-800"
+                  >
+                    Snooze 7d
+                  </button>
+                  <button
+                    onClick={() => updateFindingStatus(finding.id, 'resolved')}
+                    className="rounded border border-green-300 px-2 py-0.5 text-xs text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-300 dark:hover:bg-green-900/30"
+                  >
+                    Resolve
+                  </button>
+                  <button
+                    onClick={() => updateFindingStatus(finding.id, 'dismissed')}
+                    className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-400 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-500 dark:hover:bg-gray-800"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-4">
           {[1, 2, 3, 4].map((item) => (
@@ -1124,6 +1522,41 @@ export default function CloudDashboardPage() {
       )}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <RiskTable
+          title="Branch Trend"
+          emptyText="No branch trend anomalies in the current comparison"
+          rows={(revenueComparison?.branches ?? [])
+            .filter((item) => ['no_sales_current', 'severe_drop', 'drop', 'growth', 'new_sales'].includes(item.status))
+            .map((item) => ({
+              key: `${item.branch_id}-${item.status}`,
+              primary: item.branch_name,
+              secondary: `Branch ${item.branch_id} · ${formatCurrency(item.previous_revenue)} to ${formatCurrency(item.current_revenue)}`,
+              value: formatPercentChange(item.revenue_change_percent),
+              status: item.status.replace(/_/g, ' '),
+            }))}
+        />
+        <RiskTable
+          title="Stock Velocity"
+          emptyText="No velocity-driven stock priorities in the current scope"
+          rows={stockVelocityItems.map((item) => ({
+            key: `${item.branch_id}-${item.product_id}`,
+            primary: item.product_name,
+            secondary: `${item.sku} · ${item.branch_name || `Branch ${item.branch_id}`} · ${formatNumber(item.units_sold)} sold / ${periodDays}D`,
+            value: formatDaysRemaining(item.days_of_stock_remaining),
+            status: item.status.replace(/_/g, ' '),
+          }))}
+        />
+        <RiskTable
+          title="Dead Stock &amp; Slow Movers"
+          emptyText="No dead stock or slow movers detected in the current scope"
+          rows={deadStockItems.map((item) => ({
+            key: `${item.branch_id}-${item.product_id}`,
+            primary: item.product_name,
+            secondary: `${item.sku} · ${item.branch_name || `Branch ${item.branch_id}`} · ${item.total_stock} on hand`,
+            value: item.last_sale_date ? `Last sale ${item.last_sale_date}` : 'Never sold',
+            status: item.status === 'dead_stock' ? 'Dead stock' : 'Slow mover',
+          }))}
+        />
         <RiskTable
           title="Low Stock"
           emptyText="No low-stock products in the current scope"

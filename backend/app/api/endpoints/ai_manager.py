@@ -4,7 +4,8 @@ Read-only AI manager assistant endpoints.
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status as http_status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import require_admin, require_organization_access, require_view_reports
@@ -12,6 +13,10 @@ from app.db.base import get_db
 from app.models.ai_report import AIWeeklyManagerReport, AIWeeklyReportDelivery, AIWeeklyReportDeliverySetting
 from app.models.user import User, UserRole
 from app.schemas.ai_manager import (
+    AIBriefingFinding,
+    AIFindingResponse,
+    AIFindingStatusUpdate,
+    AIManagerBriefing,
     AIManagerChatRequest,
     AIManagerChatResponse,
     AIExternalProviderSettingResponse,
@@ -24,6 +29,8 @@ from app.schemas.ai_manager import (
     AIWeeklyReportGenerateRequest,
     AIWeeklyReportReviewRequest,
 )
+from app.services.ai_briefing_service import AIBriefingService
+from app.services.ai_finding_service import AIFindingService
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_manager_service import AIManagerService
 from app.services.ai_provider_policy_service import AIProviderPolicyService
@@ -59,6 +66,151 @@ def chat_with_ai_manager(
         current_user=current_user,
     )
     return AIManagerChatResponse(**result)
+
+
+def _finding_to_response(f) -> AIFindingResponse:
+    return AIFindingResponse(
+        id=f.id,
+        organization_id=f.organization_id,
+        branch_id=f.branch_id,
+        type=f.type,
+        severity=f.severity,
+        title=f.title,
+        summary=f.summary,
+        affected_count=f.affected_count,
+        action_hint=f.action_hint,
+        fingerprint=f.fingerprint,
+        evidence=f.evidence or {},
+        data_trust_status=f.data_trust_status,
+        confidence=f.confidence,
+        status=f.status,
+        due_date=f.due_date,
+        snoozed_until=f.snoozed_until,
+        resolved_at=f.resolved_at,
+        resolved_by_user_id=f.resolved_by_user_id,
+        last_seen_at=f.last_seen_at,
+        created_at=f.created_at,
+        updated_at=f.updated_at,
+    )
+
+
+@router.get("/briefing", response_model=AIManagerBriefing)
+def get_ai_manager_briefing(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    period_days: int = Query(30, ge=1, le=365),
+    max_findings: int = Query(5, ge=1, le=20),
+    persist: bool = Query(False, description="If true, upsert all findings into the ai_findings table."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """
+    Return the top ranked findings for the owner/manager, generated on-demand from
+    approved cloud reporting data.
+
+    When persist=true, all findings (up to 50) are upserted into the ai_findings table
+    so the owner can track and action them. Existing dismissed/resolved findings are
+    left untouched; open/snoozed findings are refreshed.
+    """
+    require_organization_access(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        current_user=current_user,
+    )
+    effective_branch_id = branch_id if current_user.branch_id is None else current_user.branch_id
+
+    if persist:
+        # Generate all findings (no cap) for persistence, then cap for response
+        full_result = AIBriefingService.briefing(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            period_days=period_days,
+            max_findings=50,
+        )
+        AIFindingService.upsert_findings(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            findings=full_result["findings"],
+            data_trust_status=full_result["data_trust_status"],
+        )
+        db.commit()
+        # Return a capped view
+        result = {**full_result, "findings": full_result["findings"][:max_findings]}
+    else:
+        result = AIBriefingService.briefing(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            period_days=period_days,
+            max_findings=max_findings,
+        )
+
+    return AIManagerBriefing(
+        **{**result, "findings": [AIBriefingFinding(**f) for f in result["findings"]]}
+    )
+
+
+@router.get("/findings", response_model=List[AIFindingResponse])
+def list_ai_findings(
+    organization_id: int,
+    branch_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """
+    List persisted AI findings for an organization.
+    By default returns open/acknowledged/snoozed findings.
+    Pass status= to filter: open, acknowledged, snoozed, dismissed, resolved.
+    """
+    require_organization_access(
+        organization_id=organization_id,
+        branch_id=branch_id,
+        current_user=current_user,
+    )
+    effective_branch_id = branch_id if current_user.branch_id is None else current_user.branch_id
+    findings = AIFindingService.get_findings(
+        db,
+        organization_id=organization_id,
+        branch_id=effective_branch_id,
+        status_filter=status,
+        limit=limit,
+    )
+    # Flush snooze expiry updates before returning
+    db.commit()
+    return [_finding_to_response(f) for f in findings]
+
+
+@router.patch("/findings/{finding_id}", response_model=AIFindingResponse)
+def update_ai_finding_status(
+    finding_id: int,
+    payload: AIFindingStatusUpdate,
+    organization_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_view_reports),
+):
+    """
+    Update finding status: open, acknowledged, snoozed, dismissed, or resolved.
+    Supply snoozed_until (ISO datetime) when setting status=snoozed.
+    """
+    finding = AIFindingService.update_status(
+        db,
+        finding_id=finding_id,
+        organization_id=organization_id,
+        new_status=payload.status,
+        snoozed_until=payload.snoozed_until,
+        resolved_by_user_id=current_user.id,
+    )
+    if finding is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="Finding not found",
+        )
+    db.commit()
+    return _finding_to_response(finding)
 
 
 @router.get("/external-provider-settings", response_model=AIExternalProviderSettingResponse)
@@ -104,13 +256,13 @@ def upsert_external_provider_settings(
             current_user_id=current_user.id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+        raise HTTPException(status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     return AIExternalProviderSettingResponse(**AIProviderPolicyService.to_dict(setting))
 
 
 def _require_admin_user(current_user: User) -> None:
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 @router.post("/weekly-reports/generate", response_model=AIWeeklyManagerReportResponse)
@@ -175,14 +327,14 @@ def get_weekly_manager_report(
     """Fetch a saved weekly manager report by id."""
     report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
     if report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
     require_organization_access(
         organization_id=report.organization_id,
         branch_id=report.branch_id,
         current_user=current_user,
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Branch access denied")
     return _report_response(report)
 
 
@@ -196,14 +348,14 @@ def review_weekly_manager_report(
     """Mark a saved weekly manager report as reviewed with optional manager notes."""
     report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
     if report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
     require_organization_access(
         organization_id=report.organization_id,
         branch_id=report.branch_id,
         current_user=current_user,
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Branch access denied")
 
     report.reviewed_by_user_id = current_user.id
     report.reviewed_at = datetime.now(timezone.utc)
@@ -239,14 +391,14 @@ def deliver_weekly_manager_report(
     """Send a saved weekly manager report through configured email and/or Telegram channels."""
     report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
     if report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
     require_organization_access(
         organization_id=report.organization_id,
         branch_id=report.branch_id,
         current_user=current_user,
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Branch access denied")
     deliveries = AIReportDeliveryService.deliver(
         db,
         report,
@@ -266,14 +418,14 @@ def list_weekly_report_deliveries(
     """List persisted delivery attempts for a saved weekly manager report."""
     report = db.query(AIWeeklyManagerReport).filter(AIWeeklyManagerReport.id == report_id).first()
     if report is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Weekly manager report not found")
     require_organization_access(
         organization_id=report.organization_id,
         branch_id=report.branch_id,
         current_user=current_user,
     )
     if current_user.branch_id is not None and report.branch_id != current_user.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Branch access denied")
 
     deliveries = (
         db.query(AIWeeklyReportDelivery)
@@ -304,7 +456,7 @@ def get_weekly_report_delivery_setting(
         branch_id=branch_id,
     )
     if setting is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Weekly report delivery setting not found")
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="Weekly report delivery setting not found")
     return _delivery_setting_response(setting)
 
 
@@ -369,7 +521,7 @@ def _resolve_branch_scope(current_user: User, requested_branch_id: Optional[int]
     if current_user.branch_id is None:
         return requested_branch_id
     if requested_branch_id is not None and requested_branch_id != current_user.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Branch access denied")
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail="Branch access denied")
     return current_user.branch_id
 
 

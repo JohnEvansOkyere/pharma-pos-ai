@@ -106,6 +106,16 @@ class SyncRunResult(BaseModel):
     message: str
 
 
+class CloudSnapshotEnqueueResult(BaseModel):
+    success: bool
+    product_event_count: int
+    batch_event_count: int
+    total_event_count: int
+    include_inactive: bool
+    snapshot_generated_at: str
+    message: str
+
+
 class AuditLogEntry(BaseModel):
     id: int
     organization_id: Optional[int] = None

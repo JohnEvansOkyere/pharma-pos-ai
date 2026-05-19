@@ -1,5 +1,5 @@
 """
-Schemas for the read-only AI manager assistant.
+Schemas for the read-only AI manager assistant and persistent findings workbench.
 """
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
@@ -156,6 +156,63 @@ class AIWeeklyReportDeliverySettingUpsert(BaseModel):
     telegram_enabled: bool = False
     telegram_chat_ids: List[str] = []
     is_active: bool = True
+
+
+class AIBriefingFinding(BaseModel):
+    type: str
+    severity: str
+    title: str
+    summary: str
+    affected_count: int
+    action_hint: str
+
+
+class AIManagerBriefing(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    period_days: int
+    data_trust_status: str
+    data_trust_notes: List[str]
+    finding_count: int
+    findings: List[AIBriefingFinding]
+    generated_at: str
+
+
+class AIFindingResponse(BaseModel):
+    id: int
+    organization_id: int
+    branch_id: Optional[int] = None
+    type: str
+    severity: str
+    title: str
+    summary: str
+    affected_count: int
+    action_hint: str
+    fingerprint: str
+    evidence: Dict[str, Any] = {}
+    data_trust_status: str
+    confidence: float
+    status: str
+    due_date: Optional[date] = None
+    snoozed_until: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by_user_id: Optional[int] = None
+    last_seen_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIFindingStatusUpdate(BaseModel):
+    status: str
+    snoozed_until: Optional[datetime] = None
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str) -> str:
+        allowed = {"open", "acknowledged", "snoozed", "dismissed", "resolved"}
+        if value not in allowed:
+            raise ValueError("status must be one of: open, acknowledged, snoozed, dismissed, resolved")
+        return value
 
 
 class AIWeeklyReportDeliverySettingResponse(BaseModel):

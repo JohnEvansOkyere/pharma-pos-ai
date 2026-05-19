@@ -107,7 +107,8 @@ class CloudProjectionService:
         if event.event_type == SyncEventType.SALE_CREATED:
             sale_projected = CloudProjectionService._project_sale_created(db, event)
             stock_projected = CloudProjectionService._apply_sale_stock_effect(db, event)
-            return sale_projected or stock_projected
+            movement_projected = CloudProjectionService._project_sale_movement_facts(db, event)
+            return sale_projected or stock_projected or movement_projected
         if event.event_type in CloudProjectionService.PRODUCT_EVENT_TYPES:
             return CloudProjectionService._project_product_event(db, event)
         if event.event_type in CloudProjectionService.BATCH_EVENT_TYPES:
@@ -127,6 +128,7 @@ class CloudProjectionService:
         payload = event.payload
         total_amount = Decimal(str(payload.get("total_amount", "0.00")))
         items = payload.get("items") or []
+        occurred_at = CloudProjectionService._parse_datetime(payload.get("occurred_at"))
         fact = CloudSaleFact(
             source_event_id=event.id,
             organization_id=event.organization_id,
@@ -138,6 +140,7 @@ class CloudProjectionService:
             payment_method=payload.get("payment_method"),
             item_count=len(items),
             payload=payload,
+            occurred_at=occurred_at,
         )
         db.add(fact)
         return True
@@ -246,6 +249,7 @@ class CloudProjectionService:
                     stock_after=line.get("stock_after"),
                     reason=line.get("reason"),
                     payload=line.get("payload") or event.payload,
+                    occurred_at=CloudProjectionService._parse_datetime(event.payload.get("occurred_at")),
                 )
             )
         return bool(lines)
@@ -423,6 +427,47 @@ class CloudProjectionService:
         return False
 
     @staticmethod
+    def _project_sale_movement_facts(db: Session, event: IngestedSyncEvent) -> bool:
+        """Create CloudInventoryMovementFact rows for each sale item.
+
+        This ensures sales appear in cloud movement analytics alongside
+        stock receipts, adjustments, and reversals.
+        """
+        existing = db.query(CloudInventoryMovementFact).filter(
+            CloudInventoryMovementFact.source_event_id == event.id
+        ).first()
+        if existing:
+            return False
+
+        items = event.payload.get("items") or []
+        occurred_at = CloudProjectionService._parse_datetime(event.payload.get("occurred_at"))
+        created_any = False
+        for index, item in enumerate(items, start=1):
+            product_id = item.get("product_id")
+            quantity = int(item.get("quantity") or 0)
+            if product_id is None or quantity <= 0:
+                continue
+            db.add(
+                CloudInventoryMovementFact(
+                    source_event_id=event.id,
+                    line_number=index,
+                    organization_id=event.organization_id,
+                    branch_id=event.branch_id,
+                    source_device_id=event.source_device_id,
+                    event_type=SyncEventType.SALE_CREATED.value,
+                    local_product_id=int(product_id),
+                    local_batch_id=item.get("batch_id"),
+                    quantity_delta=-quantity,
+                    stock_after=None,
+                    reason=f"Sale {event.payload.get('invoice_number', '')}",
+                    payload=item,
+                    occurred_at=occurred_at,
+                )
+            )
+            created_any = True
+        return created_any
+
+    @staticmethod
     def _apply_sale_stock_effect(db: Session, event: IngestedSyncEvent) -> bool:
         changed = False
         for item in event.payload.get("items") or []:
@@ -436,13 +481,31 @@ class CloudProjectionService:
             product.last_source_event_id = event.id
             product.updated_at = datetime.now(timezone.utc)
 
-            batch_number = item.get("batch_number")
-            if batch_number:
-                batch = CloudProjectionService._find_batch_by_number(db, event, int(product_id), str(batch_number))
-                if batch:
-                    batch.quantity = max(0, batch.quantity - quantity)
-                    batch.last_source_event_id = event.id
-                    batch.updated_at = datetime.now(timezone.utc)
+            # Prefer batch_id for reliable lookup; fall back to batch_number
+            batch = None
+            batch_id = item.get("batch_id")
+            if batch_id is not None:
+                batch = CloudProjectionService._get_batch_snapshot(
+                    db, event,
+                    local_product_id=int(product_id),
+                    local_batch_id=int(batch_id),
+                )
+            else:
+                batch_number = item.get("batch_number")
+                if batch_number:
+                    batch = CloudProjectionService._find_batch_by_number(
+                        db, event, int(product_id), str(batch_number)
+                    )
+            if batch:
+                if item.get("batch_number"):
+                    batch.batch_number = str(item.get("batch_number"))
+                expiry_date = CloudProjectionService._parse_date(item.get("expiry_date"))
+                if expiry_date:
+                    batch.expiry_date = expiry_date
+                batch.quantity = max(0, batch.quantity - quantity)
+                batch.last_source_event_id = event.id
+                batch.payload = {**event.payload, "item": item}
+                batch.updated_at = datetime.now(timezone.utc)
             changed = True
         return changed
 
@@ -547,3 +610,14 @@ class CloudProjectionService:
         if value is None:
             return None
         return Decimal(str(value))
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value))
+        except (ValueError, TypeError):
+            return None

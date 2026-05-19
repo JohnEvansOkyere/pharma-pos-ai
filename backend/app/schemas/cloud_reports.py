@@ -80,6 +80,74 @@ class CloudExpiryRiskItem(BaseModel):
     status: str
 
 
+class CloudStockVelocityItem(BaseModel):
+    branch_id: int
+    branch_name: str = ""
+    product_id: int
+    product_name: str
+    sku: str
+    total_stock: int
+    low_stock_threshold: int
+    reorder_level: Optional[int] = None
+    units_sold: int
+    movement_count: int
+    average_daily_units_sold: float
+    days_of_stock_remaining: Optional[float] = None
+    estimated_stockout_date: Optional[date] = None
+    units_needed: int
+    confidence: str
+    status: str
+
+
+class CloudDeadStockItem(BaseModel):
+    branch_id: int
+    branch_name: str
+    product_id: int
+    product_name: str
+    sku: str
+    total_stock: int
+    low_stock_threshold: int
+    reorder_level: Optional[int] = None
+    units_sold_in_period: int
+    average_daily_units_sold: float
+    days_since_last_sale: Optional[int] = None
+    last_sale_date: Optional[str] = None
+    status: str  # "dead_stock" or "slow_mover"
+
+
+class CloudBranchRevenueComparisonItem(BaseModel):
+    branch_id: int
+    branch_name: str
+    current_sales_count: int
+    current_revenue: float
+    previous_sales_count: int
+    previous_revenue: float
+    sales_count_change: int
+    revenue_change: float
+    revenue_change_percent: Optional[float] = None
+    status: str
+
+
+class CloudRevenueComparison(BaseModel):
+    organization_id: int
+    branch_id: Optional[int] = None
+    period_days: int
+    current_period_start: datetime
+    current_period_end: datetime
+    previous_period_start: datetime
+    previous_period_end: datetime
+    current_sales_count: int
+    current_revenue: float
+    previous_sales_count: int
+    previous_revenue: float
+    sales_count_change: int
+    revenue_change: float
+    revenue_change_percent: Optional[float] = None
+    branch_count: int
+    anomaly_count: int
+    branches: List[CloudBranchRevenueComparisonItem]
+
+
 class CloudReconciliationIssue(BaseModel):
     issue_key: str
     severity: str
