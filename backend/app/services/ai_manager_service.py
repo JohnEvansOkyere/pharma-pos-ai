@@ -57,6 +57,8 @@ class AIManagerService:
     ) -> Dict[str, Any]:
         effective_branch_id = AIManagerService._effective_branch_id(current_user, branch_id)
         normalized_message = message.strip().lower()
+        reporting_window = AIManagerService._reporting_window(normalized_message, period_days)
+        effective_period_days = int(reporting_window["period_days"])
 
         if AIManagerService._is_disallowed_request(normalized_message):
             provider_policy = AIProviderPolicyService.resolve_provider(db, organization_id=organization_id)
@@ -65,7 +67,7 @@ class AIManagerService:
                 "data_scope": AIManagerService._scope_payload(
                     organization_id,
                     effective_branch_id,
-                    period_days,
+                    effective_period_days,
                     [],
                 ),
                 "tool_results": {},
@@ -80,19 +82,30 @@ class AIManagerService:
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            start_at=reporting_window["start_at"],
+            end_at=reporting_window["end_at"],
         )
         branch_sales = AIManagerService._branch_sales(
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            start_at=reporting_window["start_at"],
+            end_at=reporting_window["end_at"],
         )
         inventory_summary = AIManagerService._inventory_summary(
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            start_at=reporting_window["start_at"],
+            end_at=reporting_window["end_at"],
+        )
+        product_sales = AIManagerService._product_sales(
+            db,
+            organization_id=organization_id,
+            branch_id=effective_branch_id,
+            start_at=reporting_window["start_at"],
+            end_at=reporting_window["end_at"],
+            limit=10,
         )
         sync_health = AIManagerService._sync_health(
             db,
@@ -108,7 +121,7 @@ class AIManagerService:
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            period_days=effective_period_days,
             limit=10,
             include_stable=False,
         )
@@ -116,14 +129,14 @@ class AIManagerService:
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            period_days=effective_period_days,
             limit=10,
         )
         revenue_comparison = CloudSalesTrendService.revenue_comparison(
             db,
             organization_id=organization_id,
             branch_id=effective_branch_id,
-            period_days=period_days,
+            period_days=effective_period_days,
             limit=10,
         )
         reconciliation = CloudReconciliationService.reconcile(
@@ -134,8 +147,15 @@ class AIManagerService:
         )
 
         tool_results = {
+            "time_window": {
+                "label": reporting_window["label"],
+                "start_at": reporting_window["start_at"].isoformat(),
+                "end_at": reporting_window["end_at"].isoformat(),
+                "period_days": effective_period_days,
+            },
             "sales_summary": sales_summary,
             "branch_sales": branch_sales,
+            "product_sales": product_sales,
             "inventory_summary": inventory_summary,
             "sync_health": sync_health,
             "stock_risk": stock_risk,
@@ -156,7 +176,9 @@ class AIManagerService:
             dead_stock=dead_stock,
             revenue_comparison=revenue_comparison,
             reconciliation=reconciliation,
-            period_days=period_days,
+            period_days=effective_period_days,
+            window_label=reporting_window["label"],
+            product_sales=product_sales,
             branch_id=effective_branch_id,
         )
 
@@ -173,7 +195,8 @@ class AIManagerService:
                 tool_results=tool_results,
                 organization_id=organization_id,
                 branch_id=effective_branch_id,
-                period_days=period_days,
+                period_days=effective_period_days,
+                window_label=reporting_window["label"],
             ),
             deterministic_answer=deterministic_answer,
             provider=provider_policy["provider"],
@@ -186,7 +209,7 @@ class AIManagerService:
             "data_scope": AIManagerService._scope_payload(
                 organization_id,
                 effective_branch_id,
-                period_days,
+                effective_period_days,
                 [
                     AIManagerService.SALES_SOURCE,
                     AIManagerService.INVENTORY_SOURCE,
@@ -215,12 +238,39 @@ class AIManagerService:
         return datetime.now(timezone.utc) - timedelta(days=period_days)
 
     @staticmethod
+    def _reporting_window(message: str, period_days: int) -> Dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)
+        if any(keyword in message for keyword in ["today", "this day"]):
+            return {
+                "label": "today",
+                "start_at": today_start,
+                "end_at": now,
+                "period_days": 1,
+            }
+        if "yesterday" in message:
+            yesterday = today_start - timedelta(days=1)
+            return {
+                "label": "yesterday",
+                "start_at": yesterday,
+                "end_at": today_start,
+                "period_days": 1,
+            }
+        return {
+            "label": f"the last {period_days} day(s)",
+            "start_at": AIManagerService._window_start(period_days),
+            "end_at": now,
+            "period_days": period_days,
+        }
+
+    @staticmethod
     def _sales_summary(
         db: Session,
         *,
         organization_id: int,
         branch_id: Optional[int],
-        period_days: int,
+        start_at: datetime,
+        end_at: datetime,
     ) -> Dict[str, Any]:
         sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
         query = db.query(
@@ -229,7 +279,8 @@ class AIManagerService:
             func.coalesce(func.sum(CloudSaleFact.item_count), 0).label("total_items"),
         ).filter(
             CloudSaleFact.organization_id == organization_id,
-            sale_time >= AIManagerService._window_start(period_days),
+            sale_time >= start_at,
+            sale_time < end_at,
         )
 
         if branch_id is not None:
@@ -248,7 +299,8 @@ class AIManagerService:
         *,
         organization_id: int,
         branch_id: Optional[int],
-        period_days: int,
+        start_at: datetime,
+        end_at: datetime,
     ) -> List[Dict[str, Any]]:
         sale_time = func.coalesce(CloudSaleFact.occurred_at, CloudSaleFact.created_at)
         query = db.query(
@@ -258,7 +310,8 @@ class AIManagerService:
             func.coalesce(func.sum(CloudSaleFact.item_count), 0).label("total_items"),
         ).filter(
             CloudSaleFact.organization_id == organization_id,
-            sale_time >= AIManagerService._window_start(period_days),
+            sale_time >= start_at,
+            sale_time < end_at,
         )
 
         if branch_id is not None:
@@ -290,7 +343,8 @@ class AIManagerService:
         *,
         organization_id: int,
         branch_id: Optional[int],
-        period_days: int,
+        start_at: datetime,
+        end_at: datetime,
     ) -> Dict[str, Any]:
         positive_quantity = func.coalesce(
             func.sum(case((CloudInventoryMovementFact.quantity_delta > 0, CloudInventoryMovementFact.quantity_delta), else_=0)),
@@ -313,7 +367,8 @@ class AIManagerService:
             net_quantity.label("net_quantity_delta"),
         ).filter(
             CloudInventoryMovementFact.organization_id == organization_id,
-            movement_time >= AIManagerService._window_start(period_days),
+            movement_time >= start_at,
+            movement_time < end_at,
         )
 
         if branch_id is not None:
@@ -326,6 +381,69 @@ class AIManagerService:
             "total_negative_quantity": int(row.total_negative_quantity or 0),
             "net_quantity_delta": int(row.net_quantity_delta or 0),
         }
+
+    @staticmethod
+    def _product_sales(
+        db: Session,
+        *,
+        organization_id: int,
+        branch_id: Optional[int],
+        start_at: datetime,
+        end_at: datetime,
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        movement_time = func.coalesce(
+            CloudInventoryMovementFact.occurred_at,
+            CloudInventoryMovementFact.created_at,
+        )
+        query = (
+            db.query(
+                CloudInventoryMovementFact.branch_id,
+                CloudInventoryMovementFact.local_product_id,
+                CloudProductSnapshot.name.label("product_name"),
+                CloudProductSnapshot.sku.label("sku"),
+                func.coalesce(func.sum(-CloudInventoryMovementFact.quantity_delta), 0).label("units_sold"),
+            )
+            .outerjoin(
+                CloudProductSnapshot,
+                (CloudProductSnapshot.organization_id == CloudInventoryMovementFact.organization_id)
+                & (CloudProductSnapshot.branch_id == CloudInventoryMovementFact.branch_id)
+                & (CloudProductSnapshot.local_product_id == CloudInventoryMovementFact.local_product_id),
+            )
+            .filter(
+                CloudInventoryMovementFact.organization_id == organization_id,
+                CloudInventoryMovementFact.event_type == "sale_created",
+                CloudInventoryMovementFact.quantity_delta < 0,
+                CloudInventoryMovementFact.local_product_id.is_not(None),
+                movement_time >= start_at,
+                movement_time < end_at,
+            )
+        )
+        if branch_id is not None:
+            query = query.filter(CloudInventoryMovementFact.branch_id == branch_id)
+
+        rows = (
+            query.group_by(
+                CloudInventoryMovementFact.branch_id,
+                CloudInventoryMovementFact.local_product_id,
+                CloudProductSnapshot.name,
+                CloudProductSnapshot.sku,
+            )
+            .order_by(func.sum(-CloudInventoryMovementFact.quantity_delta).desc())
+            .limit(limit)
+            .all()
+        )
+
+        return [
+            {
+                "branch_id": row.branch_id,
+                "product_id": row.local_product_id,
+                "product_name": row.product_name or f"Product {row.local_product_id}",
+                "sku": row.sku,
+                "units_sold": int(row.units_sold or 0),
+            }
+            for row in rows
+        ]
 
     @staticmethod
     def _sync_health(
@@ -429,10 +547,35 @@ class AIManagerService:
         revenue_comparison: Dict[str, Any],
         reconciliation: Dict[str, Any],
         period_days: int,
+        window_label: str,
+        product_sales: List[Dict[str, Any]],
         branch_id: Optional[int],
     ) -> str:
         scope = f"branch {branch_id}" if branch_id is not None else "all permitted branches"
         top_branch = max(branch_sales, key=lambda row: row["total_revenue"], default=None)
+
+        if (
+            any(keyword in message for keyword in ["drug", "drugs", "product", "products", "item", "items"])
+            and any(keyword in message for keyword in ["sell", "sold", "sale", "sales"])
+        ):
+            if not product_sales:
+                return f"For {scope}, no products were sold {window_label} based on projected sale movement facts."
+            product_text = "; ".join(
+                f"{item['product_name']} ({item['units_sold']} unit(s))"
+                for item in product_sales[:5]
+            )
+            total_units = sum(item["units_sold"] for item in product_sales)
+            return (
+                f"For {scope}, products sold {window_label} total {total_units} unit(s). "
+                f"Top sold products: {product_text}."
+            )
+
+        if any(keyword in message for keyword in ["sale", "sales", "revenue", "income", "total"]):
+            return (
+                f"For {scope}, projected sales for {window_label} total "
+                f"GHS {sales_summary['total_revenue']:.2f} from {sales_summary['sales_count']} sale(s) and "
+                f"{sales_summary['total_items']} item(s)."
+            )
 
         if any(keyword in message for keyword in ["risk", "expiry", "expire", "expired", "low stock", "out of stock"]):
             top_velocity_risk = stock_velocity[0] if stock_velocity else None
@@ -469,7 +612,7 @@ class AIManagerService:
                 for item in top_items
             )
             return (
-                f"For {scope}, the top stock velocity priorities over the last {period_days} day(s) are: "
+                f"For {scope}, the top stock velocity priorities over {window_label} are: "
                 f"{item_text}. Prioritize out-of-stock, critical, and urgent items before stable lines."
             )
 
@@ -546,17 +689,17 @@ class AIManagerService:
 
         if any(keyword in message for keyword in ["branch", "best", "perform"]):
             if top_branch is None:
-                return f"For {scope}, no branch sales have been projected in the last {period_days} day(s)."
+                return f"For {scope}, no branch sales have been projected for {window_label}."
             branch_label = top_branch.get("branch_name") or f"Branch {top_branch['branch_id']}"
             return (
-                f"In the last {period_days} day(s), {branch_label} is the strongest projected branch by revenue "
+                f"For {window_label}, {branch_label} is the strongest projected branch by revenue "
                 f"with GHS {top_branch['total_revenue']:.2f} from {top_branch['sales_count']} sale(s) and "
                 f"{top_branch['total_items']} item(s)."
             )
 
         if any(keyword in message for keyword in ["stock", "inventory", "movement"]):
             return (
-                f"For {scope} over the last {period_days} day(s), inventory movement shows "
+                f"For {scope} over {window_label}, inventory movement shows "
                 f"{inventory_summary['movement_count']} movement row(s), "
                 f"+{inventory_summary['total_positive_quantity']} received/positive quantity, "
                 f"{inventory_summary['total_negative_quantity']} negative quantity, and "
@@ -564,7 +707,7 @@ class AIManagerService:
             )
 
         return (
-            f"For {scope} over the last {period_days} day(s), projected sales total "
+            f"For {scope} over {window_label}, projected sales total "
             f"GHS {sales_summary['total_revenue']:.2f} from {sales_summary['sales_count']} sale(s) and "
             f"{sales_summary['total_items']} item(s). Inventory net movement is "
             f"{inventory_summary['net_quantity_delta']}. Sync projection failures: "
@@ -615,8 +758,12 @@ class AIManagerService:
         organization_id: int,
         branch_id: Optional[int],
         period_days: int,
+        window_label: str,
     ) -> str:
-        scope = f"organization_id={organization_id}, branch_id={branch_id}, period_days={period_days}"
+        scope = (
+            f"organization_id={organization_id}, branch_id={branch_id}, "
+            f"period_days={period_days}, reporting_window={window_label}"
+        )
         return (
             "User question:\n"
             f"{message}\n\n"
@@ -627,6 +774,8 @@ class AIManagerService:
             "Deterministic baseline answer:\n"
             f"{deterministic_answer}\n\n"
             "Write a concise manager-facing answer using only the approved reporting data. "
+            "Preserve the deterministic answer's reporting window exactly; do not change today "
+            "to 30 days or use stock-risk rows as products-sold rows. "
             "Do not add clinical, dispensing, controlled-drug, patient, or stock mutation advice."
         )
 

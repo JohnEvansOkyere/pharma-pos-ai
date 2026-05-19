@@ -210,6 +210,184 @@ def test_ai_manager_answers_from_cloud_reporting_data(db_session):
     assert response.tool_results["sync_health"]["projection_failed_count"] == 1
 
 
+def test_ai_manager_today_sales_question_uses_today_window(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    today_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="10101010-1010-1010-1010-101010101010",
+        sequence=10,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    old_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="20202020-2020-2020-2020-202020202020",
+        sequence=11,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    db_session.add_all(
+        [
+            CloudSaleFact(
+                source_event_id=today_event.id,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                local_sale_id=10,
+                invoice_number="TODAY-1",
+                total_amount=Decimal("50.00"),
+                payment_method="cash",
+                item_count=3,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+            ),
+            CloudSaleFact(
+                source_event_id=old_event.id,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                local_sale_id=11,
+                invoice_number="OLD-1",
+                total_amount=Decimal("300.00"),
+                payment_method="cash",
+                item_count=9,
+                payload={},
+                occurred_at=datetime.now(timezone.utc) - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+    manager = _manager(db_session, organization.id)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="what is the total sale for today?",
+            organization_id=organization.id,
+            period_days=30,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.data_scope.period_days == 1
+    assert response.tool_results["time_window"]["label"] == "today"
+    assert response.tool_results["sales_summary"]["total_revenue"] == 50.0
+    assert response.tool_results["sales_summary"]["sales_count"] == 1
+    assert "today" in response.answer.lower()
+    assert "50.00" in response.answer
+    assert "30 day" not in response.answer.lower()
+
+
+def test_ai_manager_today_products_sold_uses_sale_movements_not_stock_risk(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    sale_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="30303030-3030-3030-3030-303030303030",
+        sequence=12,
+        event_type=SyncEventType.SALE_CREATED,
+    )
+    product_event = _ingested(
+        db_session,
+        organization,
+        branch_a,
+        device_a,
+        event_id="40404040-4040-4040-4040-404040404040",
+        sequence=13,
+        event_type=SyncEventType.PRODUCT_CREATED,
+    )
+    now = datetime.now(timezone.utc)
+    db_session.add_all(
+        [
+            CloudProductSnapshot(
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                local_product_id=31,
+                name="Menthox",
+                sku="MENTH",
+                total_stock=38,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=product_event.id,
+                payload={},
+            ),
+            CloudProductSnapshot(
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                local_product_id=32,
+                name="Amoxicillin",
+                sku="AMOX",
+                total_stock=0,
+                low_stock_threshold=5,
+                is_active=True,
+                last_source_event_id=product_event.id,
+                payload={},
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=1,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=31,
+                local_batch_id=31,
+                quantity_delta=-2,
+                stock_after=None,
+                payload={},
+                occurred_at=now - timedelta(minutes=30),
+            ),
+            CloudInventoryMovementFact(
+                source_event_id=sale_event.id,
+                line_number=2,
+                organization_id=organization.id,
+                branch_id=branch_a.id,
+                source_device_id=device_a.id,
+                event_type=SyncEventType.SALE_CREATED.value,
+                local_product_id=32,
+                local_batch_id=32,
+                quantity_delta=-1,
+                stock_after=None,
+                payload={},
+                occurred_at=now - timedelta(days=2),
+            ),
+        ]
+    )
+    db_session.commit()
+    manager = _manager(db_session, organization.id)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="what drugs did we sell today?",
+            organization_id=organization.id,
+            period_days=30,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.data_scope.period_days == 1
+    assert response.tool_results["time_window"]["label"] == "today"
+    assert response.tool_results["product_sales"] == [
+        {
+            "branch_id": branch_a.id,
+            "product_id": 31,
+            "product_name": "Menthox",
+            "sku": "MENTH",
+            "units_sold": 2,
+        }
+    ]
+    assert "menthox" in response.answer.lower()
+    assert "amoxicillin" not in response.answer.lower()
+    assert "out of stock" not in response.answer.lower()
+
+
 def test_ai_manager_limits_branch_assigned_user_to_their_branch(db_session):
     organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
     _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
@@ -331,7 +509,7 @@ def test_ai_manager_answers_stock_risk_questions_from_cloud_snapshots(db_session
                 quantity_delta=-6,
                 stock_after=None,
                 payload={},
-                occurred_at=datetime.now(timezone.utc) - timedelta(days=1),
+                occurred_at=datetime.now(timezone.utc) - timedelta(minutes=30),
             ),
         ]
     )
