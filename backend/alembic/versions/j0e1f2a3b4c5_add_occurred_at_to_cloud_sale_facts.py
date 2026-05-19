@@ -1,7 +1,7 @@
 """Add occurred_at to cloud fact tables for business-time reporting
 
 Revision ID: j0e1f2a3b4c5
-Revises: i9d0e1f2a3b4
+Revises: 650dc9d5a2f1
 Create Date: 2026-05-19 01:30:00.000000+00:00
 """
 from alembic import op
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "j0e1f2a3b4c5"
-down_revision = "i9d0e1f2a3b4"
+down_revision = "650dc9d5a2f1"
 branch_labels = None
 depends_on = None
 
