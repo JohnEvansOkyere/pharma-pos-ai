@@ -17,17 +17,17 @@ Manual Render settings:
 
 - Root directory: `backend`
 - Build command: `pip install --upgrade pip && pip install -r requirements.txt`
-- Start command: `bash scripts/render_start.sh`
+- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - Health check path: `/health`
 
-The start script runs:
+Render free-tier deployments should start the API directly. Run Supabase migrations manually from a trusted machine before or after deploy:
 
 ```bash
-python -m alembic upgrade head
-uvicorn app.main:app --host 0.0.0.0 --port "$PORT"
+cd backend
+DATABASE_URL='postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres' python -m alembic upgrade head
 ```
 
-This means the Supabase schema is migrated before the cloud API starts.
+This avoids Render startup timeouts while still keeping the cloud schema explicit and auditable.
 
 Required Render environment variables:
 
