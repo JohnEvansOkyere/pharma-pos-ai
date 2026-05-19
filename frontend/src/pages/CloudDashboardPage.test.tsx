@@ -11,6 +11,7 @@ const apiMocks = vi.hoisted(() => ({
   getCloudLowStock: vi.fn(),
   getCloudExpiryRisk: vi.fn(),
   getCloudStockVelocity: vi.fn(),
+  getCloudDeadStock: vi.fn(),
   getCloudRevenueComparison: vi.fn(),
   getCloudReconciliation: vi.fn(),
   acknowledgeCloudReconciliationIssue: vi.fn(),
@@ -25,6 +26,9 @@ const apiMocks = vi.hoisted(() => ({
   updateAIWeeklyReportDeliverySetting: vi.fn(),
   getAIExternalProviderSettings: vi.fn(),
   updateAIExternalProviderSettings: vi.fn(),
+  getAIManagerBriefing: vi.fn(),
+  getAIFindings: vi.fn(),
+  updateAIFinding: vi.fn(),
   chatWithAIManager: vi.fn(),
 }))
 
@@ -456,6 +460,38 @@ describe('CloudDashboardPage', () => {
       updated_by_user_id: 7,
       created_at: '2026-05-03T18:20:00Z',
       updated_at: '2026-05-03T18:20:00Z',
+    })
+    apiMocks.getCloudDeadStock.mockResolvedValue([])
+    apiMocks.getAIManagerBriefing.mockResolvedValue({
+      organization_id: 22,
+      branch_id: null,
+      period_days: 30,
+      data_trust_status: 'ok',
+      data_trust_notes: [],
+      finding_count: 0,
+      findings: [],
+      generated_at: '2026-05-19T00:00:00Z',
+    })
+    apiMocks.getAIFindings.mockResolvedValue([])
+    apiMocks.updateAIFinding.mockResolvedValue({
+      id: 1,
+      organization_id: 22,
+      branch_id: null,
+      type: 'low_stock',
+      severity: 'medium',
+      title: 'Low stock finding',
+      summary: 'Some products are low.',
+      affected_count: 1,
+      action_hint: 'Reorder.',
+      fingerprint: '0:low_stock',
+      data_trust_status: 'ok',
+      confidence: 1.0,
+      status: 'acknowledged',
+      snoozed_until: null,
+      resolved_at: null,
+      last_seen_at: '2026-05-19T00:00:00Z',
+      created_at: '2026-05-19T00:00:00Z',
+      updated_at: '2026-05-19T00:00:00Z',
     })
     apiMocks.chatWithAIManager.mockResolvedValue({
       answer: 'Branch 2 is performing best from approved cloud report data.',
