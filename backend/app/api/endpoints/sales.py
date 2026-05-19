@@ -506,6 +506,8 @@ def create_sale(
                 "items": [
                     {
                         "product_id": item["product_id"],
+                        "product_name": item["product_name"],
+                        "sku": item["product"].sku,
                         "batch_id": item["batch_id"],
                         "batch_number": item["batch_number"],
                         "expiry_date": item["expiry_date"],

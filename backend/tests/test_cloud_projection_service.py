@@ -84,7 +84,7 @@ def test_project_sale_created_builds_cloud_sale_fact_idempotently(db_session):
         "payment_method": "cash",
         "total_amount": "80.50",
         "items": [
-            {"product_id": 1, "batch_id": 10, "quantity": 2},
+            {"product_id": 1, "product_name": "Paracetamol 500mg", "sku": "PARA-500", "batch_id": 10, "quantity": 2},
             {"product_id": 2, "batch_id": 11, "quantity": 1},
         ],
     }
@@ -123,6 +123,15 @@ def test_project_sale_created_builds_cloud_sale_fact_idempotently(db_session):
         (1, 10, -2),
         (2, 11, -1),
     ]
+    projected_product = db_session.query(CloudProductSnapshot).filter(
+        CloudProductSnapshot.local_product_id == 1
+    ).one()
+    fallback_product = db_session.query(CloudProductSnapshot).filter(
+        CloudProductSnapshot.local_product_id == 2
+    ).one()
+    assert projected_product.name == "Paracetamol 500mg"
+    assert projected_product.sku == "PARA-500"
+    assert fallback_product.name == "Product 2"
     assert all(fact.occurred_at.replace(tzinfo=timezone.utc) == occurred_at for fact in movement_facts)
     assert event.projected_at is not None
     assert db_session.query(CloudSaleFact).count() == 1

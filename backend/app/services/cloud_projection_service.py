@@ -556,6 +556,7 @@ class CloudProjectionService:
                 continue
 
             product = CloudProjectionService._get_product_snapshot(db, event, int(product_id))
+            CloudProjectionService._apply_sale_item_identity(product, item)
             product.total_stock = max(0, product.total_stock - quantity)
             product.last_source_event_id = event.id
             product.updated_at = datetime.now(timezone.utc)
@@ -613,6 +614,19 @@ class CloudProjectionService:
         db.add(snapshot)
         db.flush()
         return snapshot
+
+    @staticmethod
+    def _apply_sale_item_identity(snapshot: CloudProductSnapshot, item: dict[str, Any]) -> None:
+        """Use sale item labels only to improve placeholder cloud snapshots."""
+        product_name = item.get("product_name")
+        sku = item.get("sku")
+        placeholder_name = f"Product {snapshot.local_product_id}"
+        placeholder_sku = f"product-{snapshot.local_product_id}"
+
+        if product_name and snapshot.name == placeholder_name:
+            snapshot.name = str(product_name)
+        if sku and snapshot.sku == placeholder_sku:
+            snapshot.sku = str(sku)
 
     @staticmethod
     def _get_batch_snapshot(

@@ -195,6 +195,8 @@ def test_create_sale_records_pending_sync_event(
     assert sync_event.payload["invoice_number"] == sale.invoice_number
     assert sync_event.payload["items"][0]["quantity"] == 2
     assert sync_event.payload["items"][0]["batch_id"] is not None
+    assert sync_event.payload["items"][0]["product_name"] == product.name
+    assert sync_event.payload["items"][0]["sku"] == product.sku
     assert sync_event.payload["occurred_at"] is not None
     assert len(sync_event.payload_hash) == 64
 
