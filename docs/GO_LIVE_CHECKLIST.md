@@ -670,9 +670,13 @@
   - Done: `generate_answer_with_tools()`, `_openai_tool_loop()` (handles OpenAI + Groq), `_claude_tool_loop()`, `_to_anthropic_tools()` added. Agentic loop capped at `MAX_TOOL_ITERATIONS = 5`.
 - [x] Tool dispatcher caches pre-fetched data for default period calls (zero extra DB round-trips); does a fresh query only when LLM asks for `today`/`yesterday`. ✅ *(2026-05-19)*
   - Done: `_make_tool_dispatcher()` serves `prefetched` dict on `period="period"` and queries live for `today`/`yesterday`.
-- [x] All tool results come from the existing validated service functions — the LLM selects and combines, never invents numbers. ✅ *(2026-05-19)*
+- [x] All tool results come from the existing validated service functions — the LLM selects and combines approved tool outputs. ✅ *(2026-05-19)*
+- [x] Add a final numeric answer verifier so unsupported LLM figures are rejected before the answer is returned. ✅ *(2026-05-19 23:59 UTC)*
+  - Done: `AIManagerService._verify_answer_numbers()` scans final answers for numeric claims and falls back to the deterministic answer if a number is not present in approved tool evidence.
+- [x] Return tool-call traceability with chat responses. ✅ *(2026-05-19 23:59 UTC)*
+  - Done: `generate_answer_with_tools()` now returns `tool_trace` entries containing tool name, arguments, and result. `AIManagerChatResponse` exposes `tool_trace` and `verification`.
 - [x] Write regression tests: the LLM tool-use path must pass all existing AI manager test cases. ✅ *(2026-05-19)*
-  - Done: all 22 `test_ai_manager` tests pass. The Groq-mock test updated to patch `generate_answer_with_tools` (the new entry point).
+  - Done: all 25 `test_ai_manager` tests pass. Coverage now includes external-answer numeric verification, returned tool trace, and Telegram CEO message routing.
 
 ### 9.2 Proactive Push Alerts (CEO Gets Found, Not the Other Way Around)
 
@@ -687,6 +691,7 @@
 - [x] Alert severity tiers: 🔴 Critical, 🟠 High — only these trigger push alerts (medium findings appear in daily briefing only). ✅ *(2026-05-19)*
 - [x] CEO can reply to a Telegram alert and the reply routes back into the AI manager. ✅ *(2026-05-19)*
   - Done: `POST /api/telegram/webhook` receives Telegram updates, routes CEO messages through `TelegramAlertService.route_ceo_message()` → `AIManagerService.answer()` → reply sent back.
+  - Fixed: Telegram routing can call `AIManagerService.answer()` without an interactive `current_user`; the chat ID's delivery setting supplies the organization scope. Regression test added. ✅ *(2026-05-19 23:59 UTC)*
 - [x] Alert delivery settings use existing per-org `AIWeeklyReportDeliverySetting.telegram_chat_ids`. ✅ *(2026-05-19)*
   - No new table needed — reuses the weekly report delivery setting rows already in place.
 

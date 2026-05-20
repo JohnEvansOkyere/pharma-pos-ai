@@ -3,6 +3,7 @@ Read-only manager assistant backed by approved cloud reporting data.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional
@@ -246,7 +247,7 @@ class AIManagerService:
         organization_id: int,
         branch_id: Optional[int],
         period_days: int,
-        current_user: User,
+        current_user: Optional[User] = None,
         conversation_history: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         effective_branch_id = AIManagerService._effective_branch_id(current_user, branch_id)
@@ -265,6 +266,8 @@ class AIManagerService:
                     [],
                 ),
                 "tool_results": {},
+                "tool_trace": [],
+                "verification": {"verified": True, "unsupported_numbers": []},
                 "safety_notes": AIManagerService._safety_notes(),
                 "provider": provider_policy["provider"],
                 "model": provider_policy["model"],
@@ -378,7 +381,23 @@ class AIManagerService:
                 "provider": provider,
                 "model": model,
                 "fallback_used": False,
+                "tool_trace": [],
             }
+
+        verification = AIManagerService._verify_answer_numbers(
+            provider_result["answer"],
+            evidence={
+                "tool_results": tool_results,
+                "tool_trace": provider_result.get("tool_trace", []),
+            },
+        )
+        if not verification["verified"]:
+            provider_result = {
+                **provider_result,
+                "answer": deterministic_answer,
+                "fallback_used": True,
+            }
+            verification["fallback_reason"] = "unsupported_numeric_claims"
 
         return {
             "answer": provider_result["answer"],
@@ -396,6 +415,8 @@ class AIManagerService:
                 ],
             ),
             "tool_results": tool_results,
+            "tool_trace": provider_result.get("tool_trace", []),
+            "verification": verification,
             "safety_notes": AIManagerService._safety_notes(),
             "provider": provider_result["provider"],
             "model": provider_result["model"],
@@ -404,10 +425,66 @@ class AIManagerService:
         }
 
     @staticmethod
-    def _effective_branch_id(current_user: User, requested_branch_id: Optional[int]) -> Optional[int]:
-        if current_user.branch_id is not None:
+    def _effective_branch_id(current_user: Optional[User], requested_branch_id: Optional[int]) -> Optional[int]:
+        if current_user is not None and current_user.branch_id is not None:
             return current_user.branch_id
         return requested_branch_id
+
+    @staticmethod
+    def _verify_answer_numbers(answer: str, *, evidence: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Lightweight guardrail: if an external LLM states concrete numeric claims that
+        do not appear anywhere in the approved evidence, reject the answer and fall
+        back to deterministic text. This is intentionally conservative and focused
+        on currency/count-style numbers, not dates.
+        """
+        if not answer:
+            return {"verified": True, "unsupported_numbers": []}
+
+        allowed_values = AIManagerService._collect_numeric_evidence(evidence)
+        unsupported: List[str] = []
+        for match in re.finditer(r"(?<![\w-])(?:GHS\s*)?-?\d+(?:,\d{3})*(?:\.\d+)?%?", answer, flags=re.IGNORECASE):
+            token = match.group(0).strip()
+            number_text = token.upper().replace("GHS", "").replace(",", "").replace("%", "").strip()
+            if not number_text:
+                continue
+            try:
+                value = float(number_text)
+            except ValueError:
+                continue
+            if value >= 1900 and value <= 2100 and not token.upper().startswith("GHS"):
+                continue
+            if AIManagerService._numeric_value_supported(value, allowed_values):
+                continue
+            unsupported.append(token)
+
+        return {
+            "verified": len(unsupported) == 0,
+            "unsupported_numbers": unsupported,
+        }
+
+    @staticmethod
+    def _collect_numeric_evidence(value: Any) -> List[float]:
+        results: List[float] = []
+        if isinstance(value, bool) or value is None:
+            return results
+        if isinstance(value, (int, float, Decimal)):
+            results.append(float(value))
+            return results
+        if isinstance(value, dict):
+            for child in value.values():
+                results.extend(AIManagerService._collect_numeric_evidence(child))
+        elif isinstance(value, list):
+            for child in value:
+                results.extend(AIManagerService._collect_numeric_evidence(child))
+        return results
+
+    @staticmethod
+    def _numeric_value_supported(value: float, allowed_values: List[float]) -> bool:
+        for allowed in allowed_values:
+            if abs(value - allowed) <= max(0.01, abs(allowed) * 0.001):
+                return True
+        return False
 
     @staticmethod
     def _window_start(period_days: int) -> datetime:

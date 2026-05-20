@@ -334,6 +334,13 @@ interface AIManagerChatResponse {
     period_days: number
     sources: string[]
   }
+  tool_results: Record<string, unknown>
+  tool_trace: Array<Record<string, unknown>>
+  verification: {
+    verified: boolean
+    unsupported_numbers: string[]
+    fallback_reason?: string
+  }
   safety_notes: string[]
   provider: string
   model: string | null

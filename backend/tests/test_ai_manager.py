@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.security import get_password_hash
 from app.models import Branch, Device, Organization
 from app.models.activity_log import ActivityLog
+from app.models.ai_report import AIWeeklyReportDeliverySetting
 from app.models.cloud_projection import (
     CloudBatchSnapshot,
     CloudInventoryMovementFact,
@@ -30,6 +31,7 @@ from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
 from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIFindingStatusUpdate, AIManagerChatRequest
 from app.services.ai_llm_provider import AIManagerLLMProvider
+from app.services.telegram_alert_service import TelegramAlertService
 
 
 def _tenant(db_session):
@@ -103,7 +105,7 @@ def _ingested(db_session, organization, branch, device, *, event_id: str, sequen
         aggregate_id=sequence,
         schema_version=1,
         payload={"id": sequence},
-        payload_hash=str(sequence) * 64,
+        payload_hash=str(sequence).zfill(64),
         duplicate_count=0,
     )
     db_session.add(event)
@@ -243,7 +245,7 @@ def test_ai_manager_today_sales_question_uses_today_window(db_session):
                 payment_method="cash",
                 item_count=3,
                 payload={},
-                occurred_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+                occurred_at=datetime.now(timezone.utc) - timedelta(seconds=1),
             ),
             CloudSaleFact(
                 source_event_id=old_event.id,
@@ -341,7 +343,7 @@ def test_ai_manager_today_products_sold_uses_sale_movements_not_stock_risk(db_se
                 quantity_delta=-2,
                 stock_after=None,
                 payload={},
-                occurred_at=now - timedelta(minutes=30),
+                occurred_at=datetime.now(timezone.utc) - timedelta(seconds=1),
             ),
             CloudInventoryMovementFact(
                 source_event_id=sale_event.id,
@@ -777,6 +779,115 @@ def test_server_configured_external_ai_uses_available_api_key_without_tenant_pol
     assert response.model == "llama-3.3-70b-versatile"
     assert response.fallback_used is False
     assert response.answer == "External Groq summary."
+    assert response.verification["verified"] is True
+
+
+def test_external_ai_numeric_claims_are_verified_before_return(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id, username="verified-ai-manager")
+    monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", "groq")
+    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", "")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "test-groq-key")
+
+    def _fake_wrong_answer(*, message, system_prompt, tools, tool_dispatcher, conversation_history, provider, model, fallback_summary):
+        return {
+            "answer": "For all branches, revenue is GHS 9999.00.",
+            "provider": provider,
+            "model": model,
+            "fallback_used": False,
+            "tool_trace": [
+                {
+                    "tool": "get_sales_summary",
+                    "arguments": {"period": "period"},
+                    "result": {"sales_count": 2, "total_revenue": 400.0, "total_items": 13},
+                }
+            ],
+        }
+
+    monkeypatch.setattr(AIManagerLLMProvider, "generate_answer_with_tools", _fake_wrong_answer)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Summarize sales",
+            organization_id=organization.id,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.fallback_used is True
+    assert response.verification["verified"] is False
+    assert "GHS 9999.00" in response.verification["unsupported_numbers"]
+    assert "9999.00" not in response.answer
+    assert response.tool_trace[0]["tool"] == "get_sales_summary"
+
+
+def test_external_ai_tool_trace_is_returned(monkeypatch, db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    manager = _manager(db_session, organization.id, username="trace-ai-manager")
+    monkeypatch.setattr(settings, "AI_MANAGER_PROVIDER", "groq")
+    monkeypatch.setattr(settings, "AI_MANAGER_MODEL", "")
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "test-groq-key")
+
+    def _fake_trace_answer(*, message, system_prompt, tools, tool_dispatcher, conversation_history, provider, model, fallback_summary):
+        result = tool_dispatcher("get_sales_summary", {"period": "period"})
+        return {
+            "answer": "For all branches in the last 30 day(s), revenue is GHS 400.00 from 2 sale(s).",
+            "provider": provider,
+            "model": model,
+            "fallback_used": False,
+            "tool_trace": [{"tool": "get_sales_summary", "arguments": {"period": "period"}, "result": result}],
+        }
+
+    monkeypatch.setattr(AIManagerLLMProvider, "generate_answer_with_tools", _fake_trace_answer)
+
+    response = chat_with_ai_manager(
+        AIManagerChatRequest(
+            message="Summarize sales",
+            organization_id=organization.id,
+            period_days=30,
+        ),
+        db=db_session,
+        current_user=manager,
+    )
+
+    assert response.fallback_used is False
+    assert response.verification["verified"] is True
+    assert response.tool_trace == [
+        {
+            "tool": "get_sales_summary",
+            "arguments": {"period": "period"},
+            "result": {"sales_count": 2, "total_revenue": 400.0, "total_items": 13},
+        }
+    ]
+
+
+def test_telegram_ceo_message_routes_to_ai_without_user_context(db_session):
+    organization, branch_a, branch_b, device_a, device_b = _tenant(db_session)
+    _seed_facts(db_session, organization, branch_a, branch_b, device_a, device_b)
+    db_session.add(
+        AIWeeklyReportDeliverySetting(
+            organization_id=organization.id,
+            branch_id=None,
+            report_scope_key="org",
+            telegram_enabled=True,
+            telegram_chat_ids=["12345"],
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    answer = TelegramAlertService.route_ceo_message(
+        db_session,
+        chat_id="12345",
+        text="Summarize sales",
+    )
+
+    assert answer is not None
+    assert "error occurred" not in answer.lower()
+    assert "400.00" in answer
 
 
 def test_branch_manager_cannot_change_tenant_external_ai_settings(db_session):

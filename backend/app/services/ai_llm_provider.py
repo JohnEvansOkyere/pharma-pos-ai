@@ -138,6 +138,7 @@ class AIManagerLLMProvider:
                 "provider": provider,
                 "model": model,
                 "fallback_used": True,
+                "tool_trace": [],
             }
 
         history = conversation_history or []
@@ -145,7 +146,7 @@ class AIManagerLLMProvider:
             if provider in ("openai", "groq"):
                 url = AIManagerLLMProvider.OPENAI_URL if provider == "openai" else AIManagerLLMProvider.GROQ_URL
                 api_key = (settings.OPENAI_API_KEY if provider == "openai" else settings.GROQ_API_KEY) or ""
-                answer = AIManagerLLMProvider._openai_tool_loop(
+                answer, tool_trace = AIManagerLLMProvider._openai_tool_loop(
                     message=message,
                     system_prompt=system_prompt,
                     tools=tools,
@@ -156,7 +157,7 @@ class AIManagerLLMProvider:
                     api_key=api_key,
                 )
             elif provider == "claude":
-                answer = AIManagerLLMProvider._claude_tool_loop(
+                answer, tool_trace = AIManagerLLMProvider._claude_tool_loop(
                     message=message,
                     system_prompt=system_prompt,
                     tools=AIManagerLLMProvider._to_anthropic_tools(tools),
@@ -172,6 +173,7 @@ class AIManagerLLMProvider:
                 "provider": provider,
                 "model": model,
                 "fallback_used": True,
+                "tool_trace": [],
             }
 
         return {
@@ -179,6 +181,7 @@ class AIManagerLLMProvider:
             "provider": provider,
             "model": model,
             "fallback_used": not bool(answer),
+            "tool_trace": tool_trace,
         }
 
     @staticmethod
@@ -192,10 +195,11 @@ class AIManagerLLMProvider:
         model: str,
         url: str,
         api_key: str,
-    ) -> str:
+    ) -> tuple[str, List[Dict[str, Any]]]:
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         messages.extend({"role": m["role"], "content": m["content"]} for m in history)
         messages.append({"role": "user", "content": message})
+        tool_trace: List[Dict[str, Any]] = []
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -217,17 +221,18 @@ class AIManagerLLMProvider:
             assistant_message = choice["message"]
             messages.append(assistant_message)
             if choice.get("finish_reason") != "tool_calls":
-                return (assistant_message.get("content") or "").strip()
+                return (assistant_message.get("content") or "").strip(), tool_trace
             for tc in assistant_message.get("tool_calls", []):
                 name = tc["function"]["name"]
                 args = json.loads(tc["function"]["arguments"] or "{}")
                 result = tool_dispatcher(name, args)
+                tool_trace.append({"tool": name, "arguments": args, "result": result})
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc["id"],
                     "content": json.dumps(result, default=str),
                 })
-        return ""
+        return "", tool_trace
 
     @staticmethod
     def _claude_tool_loop(
@@ -238,9 +243,10 @@ class AIManagerLLMProvider:
         tool_dispatcher: Callable[[str, Dict[str, Any]], Any],
         history: List[Dict[str, str]],
         model: str,
-    ) -> str:
+    ) -> tuple[str, List[Dict[str, Any]]]:
         messages: List[Dict[str, Any]] = [{"role": m["role"], "content": m["content"]} for m in history]
         messages.append({"role": "user", "content": message})
+        tool_trace: List[Dict[str, Any]] = []
         headers = {
             "x-api-key": settings.ANTHROPIC_API_KEY or "",
             "anthropic-version": AIManagerLLMProvider.ANTHROPIC_VERSION,
@@ -264,20 +270,21 @@ class AIManagerLLMProvider:
             if data.get("stop_reason") != "tool_use":
                 for block in content_blocks:
                     if block.get("type") == "text" and block.get("text"):
-                        return block["text"].strip()
-                return ""
+                        return block["text"].strip(), tool_trace
+                return "", tool_trace
             tool_results = []
             for block in content_blocks:
                 if block.get("type") != "tool_use":
                     continue
                 result = tool_dispatcher(block["name"], block.get("input", {}))
+                tool_trace.append({"tool": block["name"], "arguments": block.get("input", {}), "result": result})
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block["id"],
                     "content": json.dumps(result, default=str),
                 })
             messages.append({"role": "user", "content": tool_results})
-        return ""
+        return "", tool_trace
 
     @staticmethod
     def _to_anthropic_tools(openai_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

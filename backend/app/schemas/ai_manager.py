@@ -27,6 +27,8 @@ class AIManagerChatResponse(BaseModel):
     session_id: int
     data_scope: AIManagerDataScope
     tool_results: Dict[str, Any]
+    tool_trace: List[Dict[str, Any]] = []
+    verification: Dict[str, Any] = {}
     safety_notes: List[str]
     provider: str
     model: Optional[str] = None
