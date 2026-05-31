@@ -8,6 +8,8 @@ const getRestoreDrillStatusMock = vi.fn()
 const recordRestoreDrillMock = vi.fn()
 const getSystemDiagnosticsMock = vi.fn()
 const triggerBackupNowMock = vi.fn()
+const getSyncStatusMock = vi.fn()
+const triggerCloudSyncNowMock = vi.fn()
 const successMock = vi.fn()
 const errorMock = vi.fn()
 
@@ -19,6 +21,8 @@ vi.mock('../services/api', () => ({
     recordRestoreDrill: (...args: unknown[]) => recordRestoreDrillMock(...args),
     getSystemDiagnostics: (...args: unknown[]) => getSystemDiagnosticsMock(...args),
     triggerBackupNow: (...args: unknown[]) => triggerBackupNowMock(...args),
+    getSyncStatus: (...args: unknown[]) => getSyncStatusMock(...args),
+    triggerCloudSyncNow: (...args: unknown[]) => triggerCloudSyncNowMock(...args),
     createUser: vi.fn(),
     updateUser: vi.fn(),
     deleteUser: vi.fn(),
@@ -126,6 +130,34 @@ describe('SettingsPage', () => {
       windows_backup_task_helper_available: false,
       linux_backup_cron_helper_available: true,
     })
+    getSyncStatusMock.mockResolvedValue({
+      enabled: true,
+      configured: true,
+      pending_count: 3,
+      failed_count: 0,
+      sent_count: 12,
+      last_sent_at: '2026-04-09T18:10:00Z',
+    })
+    triggerCloudSyncNowMock.mockResolvedValue({
+      success: true,
+      snapshot: {
+        success: true,
+        product_event_count: 15,
+        batch_event_count: 15,
+        total_event_count: 30,
+        include_inactive: false,
+        snapshot_generated_at: '2026-04-09T19:00:00Z',
+        message: 'Full catalog snapshot enqueued for cloud sync',
+      },
+      upload: {
+        attempted: 33,
+        sent: 33,
+        failed: 0,
+        skipped: 0,
+        message: 'Sync run complete',
+      },
+      message: 'Cloud sync run complete',
+    })
   })
 
   it('loads backup status and diagnostics for manager users', async () => {
@@ -133,6 +165,7 @@ describe('SettingsPage', () => {
 
     expect(await screen.findByText(/backup status/i)).toBeInTheDocument()
     expect(await screen.findByText(/restore drill readiness/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /cloud sync/i })).toBeInTheDocument()
     expect(await screen.findByText(/recent and healthy/i)).toBeInTheDocument()
     expect(await screen.findByText(/recovery-ready/i)).toBeInTheDocument()
     expect(await screen.findByText('/var/backups/pharma')).toBeInTheDocument()
@@ -140,6 +173,7 @@ describe('SettingsPage', () => {
     expect(getBackupStatusMock).toHaveBeenCalled()
     expect(getRestoreDrillStatusMock).toHaveBeenCalled()
     expect(getSystemDiagnosticsMock).toHaveBeenCalled()
+    expect(getSyncStatusMock).toHaveBeenCalled()
   })
 
   it('triggers a manual backup and shows success feedback', async () => {
@@ -163,11 +197,25 @@ describe('SettingsPage', () => {
     render(<SettingsPage />)
 
     await screen.findByText(/backup status/i)
-    await user.click(screen.getByRole('button', { name: /back up now/i }))
+    await user.click(screen.getByRole('button', { name: /local backup now/i }))
 
     await waitFor(() => {
       expect(triggerBackupNowMock).toHaveBeenCalled()
-      expect(successMock).toHaveBeenCalledWith('Backup completed successfully')
+      expect(successMock).toHaveBeenCalledWith('Local backup completed: /var/backups/pharma/manual.dump')
+    })
+  })
+
+  it('runs manual cloud sync from settings', async () => {
+    const user = userEvent.setup()
+
+    render(<SettingsPage />)
+
+    await screen.findByRole('heading', { name: /cloud sync/i })
+    await user.click(screen.getByRole('button', { name: /sync local data to cloud/i }))
+
+    await waitFor(() => {
+      expect(triggerCloudSyncNowMock).toHaveBeenCalledWith(false)
+      expect(successMock).toHaveBeenCalledWith('Cloud sync sent 33 event(s); 30 catalog event(s) queued')
     })
   })
 

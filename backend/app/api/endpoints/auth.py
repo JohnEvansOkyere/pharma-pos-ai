@@ -104,6 +104,17 @@ def login(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
+@router.get("/heartbeat")
+def heartbeat(current_user: User = Depends(get_current_active_user)):
+    """
+    Lightweight connectivity probe used by the frontend online-status hook.
+
+    Returns 200 when the backend is reachable and the token is valid.
+    Called every 15 seconds in online_pos mode — must be fast.
+    """
+    return {"status": "ok", "user_id": current_user.id}
+
+
 @router.get("/me", response_model=UserSchema)
 def get_current_user_info(
     current_user: User = Depends(get_current_active_user)

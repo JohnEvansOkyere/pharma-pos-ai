@@ -21,6 +21,8 @@ from app.schemas.stock_adjustment import (
     StockAdjustmentCreate,
 )
 from app.services.inventory_service import InventoryService
+from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.config import settings
 
 router = APIRouter(prefix="/stock-adjustments", tags=["Stock Adjustments"])
 
@@ -84,6 +86,10 @@ def list_stock_adjustments(
 ):
     """List stock adjustments for review and reporting."""
     query = db.query(StockAdjustment)
+
+    # In online_pos mode, scope to the authenticated user's organization.
+    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
+        query = query.filter(StockAdjustment.organization_id == current_user.organization_id)
 
     if product_id is not None:
         query = query.filter(StockAdjustment.product_id == product_id)
@@ -225,6 +231,8 @@ def create_stock_adjustment(
         )
         db.add(db_adjustment)
         db.flush()
+        # Stamp tenant IDs from the authenticated user in online_pos mode.
+        apply_tenant_scope(db_adjustment, current_user, app_mode=settings.APP_MODE)
         for batch_id, quantity_delta, movement_type in movement_entries:
             InventoryService.record_movement(
                 db,

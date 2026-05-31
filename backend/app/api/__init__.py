@@ -21,6 +21,7 @@ from app.api.endpoints import (
     insights,
     system_ops,
     telegram,
+    customers,
 )
 
 # Create main API router
@@ -44,3 +45,4 @@ api_router.include_router(dashboard.router)
 api_router.include_router(insights.router)
 api_router.include_router(system_ops.router)
 api_router.include_router(telegram.router)
+api_router.include_router(customers.router)

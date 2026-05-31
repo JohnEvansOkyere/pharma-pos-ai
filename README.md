@@ -215,6 +215,8 @@ Primary documentation:
 - [Backup And Restore Guide](/home/grejoy/Projects/pharma-pos-ai/docs/BACKUP_RESTORE_GUIDE.md)
 - [Go-Live Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/GO_LIVE_CHECKLIST.md)
 - [Missing Operational Controls Checklist](/home/grejoy/Projects/pharma-pos-ai/docs/MISSING_OPERATIONAL_CONTROLS_CHECKLIST.md)
+- [Online-First Architecture (online_pos mode)](/home/grejoy/Projects/pharma-pos-ai/docs/ONLINE_FIRST_ARCHITECTURE.md)
+- [Dual-Mode Deployment Plan & Roadmap](/home/grejoy/Projects/pharma-pos-ai/docs/DUAL_MODE_DEPLOYMENT_PLAN.md)
 
 ---
 

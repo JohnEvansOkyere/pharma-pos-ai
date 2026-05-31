@@ -11,8 +11,12 @@ ENV/
 .pytest_cache/
 .mypy_cache/
 
-# Database
+# Database — never ship SQLite development databases in Docker images
 *.db
+*.db.backup
+*.db-wal
+*.db-shm
+*.sqlite
 *.sqlite3
 
 # Environment

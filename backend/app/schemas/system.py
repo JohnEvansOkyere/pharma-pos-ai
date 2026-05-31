@@ -116,6 +116,13 @@ class CloudSnapshotEnqueueResult(BaseModel):
     message: str
 
 
+class CloudSyncNowResult(BaseModel):
+    success: bool
+    snapshot: CloudSnapshotEnqueueResult
+    upload: SyncRunResult
+    message: str
+
+
 class SystemHeartbeatEnqueueResult(BaseModel):
     success: bool
     event_id: str

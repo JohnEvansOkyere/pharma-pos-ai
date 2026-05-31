@@ -80,6 +80,7 @@ class SaleCreate(SaleBase):
     discount_amount: float = Field(0.0, ge=0)
     tax_amount: float = Field(0.0, ge=0)
     amount_paid: float = Field(..., gt=0)
+    customer_id: Optional[int] = None     # Link to a registered Customer
 
 
 class Sale(SaleBase):
@@ -94,8 +95,10 @@ class Sale(SaleBase):
     total_amount: float
     amount_paid: float
     change_amount: float
+    customer_id: Optional[int] = None
     is_printed: bool = False
     print_count: int = 0
+    receipt_sent: bool = False
     user_id: int
     created_at: datetime
 

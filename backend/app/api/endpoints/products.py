@@ -31,6 +31,8 @@ from app.schemas.product import (
     StockReceiptResult,
 )
 from app.api.dependencies import get_current_active_user, require_manage_products
+from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.config import settings
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
@@ -247,6 +249,10 @@ def list_products(
     """
     query = db.query(Product).options(joinedload(Product.category))
 
+    # In online_pos mode, scope to the authenticated user's organization.
+    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
+        query = query.filter(Product.organization_id == current_user.organization_id)
+
     if category_id:
         query = query.filter(Product.category_id == category_id)
 
@@ -271,6 +277,10 @@ def list_products_catalog(
 ):
     """Paginated product catalog for operator search screens."""
     query = db.query(Product).options(joinedload(Product.category))
+
+    # In online_pos mode, scope to the authenticated user's organization.
+    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
+        query = query.filter(Product.organization_id == current_user.organization_id)
 
     if category_id:
         query = query.filter(Product.category_id == category_id)
@@ -322,7 +332,7 @@ def search_products(
         List of matching products with expiry information
     """
     search_term = f"%{q}%"
-    products = db.query(Product).options(joinedload(Product.category)).filter(
+    query = db.query(Product).options(joinedload(Product.category)).filter(
         or_(
             Product.name.ilike(search_term),
             Product.sku.ilike(search_term),
@@ -330,7 +340,11 @@ def search_products(
             Product.generic_name.ilike(search_term)
         ),
         Product.is_active == True
-    ).limit(limit).all()
+    )
+    # In online_pos mode, scope to the authenticated user's organization.
+    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
+        query = query.filter(Product.organization_id == current_user.organization_id)
+    products = query.limit(limit).all()
     _refresh_product_stocks(db, products)
     nearest_expiry_map = _nearest_expiry_by_product_ids(db, [product.id for product in products])
     return _serialize_product_search_rows(db, products, nearest_expiry_map=nearest_expiry_map)
@@ -442,6 +456,8 @@ def create_product(
     db_product = Product(**payload)
     db.add(db_product)
     db.flush()
+    # Stamp tenant IDs from the authenticated user in online_pos mode.
+    apply_tenant_scope(db_product, current_user, app_mode=settings.APP_MODE)
     SyncOutboxService.record_event(
         db,
         event_type=SyncEventType.PRODUCT_CREATED,

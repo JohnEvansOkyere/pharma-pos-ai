@@ -8,6 +8,7 @@ import csv
 import json
 import os
 import platform
+import shutil
 import subprocess
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -26,6 +27,7 @@ from app.schemas.system import (
     AuditLogListResponse,
     BackupStatus,
     BackupTriggerResult,
+    CloudSyncNowResult,
     CloudSnapshotEnqueueResult,
     RestoreDrillCreate,
     RestoreDrillRecord,
@@ -43,8 +45,19 @@ from app.services.sync_upload_service import SyncUploadService
 
 router = APIRouter(prefix="/system", tags=["System"])
 
-ROOT_DIR = Path(__file__).resolve().parents[4]
-BACKUP_DIR = ROOT_DIR / "backups"
+
+def _project_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "backup.bat").exists() or (parent / "docker-compose.yml").exists():
+            return parent
+        if (parent / "app").exists() and (parent / "alembic").exists():
+            return parent
+    return current.parents[3]
+
+
+ROOT_DIR = _project_root()
+BACKUP_DIR = Path(os.getenv("BACKUP_DIR") or (ROOT_DIR / "backups"))
 BACKUP_STATUS_FILE = BACKUP_DIR / "latest_backup.txt"
 WINDOWS_BACKUP_SCRIPT = ROOT_DIR / "backup.bat"
 WINDOWS_SCHEDULE_HELPER = ROOT_DIR / "install_backup_task.bat"
@@ -121,34 +134,27 @@ def _run_backup() -> None:
 
     if is_windows:
         if not WINDOWS_BACKUP_SCRIPT.exists():
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Windows backup script is not available",
-            )
-        env = os.environ.copy()
-        env["PHARMA_BACKUP_NONINTERACTIVE"] = "1"
-        result = subprocess.run(
-            ["cmd.exe", "/c", str(WINDOWS_BACKUP_SCRIPT)],
-            cwd=str(ROOT_DIR),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+            _run_pg_dump_backup()
+            return
+        command = ["cmd.exe", "/c", str(WINDOWS_BACKUP_SCRIPT)]
+        cwd = ROOT_DIR
     else:
         if not LINUX_BACKUP_SCRIPT.exists():
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Linux backup script is not available",
-            )
-        result = subprocess.run(
-            ["bash", str(LINUX_BACKUP_SCRIPT)],
-            cwd=str(ROOT_DIR),
-            env=os.environ.copy(),
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+            _run_pg_dump_backup()
+            return
+        command = ["bash", str(LINUX_BACKUP_SCRIPT)]
+        cwd = ROOT_DIR
+
+    env = os.environ.copy()
+    env["PHARMA_BACKUP_NONINTERACTIVE"] = "1"
+    result = subprocess.run(
+        command,
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
 
     if result.returncode != 0:
         error_output = (result.stderr or result.stdout or "").strip()
@@ -156,6 +162,67 @@ def _run_backup() -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_output or "Backup failed",
         )
+
+
+def _run_pg_dump_backup() -> None:
+    pg_dump = shutil.which("pg_dump")
+    if not pg_dump:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="pg_dump is not available in the backend environment",
+        )
+
+    postgres_password = os.getenv("POSTGRES_PASSWORD") or ""
+    if not postgres_password:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="POSTGRES_PASSWORD is not configured",
+        )
+
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    postgres_db = os.getenv("POSTGRES_DB") or "pharma_pos"
+    backup_file = BACKUP_DIR / f"{postgres_db}_backup_{timestamp}.dump"
+
+    env = os.environ.copy()
+    env["PGPASSWORD"] = postgres_password
+    result = subprocess.run(
+        [
+            pg_dump,
+            "-h",
+            os.getenv("POSTGRES_HOST") or "localhost",
+            "-p",
+            str(os.getenv("POSTGRES_PORT") or "5432"),
+            "-U",
+            os.getenv("POSTGRES_USER") or "pharma_user",
+            "-d",
+            postgres_db,
+            "-F",
+            "c",
+            "-f",
+            str(backup_file),
+        ],
+        cwd=str(ROOT_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    if result.returncode != 0:
+        backup_file.unlink(missing_ok=True)
+        error_output = (result.stderr or result.stdout or "").strip()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_output or "Backup failed",
+        )
+
+    BACKUP_STATUS_FILE.write_text(str(backup_file), encoding="utf-8")
+    retention_days = _get_retention_days()
+    cutoff_seconds = retention_days * 24 * 60 * 60
+    now = datetime.now(timezone.utc).timestamp()
+    for candidate in BACKUP_DIR.glob(f"{postgres_db}_backup_*.dump"):
+        if now - candidate.stat().st_mtime > cutoff_seconds:
+            candidate.unlink(missing_ok=True)
 
 
 def _database_connected() -> bool:
@@ -324,6 +391,46 @@ def trigger_sync_now(
         return SyncRunResult(**SyncUploadService.upload_pending(db))
     finally:
         db.close()
+
+
+@router.post("/cloud-sync-now", response_model=CloudSyncNowResult)
+def trigger_cloud_sync_now(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_trigger_backup),
+):
+    """Enqueue the current local catalog snapshot and upload pending events immediately."""
+    try:
+        snapshot_data = FullSnapshotSyncService.enqueue_catalog_snapshot(
+            db,
+            include_inactive=include_inactive,
+        )
+        AuditService.log(
+            db,
+            action="manual_cloud_sync_snapshot",
+            user_id=current_user.id,
+            organization_id=current_user.organization_id,
+            branch_id=current_user.branch_id,
+            entity_type="sync_event",
+            entity_id=None,
+            description="Manual cloud sync snapshot enqueued from Settings",
+            extra_data=snapshot_data,
+        )
+        db.commit()
+        upload_data = SyncUploadService.upload_pending(db)
+        return CloudSyncNowResult(
+            success=upload_data["failed"] == 0,
+            snapshot=CloudSnapshotEnqueueResult(
+                success=True,
+                message="Full catalog snapshot enqueued for cloud sync",
+                **snapshot_data,
+            ),
+            upload=SyncRunResult(**upload_data),
+            message="Cloud sync run complete",
+        )
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.post("/enqueue-cloud-snapshot", response_model=CloudSnapshotEnqueueResult)

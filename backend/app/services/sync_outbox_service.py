@@ -1,5 +1,9 @@
 """
 Helpers for writing local sync outbox events.
+
+In ``online_pos`` mode the POS writes directly to the cloud database,
+so sync outbox events are unnecessary. ``record_event`` short-circuits
+and returns ``None`` in that mode.
 """
 from __future__ import annotations
 
@@ -13,6 +17,8 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from app.core.app_mode import is_online_pos_mode
+from app.core.config import settings
 from app.models.sync_event import SyncEvent, SyncEventCounter, SyncEventType
 
 
@@ -20,6 +26,11 @@ class SyncOutboxService:
     """Write sync events inside the caller's current database transaction."""
 
     COUNTER_NAME = "sync_events"
+
+    @staticmethod
+    def _should_record() -> bool:
+        """Return False when outbox events should be skipped (online_pos mode)."""
+        return not is_online_pos_mode(settings.APP_MODE)
 
     @staticmethod
     def _json_safe(value: Any) -> Any:
@@ -69,8 +80,15 @@ class SyncOutboxService:
         branch_id: Optional[int] = None,
         source_device_id: Optional[int] = None,
         schema_version: int = 1,
-    ) -> SyncEvent:
-        """Append a pending sync event without committing."""
+    ) -> Optional[SyncEvent]:
+        """Append a pending sync event without committing.
+
+        Returns ``None`` in ``online_pos`` mode because the data is already
+        written to the shared cloud database and outbox events are not needed.
+        """
+        if not SyncOutboxService._should_record():
+            return None
+
         safe_payload = SyncOutboxService._json_safe(payload)
         event = SyncEvent(
             event_id=str(uuid4()),

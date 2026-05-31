@@ -16,9 +16,14 @@ import {
 } from 'react-icons/fi'
 
 import { api } from '../services/api'
+import { enqueue, generateLocalInvoice } from '../services/offlineQueue'
 import { useCartStore } from '../stores/cartStore'
 import type { PricingMode } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
+import { isOnlinePosMode } from '../config/appMode'
+import { useOnlineStatus } from '../hooks/useOnlineStatus'
+import CustomerModal from '../components/pos/CustomerModal'
+import type { LinkedCustomer } from '../components/pos/CustomerModal'
 
 interface Product {
   id: number
@@ -128,6 +133,9 @@ export default function POSPage() {
   )
 
   const { user } = useAuthStore()
+  const { isOnline } = useOnlineStatus()
+  const [linkedCustomer, setLinkedCustomer] = useState<LinkedCustomer | null>(null)
+  const [showCustomerModal, setShowCustomerModal] = useState(false)
   const {
     items,
     pricingMode,
@@ -329,6 +337,36 @@ export default function POSPage() {
     setIsProcessing(true)
 
     try {
+      // In online_pos mode and no connectivity: queue the sale locally.
+      if (isOnlinePosMode && !isOnline) {
+        const payload = {
+          pricing_mode: pricingMode,
+          items: items.map((item) => ({
+            product_id: item.product_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            discount_amount: item.discount_amount || 0,
+          })),
+          payment_method: paymentMethod,
+          amount_paid: paidAmount,
+          customer_id: linkedCustomer?.id ?? undefined,
+          customer_name: customerName || linkedCustomer?.full_name || undefined,
+          customer_phone: customerPhone || linkedCustomer?.phone || undefined,
+          momo_number: paymentMethod === 'momo' ? momoNumber : undefined,
+          momo_reference: paymentMethod === 'momo' ? momoReference : undefined,
+          discount_amount: 0,
+          tax_amount: 0,
+        }
+        const localInvoice = generateLocalInvoice()
+        await enqueue(payload, localInvoice)
+        toast.success(
+          `Offline — sale queued (${localInvoice}). Will sync when reconnected.`,
+          { duration: 6000 },
+        )
+        resetCheckoutState()
+        return
+      }
+
       const sale = await api.createSale({
         pricing_mode: pricingMode,
         items: items.map((item) => ({
@@ -339,8 +377,9 @@ export default function POSPage() {
         })),
         payment_method: paymentMethod,
         amount_paid: paidAmount,
-        customer_name: customerName || undefined,
-        customer_phone: customerPhone || undefined,
+        customer_id: linkedCustomer?.id ?? undefined,
+        customer_name: customerName || linkedCustomer?.full_name || undefined,
+        customer_phone: customerPhone || linkedCustomer?.phone || undefined,
         momo_number: paymentMethod === 'momo' ? momoNumber : undefined,
         momo_reference: paymentMethod === 'momo' ? momoReference : undefined,
         discount_amount: 0,
@@ -350,6 +389,7 @@ export default function POSPage() {
       setLastSale(sale)
       setShowPrintDialog(true)
       toast.success(`Sale completed · ${sale.invoice_number}`)
+      setLinkedCustomer(null)
       resetCheckoutState()
       await loadProducts(catalogQuery)
     } catch (error: any) {
@@ -399,6 +439,25 @@ export default function POSPage() {
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 Pharmacy POS
               </h1>
+              {isOnlinePosMode && !isOnline && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    background: '#fee2e2',
+                    color: '#991b1b',
+                    borderRadius: 999,
+                    padding: '2px 10px',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: '0.03em',
+                    marginTop: 4,
+                  }}
+                >
+                  ● OFFLINE — QUEUING SALES
+                </span>
+              )}
               <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
                 <span className="inline-flex items-center gap-2">
                   <FiClock className="h-4 w-4" />
@@ -785,6 +844,30 @@ export default function POSPage() {
                     <FiUser className="h-4 w-4" />
                     Customer Name
                   </span>
+                  {/* Link registered customer in online_pos mode */}
+                  {isOnlinePosMode && (
+                    <div style={{ marginBottom: 8 }}>
+                      {linkedCustomer ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px' }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: '#15803d' }}>{linkedCustomer.full_name}</p>
+                            <p style={{ margin: 0, fontSize: 11, color: '#16a34a' }}>{linkedCustomer.phone}</p>
+                          </div>
+                          <button onClick={() => setLinkedCustomer(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 12 }}>Unlink</button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowCustomerModal(true)}
+                          className="btn-secondary"
+                          style={{ width: '100%', fontSize: 13, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                        >
+                          <FiUser style={{ width: 14, height: 14 }} />
+                          Link Registered Customer
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <input
                     type="text"
                     value={customerName}
@@ -882,6 +965,14 @@ export default function POSPage() {
             </div>
           </section>
         </div>
+
+        {showCustomerModal && (
+          <CustomerModal
+            linked={linkedCustomer}
+            onLink={setLinkedCustomer}
+            onClose={() => setShowCustomerModal(false)}
+          />
+        )}
 
         {showPrintDialog && lastSale && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">

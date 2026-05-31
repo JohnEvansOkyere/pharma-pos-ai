@@ -154,6 +154,30 @@ class TelegramAlertService:
                     date_label=date_label,
                     scope_label="All branches",
                 )
+
+                # Append customer retention summary when online_pos mode is active
+                from app.core.config import settings as _s
+                from app.core.app_mode import is_online_pos_mode
+                if is_online_pos_mode(_s.APP_MODE):
+                    try:
+                        from app.services.customer_analytics_service import CustomerAnalyticsService
+                        ca = CustomerAnalyticsService.summary(
+                            db, organization_id=org_id, branch_id=None,
+                            period_days=settings.AI_DAILY_BRIEFING_PERIOD_DAYS,
+                        )
+                        if ca.get("total_customers", 0) > 0:
+                            fu = ca.get("follow_up_stats", {})
+                            text += (
+                                f"\n\n\U0001f465 *Customer Retention*\n"
+                                f"Total: {ca['total_customers']} • "
+                                f"New ({settings.AI_DAILY_BRIEFING_PERIOD_DAYS}d): {ca['new_customers_in_period']} • "
+                                f"Repeat rate: {ca['repeat_rate_pct']:.1f}%\n"
+                                f"At-risk: {ca['at_risk_customers']} • Churned: {ca['churned_customers']}\n"
+                                f"Follow-ups — Sent: {fu.get('sent', 0)} • Pending: {fu.get('pending', 0)} • Failed: {fu.get('failed', 0)}"
+                            )
+                    except Exception:
+                        logger.exception("Error adding customer analytics to daily briefing for org %s", org_id)
+
                 for chat_id in chat_ids:
                     try:
                         TelegramService.send_message(chat_id, text)

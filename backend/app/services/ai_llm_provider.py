@@ -4,15 +4,89 @@ Server-side LLM provider adapter for the AI manager assistant.
 from __future__ import annotations
 
 import json
+import logging
+import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
-class AIProviderUnavailable(Exception):
-    """Raised when a configured provider cannot be used."""
+
+class _LLMCircuitBreaker:
+    """Simple per-process circuit breaker for LLM provider calls.
+
+    States:
+        CLOSED  — normal operation; calls go through.
+        OPEN    — provider is failing; calls return immediately without
+                  touching the network. Stays open for `open_seconds`.
+        HALF    — one probe request is allowed after the open period expires.
+                  If it succeeds the circuit closes; if it fails it re-opens.
+
+    Thread-safe via a reentrant lock.
+
+    Usage is automatic — both ``generate_answer`` and
+    ``generate_answer_with_tools`` check the breaker before making HTTP calls.
+    Configure via ``AI_CIRCUIT_BREAKER_THRESHOLD`` and
+    ``AI_CIRCUIT_BREAKER_OPEN_SECONDS`` environment variables (or Settings).
+    """
+
+    def __init__(self, threshold: int = 3, open_seconds: float = 300.0) -> None:
+        self._threshold = threshold
+        self._open_seconds = open_seconds
+        self._failures = 0
+        self._opened_at: float | None = None
+        self._lock = threading.RLock()
+
+    @property
+    def _state(self) -> str:
+        with self._lock:
+            if self._opened_at is None:
+                return "CLOSED"
+            elapsed = time.monotonic() - self._opened_at
+            if elapsed >= self._open_seconds:
+                return "HALF"
+            return "OPEN"
+
+    def is_open(self) -> bool:
+        """Return True if calls should be blocked (circuit is OPEN)."""
+        return self._state == "OPEN"
+
+    def allow_probe(self) -> bool:
+        """Return True if the circuit is in HALF-OPEN and a probe is allowed."""
+        return self._state == "HALF"
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._failures = 0
+            self._opened_at = None
+        logger.info("[LLM CircuitBreaker] Provider call succeeded — circuit CLOSED.")
+
+    def record_failure(self) -> None:
+        with self._lock:
+            self._failures += 1
+            if self._failures >= self._threshold:
+                if self._opened_at is None:
+                    self._opened_at = time.monotonic()
+                    logger.warning(
+                        "[LLM CircuitBreaker] %d consecutive failure(s) — circuit OPEN for %.0f s.",
+                        self._failures, self._open_seconds,
+                    )
+                else:
+                    # Re-open the clock on each subsequent failure in HALF state
+                    self._opened_at = time.monotonic()
+
+
+# Module-level singleton — shared across all requests in the same process.
+# Separate from per-request state, intentionally.
+_circuit_breaker = _LLMCircuitBreaker(
+    threshold=3,
+    open_seconds=300.0,   # 5 minutes
+)
+
 
 
 class AIManagerLLMProvider:
@@ -90,6 +164,19 @@ class AIManagerLLMProvider:
             }
 
         try:
+            # Circuit breaker — skip LLM if provider is repeatedly failing
+            if _circuit_breaker.is_open():
+                logger.warning(
+                    "[LLM CircuitBreaker] Circuit OPEN — returning deterministic answer without LLM call."
+                )
+                return {
+                    "answer": deterministic_answer,
+                    "provider": provider,
+                    "model": model,
+                    "fallback_used": True,
+                    "circuit_open": True,
+                }
+
             if provider == "openai":
                 answer = AIManagerLLMProvider._openai(prompt=prompt, model=model or "", history=history)
             elif provider == "claude":
@@ -98,7 +185,10 @@ class AIManagerLLMProvider:
                 answer = AIManagerLLMProvider._groq(prompt=prompt, model=model or "", history=history)
             else:
                 raise AIProviderUnavailable(f"Unsupported AI provider: {provider}")
+
+            _circuit_breaker.record_success()
         except Exception:
+            _circuit_breaker.record_failure()
             return {
                 "answer": deterministic_answer,
                 "provider": provider,
@@ -143,6 +233,20 @@ class AIManagerLLMProvider:
 
         history = conversation_history or []
         try:
+            # Circuit breaker — avoid LLM calls when provider is degraded
+            if _circuit_breaker.is_open():
+                logger.warning(
+                    "[LLM CircuitBreaker] Circuit OPEN — returning fallback for tool-use call."
+                )
+                return {
+                    "answer": fallback_summary,
+                    "provider": provider,
+                    "model": model,
+                    "fallback_used": True,
+                    "tool_trace": [],
+                    "circuit_open": True,
+                }
+
             if provider in ("openai", "groq"):
                 url = AIManagerLLMProvider.OPENAI_URL if provider == "openai" else AIManagerLLMProvider.GROQ_URL
                 api_key = (settings.OPENAI_API_KEY if provider == "openai" else settings.GROQ_API_KEY) or ""
@@ -167,7 +271,10 @@ class AIManagerLLMProvider:
                 )
             else:
                 raise AIProviderUnavailable(f"Unsupported provider: {provider}")
+
+            _circuit_breaker.record_success()
         except Exception:
+            _circuit_breaker.record_failure()
             return {
                 "answer": fallback_summary,
                 "provider": provider,

@@ -12,6 +12,7 @@ from app.db.base import SessionLocal
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.cloud_projection_service import CloudProjectionService
+from app.services.full_snapshot_sync_service import FullSnapshotSyncService
 from app.services.notification_service import NotificationService
 from app.services.system_heartbeat_service import SystemHeartbeatService
 from app.services.sync_upload_service import SyncUploadService
@@ -82,7 +83,11 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        if settings.CLOUD_SYNC_ENABLED:
+        # Sync outbox jobs are only meaningful for local_pos installations.
+        # In online_pos mode, POS writes go directly to the cloud DB — no
+        # outbox upload, heartbeat, or catalog snapshot sync is needed.
+        from app.core.app_mode import is_online_pos_mode
+        if settings.CLOUD_SYNC_ENABLED and not is_online_pos_mode(settings.APP_MODE):
             self.scheduler.add_job(
                 self.enqueue_system_heartbeat,
                 "interval",
@@ -99,8 +104,23 @@ class SchedulerService:
                 name="Upload sync events",
                 replace_existing=True,
             )
+            if settings.CLOUD_CATALOG_SNAPSHOT_SYNC_ENABLED:
+                self.scheduler.add_job(
+                    self.nightly_cloud_catalog_sync,
+                    CronTrigger(
+                        hour=settings.CLOUD_CATALOG_SNAPSHOT_SYNC_HOUR,
+                        minute=settings.CLOUD_CATALOG_SNAPSHOT_SYNC_MINUTE,
+                        timezone=tz,
+                    ),
+                    id="nightly_cloud_catalog_sync",
+                    name="Nightly cloud catalog sync",
+                    replace_existing=True,
+                )
 
-        if settings.CLOUD_PROJECTION_ENABLED:
+        # Cloud projection is only meaningful for cloud_reporting deployments
+        # that ingest sync events from local installs. In online_pos mode the
+        # data is already in the main database tables.
+        if settings.CLOUD_PROJECTION_ENABLED and not is_online_pos_mode(settings.APP_MODE):
             self.scheduler.add_job(
                 self.project_cloud_events,
                 "interval",
@@ -150,6 +170,18 @@ class SchedulerService:
                 minutes=settings.AI_WEEKLY_REPORT_DELIVERY_RETRY_INTERVAL_MINUTES,
                 id="retry_weekly_ai_report_deliveries",
                 name="Retry failed weekly AI report deliveries",
+                replace_existing=True,
+            )
+
+        # Customer follow-up dispatch — only meaningful in online_pos mode
+        # where the retention module is active and customers are registered.
+        if is_online_pos_mode(settings.APP_MODE):
+            self.scheduler.add_job(
+                self.dispatch_customer_follow_ups,
+                "interval",
+                hours=1,
+                id="dispatch_customer_follow_ups",
+                name="Dispatch customer follow-up messages",
                 replace_existing=True,
             )
 
@@ -252,6 +284,24 @@ class SchedulerService:
             db.close()
 
     @staticmethod
+    def nightly_cloud_catalog_sync():
+        """Queue a full local catalog snapshot and upload it after closing time."""
+        db: Session = SessionLocal()
+        try:
+            logger.info("Running nightly cloud catalog sync task")
+            snapshot = FullSnapshotSyncService.enqueue_catalog_snapshot(db)
+            db.commit()
+            upload = SyncUploadService.upload_pending(db)
+            logger.info("Nightly cloud catalog sync snapshot=%s upload=%s", snapshot, upload)
+            if upload.get("failed", 0) > 0:
+                logger.error("Nightly cloud catalog sync failed for %s event(s); run manual local backup and retry", upload["failed"])
+        except Exception:
+            db.rollback()
+            logger.exception("Error in nightly cloud catalog sync task; run manual local backup and retry")
+        finally:
+            db.close()
+
+    @staticmethod
     def enqueue_system_heartbeat():
         """Task to record local installation telemetry into the sync outbox."""
         db: Session = SessionLocal()
@@ -340,6 +390,29 @@ class SchedulerService:
             logger.info("Retried %s weekly AI report delivery record(s)", len(deliveries))
         except Exception as e:
             logger.exception("Error in weekly AI report delivery retry task")
+        finally:
+            db.close()
+
+    @staticmethod
+    def dispatch_customer_follow_ups():
+        """Hourly task: send all due customer health follow-up messages.
+
+        Only runs in online_pos mode (registered via is_online_pos_mode guard
+        in start()). Uses the message adapter (stub by default) — plug in a
+        real SMS provider via SMS_PROVIDER env var.
+        """
+        db: Session = SessionLocal()
+        try:
+            from app.services.customer_retention_service import process_pending_follow_ups
+            from app.core.config import settings as _settings
+            pharmacy_name = getattr(_settings, "APP_NAME", "PharmaPOS")
+            result = process_pending_follow_ups(db, pharmacy_name=pharmacy_name)
+            logger.info(
+                "Follow-up dispatch: sent=%s skipped=%s failed=%s total=%s",
+                result["sent"], result["skipped"], result["failed"], result["total_processed"],
+            )
+        except Exception:
+            logger.exception("Error in customer follow-up dispatch task")
         finally:
             db.close()
 

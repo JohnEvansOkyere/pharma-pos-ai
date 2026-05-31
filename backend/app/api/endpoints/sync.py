@@ -115,6 +115,13 @@ def ingest_sync_event(
             duplicate_count=0,
         )
         db.add(ingested)
+        if settings.CLOUD_PROJECTION_ENABLED:
+            try:
+                CloudProjectionService.project_event(db, ingested)
+                ingested.projected_at = datetime.now(timezone.utc)
+                ingested.projection_error = None
+            except Exception as exc:
+                ingested.projection_error = str(exc)
         db.commit()
         db.refresh(ingested)
         return SyncIngestionResponse(

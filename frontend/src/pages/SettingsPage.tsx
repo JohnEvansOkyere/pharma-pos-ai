@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import toast from 'react-hot-toast'
-import { FiClock, FiEdit, FiPlus, FiRefreshCw, FiTrash, FiX } from 'react-icons/fi'
+import { FiClock, FiCloud, FiEdit, FiPlus, FiRefreshCw, FiTrash, FiX } from 'react-icons/fi'
 import { useAuthStore } from '../stores/authStore'
 
 interface User {
@@ -71,18 +71,29 @@ interface SystemDiagnostics {
   linux_backup_cron_helper_available: boolean
 }
 
+interface SyncStatus {
+  enabled: boolean
+  configured: boolean
+  pending_count: number
+  failed_count: number
+  sent_count: number
+  last_sent_at?: string | null
+}
+
 export default function SettingsPage() {
   const { user: currentUser } = useAuthStore()
   const [users, setUsers] = useState<User[]>([])
   const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null)
   const [restoreDrillStatus, setRestoreDrillStatus] = useState<RestoreDrillStatus | null>(null)
   const [diagnostics, setDiagnostics] = useState<SystemDiagnostics | null>(null)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isLoadingBackupStatus, setIsLoadingBackupStatus] = useState(false)
   const [isLoadingRestoreDrill, setIsLoadingRestoreDrill] = useState(false)
   const [isRecordingRestoreDrill, setIsRecordingRestoreDrill] = useState(false)
   const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false)
   const [isTriggeringBackup, setIsTriggeringBackup] = useState(false)
+  const [isTriggeringCloudSync, setIsTriggeringCloudSync] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [formData, setFormData] = useState({
@@ -108,6 +119,7 @@ export default function SettingsPage() {
       loadBackupStatus()
       loadRestoreDrillStatus()
       loadDiagnostics()
+      loadSyncStatus()
     }
   }, [currentUser?.role])
 
@@ -147,6 +159,15 @@ export default function SettingsPage() {
     }
   }
 
+  const loadSyncStatus = async () => {
+    try {
+      const data = await api.getSyncStatus()
+      setSyncStatus(data)
+    } catch (error) {
+      toast.error('Failed to load cloud sync status')
+    }
+  }
+
   const loadRestoreDrillStatus = async () => {
     setIsLoadingRestoreDrill(true)
     try {
@@ -164,11 +185,29 @@ export default function SettingsPage() {
     try {
       const result = await api.triggerBackupNow()
       setBackupStatus(result.backup)
-      toast.success('Backup completed successfully')
+      await loadDiagnostics()
+      toast.success(`Local backup completed: ${result.backup?.latest_backup_path || 'backup file created'}`)
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Backup failed')
     } finally {
       setIsTriggeringBackup(false)
+    }
+  }
+
+  const handleCloudSyncNow = async () => {
+    setIsTriggeringCloudSync(true)
+    try {
+      const result = await api.triggerCloudSyncNow(false)
+      await Promise.all([loadSyncStatus(), loadDiagnostics()])
+      const snapshotCount = result.snapshot?.total_event_count ?? 0
+      toast.success(`Cloud sync sent ${result.upload?.sent ?? 0} event(s); ${snapshotCount} catalog event(s) queued`)
+      if ((result.upload?.failed ?? 0) > 0) {
+        toast.error(`${result.upload.failed} cloud sync event(s) failed. Run Local Backup Now and call support.`)
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Cloud sync failed. Run Local Backup Now and call support.')
+    } finally {
+      setIsTriggeringCloudSync(false)
     }
   }
 
@@ -320,7 +359,7 @@ export default function SettingsPage() {
                 disabled={isTriggeringBackup || !backupStatus?.trigger_available}
               >
                 <FiClock className="mr-2" />
-                {isTriggeringBackup ? 'Backing Up...' : 'Back Up Now'}
+                {isTriggeringBackup ? 'Backing Up...' : 'Local Backup Now'}
               </button>
             </div>
           </div>
@@ -388,8 +427,89 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:bg-slate-900/20 dark:text-slate-300">
-            Recommended operation: keep nightly backups automatic, use “Back Up Now” before upgrades, and keep an external copy of recent backups for recovery.
+            Recommended operation: keep the 11 PM nightly backup task installed, use “Local Backup Now” before upgrades, and keep an external copy of recent backups for recovery.
           </div>
+        </div>
+      )}
+
+      {(currentUser?.role === 'admin' || currentUser?.role === 'manager') && (
+        <div className="card p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                Cloud Sync
+              </h2>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                Upload pending local changes and a fresh product catalog snapshot to cloud reporting.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={loadSyncStatus}
+                className="btn-secondary flex items-center"
+              >
+                <FiRefreshCw className="mr-2" />
+                Refresh
+              </button>
+              <button
+                onClick={handleCloudSyncNow}
+                className="btn-primary flex items-center"
+                disabled={isTriggeringCloudSync || !syncStatus?.enabled || !syncStatus?.configured}
+              >
+                <FiCloud className="mr-2" />
+                {isTriggeringCloudSync ? 'Syncing...' : 'Sync Local Data to Cloud'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Cloud Sync
+              </p>
+              <p className={`mt-2 text-sm font-semibold ${
+                syncStatus?.enabled && syncStatus?.configured
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-red-700 dark:text-red-300'
+              }`}>
+                {syncStatus?.enabled && syncStatus?.configured ? 'Ready' : 'Not configured'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Pending Events
+              </p>
+              <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {syncStatus?.pending_count ?? 0}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Failed Events
+              </p>
+              <p className={`mt-2 text-sm font-semibold ${
+                (syncStatus?.failed_count ?? 0) > 0
+                  ? 'text-red-700 dark:text-red-300'
+                  : 'text-green-700 dark:text-green-300'
+              }`}>
+                {syncStatus?.failed_count ?? 0}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-900/40">
+              <p className="text-xs uppercase text-gray-500 dark:text-gray-400">
+                Last Cloud Upload
+              </p>
+              <p className="mt-2 text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {syncStatus?.last_sent_at ? new Date(syncStatus.last_sent_at).toLocaleString() : 'Never'}
+              </p>
+            </div>
+          </div>
+
+          {(syncStatus?.failed_count ?? 0) > 0 && (
+            <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-100">
+              Cloud sync has failed events. Run “Local Backup Now” before retrying or calling support.
+            </div>
+          )}
         </div>
       )}
 

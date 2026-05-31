@@ -37,6 +37,9 @@ from app.schemas.sale import (
     SaleSummary,
 )
 from app.api.dependencies import get_current_active_user, require_refund_sale, require_view_reports, require_void_sale
+from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.config import settings
+from app.services import customer_retention_service as retention
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
 
@@ -424,6 +427,7 @@ def create_sale(
             payment_method=sale_data.payment_method,
             amount_paid=amount_paid,
             change_amount=change_amount,
+            customer_id=getattr(sale_data, 'customer_id', None),
             customer_name=sale_data.customer_name,
             customer_phone=sale_data.customer_phone,
             customer_id_number=getattr(sale_data, 'customer_id_number', None),
@@ -439,7 +443,9 @@ def create_sale(
 
         db.add(db_sale)
         db.flush()  # Get sale ID from the database
-        db_sale.invoice_number = f"INV-{datetime.now().strftime('%Y%m%d')}-{db_sale.id:06d}"
+        db_sale.invoice_number = f"INV-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{db_sale.id:06d}"
+        # Stamp tenant IDs from the authenticated user in online_pos mode.
+        apply_tenant_scope(db_sale, current_user, app_mode=settings.APP_MODE)
 
         # Create sale items and update stock
         touched_products = {}
@@ -535,6 +541,31 @@ def create_sale(
         )
         db.commit()
         db.refresh(db_sale)
+
+        # ── Customer retention: receipt + follow-up (non-fatal) ───────────
+        if db_sale.customer_id:
+            try:
+                from app.models.customer import Customer as CustomerModel
+                linked_customer = db.get(CustomerModel, db_sale.customer_id)
+                if linked_customer:
+                    retention.dispatch_receipt(
+                        db,
+                        customer=linked_customer,
+                        sale=db_sale,
+                    )
+                    retention.schedule_follow_up(
+                        db,
+                        customer=linked_customer,
+                        sale=db_sale,
+                    )
+                    db.commit()
+            except Exception as retention_err:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Retention post-sale actions failed for sale %s: %s",
+                    db_sale.invoice_number, retention_err,
+                )
+
         return db_sale
     except Exception:
         db.rollback()
@@ -566,6 +597,10 @@ def list_sales(
     """
     query = db.query(Sale)
 
+    # In online_pos mode, scope the list to the authenticated user's organization.
+    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
+        query = query.filter(Sale.organization_id == current_user.organization_id)
+
     if start_date:
         query = query.filter(func.date(Sale.created_at) >= start_date)
 
@@ -591,7 +626,7 @@ def get_today_sales_summary(
     Returns:
         Sales summary with totals
     """
-    today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
     sales_stats = db.query(
         func.count(Sale.id).label("total_sales"),

@@ -6,7 +6,7 @@ color 0B
 cd /d "%~dp0"
 
 set TASK_NAME=Pharma POS AI Nightly Backup
-set TASK_TIME=20:00
+set TASK_TIME=23:00
 set "BACKUP_BAT=%~dp0backup.bat"
 
 echo ========================================

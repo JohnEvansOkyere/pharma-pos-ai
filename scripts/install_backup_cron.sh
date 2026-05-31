@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_SCRIPT="$ROOT_DIR/scripts/backup_postgres.sh"
-CRON_SCHEDULE="${BACKUP_CRON_SCHEDULE:-0 20 * * *}"
+CRON_SCHEDULE="${BACKUP_CRON_SCHEDULE:-0 23 * * *}"
 CRON_TAG="# pharma-pos-ai backup schedule"
 CRON_COMMAND="cd \"$ROOT_DIR\" && bash \"$BACKUP_SCRIPT\" >> \"$ROOT_DIR/backups/backup.log\" 2>&1"
 CRON_ENTRY="$CRON_SCHEDULE $CRON_COMMAND $CRON_TAG"

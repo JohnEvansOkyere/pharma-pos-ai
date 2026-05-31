@@ -48,6 +48,8 @@ services:
       TZ: Africa/Accra
     ports:
       - "8000:8000"
+    volumes:
+      - ./backups:/app/backups
     depends_on:
       db:
         condition: service_healthy

@@ -1,20 +1,24 @@
 import { NavLink } from 'react-router-dom'
 import {
+  FiActivity,
   FiChevronLeft,
   FiClipboard,
   FiCloud,
   FiHome,
+  FiInbox,
+  FiMessageSquare,
   FiPackage,
   FiShoppingCart,
   FiDollarSign,
   FiRefreshCw,
   FiUsers,
+  FiUserCheck,
   FiBell,
   FiSettings,
   FiServer,
 } from 'react-icons/fi'
 import { useAuthStore } from '../../stores/authStore'
-import { isCloudReportingMode } from '../../config/appMode'
+import { isCloudReportingMode, isOnlinePosMode, isPosMode } from '../../config/appMode'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: FiHome, group: 'OVERVIEW', adminOnly: true },
@@ -25,6 +29,10 @@ const navigation = [
   { name: 'Sales', href: '/sales', icon: FiDollarSign, group: 'PHARMACY' },
   { name: 'Stock Adjustments', href: '/stock-adjustments', icon: FiRefreshCw, group: 'PHARMACY', adminOrManager: true },
   { name: 'Suppliers', href: '/suppliers', icon: FiUsers, group: 'PHARMACY' },
+  { name: 'Customers', href: '/customers', icon: FiUserCheck, group: 'PHARMACY', onlinePosOnly: true },
+  { name: 'Customer Analytics', href: '/customer-analytics', icon: FiActivity, group: 'PHARMACY', onlinePosOnly: true, adminOrManager: true },
+  { name: 'Follow-ups', href: '/follow-ups', icon: FiMessageSquare, group: 'PHARMACY', onlinePosOnly: true, adminOrManager: true },
+  { name: 'Offline Queue', href: '/offline-queue', icon: FiInbox, group: 'PHARMACY', onlinePosOnly: true, adminOrManager: true },
   { name: 'Notifications', href: '/notifications', icon: FiBell, group: 'SYSTEM' },
   { name: 'Settings', href: '/settings', icon: FiSettings, group: 'SYSTEM', adminOrManager: true },
   { name: 'Clients', href: '/clients', icon: FiServer, group: 'SYSTEM', vendorOnly: true },
@@ -65,6 +73,9 @@ export default function Sidebar({ onHide }: SidebarProps) {
           const items = navigation.filter((item) => {
             if (item.group !== group) return false
             if (isCloudReportingMode && !['/cloud-dashboard', '/audit-logs', '/clients'].includes(item.href)) return false
+            // In online_pos mode, show all POS items AND the cloud dashboard
+            // In local_pos mode, show all POS items (cloud dashboard is also available)
+            if ((item as any).onlinePosOnly && !isOnlinePosMode) return false
             if (item.vendorOnly) return user?.role === 'admin' && !user.organization_id
             if (item.adminOnly) return user?.role === 'admin'
             if (item.adminOrManager) return user?.role === 'admin' || user?.role === 'manager'
@@ -113,7 +124,7 @@ export default function Sidebar({ onHide }: SidebarProps) {
       {/* Footer */}
       <div className="px-3 py-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
         <p className="text-center" style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)' }}>
-          v1.0.0 · {isCloudReportingMode ? 'Cloud' : 'Local'}
+          v1.0.0 · {isCloudReportingMode ? 'Cloud' : isOnlinePosMode ? 'Online' : 'Local'}
         </p>
       </div>
     </div>

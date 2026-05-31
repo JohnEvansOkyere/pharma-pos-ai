@@ -72,6 +72,7 @@ class Sale(Base):
     momo_number = Column(String(20))  # Customer MOMO number
 
     # Customer information
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
     customer_name = Column(String(100))
     customer_phone = Column(String(20))
     customer_id_number = Column(String(50))  # For controlled substances
@@ -89,13 +90,15 @@ class Sale(Base):
 
     notes = Column(Text)
 
-    # Receipt printing
+    # Receipt
     is_printed = Column(Boolean, default=False)
     print_count = Column(Integer, default=0)
+    receipt_sent = Column(Boolean, default=False)   # Digital receipt dispatched
 
     # Relationships
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     user = relationship("User", back_populates="sales")
+    customer = relationship("Customer", back_populates="sales", foreign_keys=[customer_id])
 
     items = relationship("SaleItem", back_populates="sale", cascade="all, delete-orphan")
     reversals = relationship("SaleReversal", back_populates="sale", cascade="all, delete-orphan")

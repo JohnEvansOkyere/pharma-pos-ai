@@ -1,6 +1,8 @@
 """
 Read-only AI manager assistant endpoints.
 """
+import time
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -47,6 +49,28 @@ from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/ai-manager", tags=["AI Manager Assistant"])
 
+# ── AI chat rate limiter —————————————————————————————————————————
+# 10 requests per user per minute (single-process store, fine for a single
+# Uvicorn worker or a pharmacy-scale deployment).
+_AI_RATE_LIMIT_MAX = 10
+_AI_RATE_LIMIT_WINDOW = 60   # seconds
+_ai_chat_calls: dict[int, list[float]] = defaultdict(list)
+
+
+def _check_ai_rate_limit(user_id: int) -> None:
+    now = time.time()
+    calls = _ai_chat_calls[user_id]
+    _ai_chat_calls[user_id] = [t for t in calls if now - t < _AI_RATE_LIMIT_WINDOW]
+    if len(_ai_chat_calls[user_id]) >= _AI_RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"AI chat rate limit reached: {_AI_RATE_LIMIT_MAX} requests "
+                f"per {_AI_RATE_LIMIT_WINDOW}s. Please wait before sending another message."
+            ),
+        )
+    _ai_chat_calls[user_id].append(now)
+
 
 @router.post("/chat", response_model=AIManagerChatResponse)
 def chat_with_ai_manager(
@@ -60,7 +84,12 @@ def chat_with_ai_manager(
     Restricted to manager role and above (not cashier/sales staff).
     Persists the conversation in a session. Pass session_id to continue
     an existing session; omit it to start a new one automatically.
+
+    Rate-limited: {_AI_RATE_LIMIT_MAX} requests per user per {_AI_RATE_LIMIT_WINDOW}s.
     """
+    # Rate limit first so we fail fast before hitting the DB or LLM
+    _check_ai_rate_limit(current_user.id)
+
     require_organization_access(
         organization_id=payload.organization_id,
         branch_id=payload.branch_id,

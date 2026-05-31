@@ -57,13 +57,21 @@ Use this for:
 
 ### For Installers And Support Technicians
 
-- [Windows Local Deployment Runbook](/home/grejoy/Projects/pharma-pos-ai/docs/WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md)
+#### 🏙️ City Pharmacy (online_pos — cloud database, internet required)
 
-Use this for:
-- preparing a client machine
-- configuring a local installation
-- validating startup and backups
-- technician handoff
+- [**SETUP_ONLINE_CITY_PHARMACY.md**](SETUP_ONLINE_CITY_PHARMACY.md)
+
+Use this for: provisioning a new city pharmacy in the cloud, on-site Docker install for `online_pos` mode, Supabase/SMS config, offline queue demo, and the city handover checklist.
+
+#### 🏘️ Village / Rural Pharmacy (local_pos — fully offline)
+
+- [**SETUP_OFFLINE_VILLAGE_PHARMACY.md**](SETUP_OFFLINE_VILLAGE_PHARMACY.md)
+
+Use this for: offline install on a local machine, configuring local PostgreSQL and nightly backups, optional cloud sync, UPS guidance, and the village handover checklist.
+
+#### Technical Reference
+
+- [Windows Local Deployment Runbook](WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md) — detailed technical reference for `local_pos` mode
 
 ### For Backup And Recovery
 

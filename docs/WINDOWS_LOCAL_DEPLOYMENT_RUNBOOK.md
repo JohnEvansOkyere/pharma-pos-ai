@@ -171,6 +171,8 @@ Open a Command Prompt in `C:\Pharma-POS-AI` as Administrator:
 install_backup_task.bat
 ```
 
+This installs the daily local database backup for 11:00 PM, after normal pharmacy closing hours.
+
 Run a manual backup to confirm it works:
 
 ```bat

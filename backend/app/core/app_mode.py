@@ -1,18 +1,31 @@
 """
 Application mode helpers.
 
-The same codebase can run as a local pharmacy POS or as the deployed cloud
-reporting portal. Cloud reporting mode must not behave like a second till.
+The same codebase can run in three modes:
+
+- ``local_pos``        — offline-first pharmacy installation (local PostgreSQL)
+- ``online_pos``       — online-first pharmacy installation (cloud Supabase DB,
+                         full POS writes, customer retention features enabled)
+- ``cloud_reporting``  — vendor reporting portal (read-only, no POS writes)
+
+Cloud reporting mode must not behave like a second till.
+``online_pos`` mode behaves identically to ``local_pos`` for POS write
+operations but skips the sync outbox (writes go directly to the cloud DB).
 """
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    # Imported only for type hints — avoids circular import at runtime.
+    from app.models.user import User
 
 
 LOCAL_POS_MODE = "local_pos"
+ONLINE_POS_MODE = "online_pos"
 CLOUD_REPORTING_MODE = "cloud_reporting"
-VALID_APP_MODES = {LOCAL_POS_MODE, CLOUD_REPORTING_MODE}
+VALID_APP_MODES = {LOCAL_POS_MODE, ONLINE_POS_MODE, CLOUD_REPORTING_MODE}
 
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -39,6 +52,16 @@ def is_cloud_reporting_mode(value: str | None) -> bool:
     return normalize_app_mode(value) == CLOUD_REPORTING_MODE
 
 
+def is_online_pos_mode(value: str | None) -> bool:
+    """True when the app is an online-first POS (city pharmacy)."""
+    return normalize_app_mode(value) == ONLINE_POS_MODE
+
+
+def is_pos_mode(value: str | None) -> bool:
+    """True when POS write operations are allowed (local_pos or online_pos)."""
+    return normalize_app_mode(value) in {LOCAL_POS_MODE, ONLINE_POS_MODE}
+
+
 def is_local_operational_write(
     *,
     app_mode: str | None,
@@ -58,3 +81,31 @@ def is_local_operational_write(
             return True
 
     return False
+
+
+def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) -> None:
+    """Stamp ``organization_id`` and ``branch_id`` from the authenticated user
+    onto an ORM object in ``online_pos`` mode.
+
+    In ``local_pos`` mode this is a no-op — tenancy is supplied through the
+    sync configuration (``CLOUD_SYNC_ORGANIZATION_ID`` / ``CLOUD_SYNC_BRANCH_ID``).
+    In ``online_pos`` mode every POS write must be scoped to the tenant of the
+    user making the request so that rows from different city pharmacies sharing
+    the same cloud database cannot bleed across organization boundaries.
+
+    Call this *after* ``db.flush()`` so the object has an id but *before*
+    ``db.commit()``, or call it right before ``db.add()`` when organization_id
+    is set on the constructor.
+
+    Usage::
+
+        apply_tenant_scope(db_sale, current_user, app_mode=settings.APP_MODE)
+    """
+    if not is_online_pos_mode(app_mode):
+        return
+
+    if current_user.organization_id is not None:
+        obj.organization_id = current_user.organization_id
+
+    if current_user.branch_id is not None:
+        obj.branch_id = current_user.branch_id

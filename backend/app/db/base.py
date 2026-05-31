@@ -12,9 +12,10 @@ engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
     echo=settings.DEBUG,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=15,
+    max_overflow=30,
     pool_recycle=1800,
+    pool_timeout=30,   # fail fast under extreme load rather than queuing indefinitely
 )
 
 # Create session factory

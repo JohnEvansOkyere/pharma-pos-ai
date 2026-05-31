@@ -26,6 +26,7 @@ from app.services.cloud_dead_stock_service import CloudDeadStockService
 from app.services.cloud_reconciliation_service import CloudReconciliationService
 from app.services.cloud_sales_trend_service import CloudSalesTrendService
 from app.services.cloud_stock_velocity_service import CloudStockVelocityService
+from app.services.customer_analytics_service import CustomerAnalyticsService
 
 
 TOOL_SCHEMAS: List[Dict[str, Any]] = [
@@ -219,6 +220,22 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_customer_analytics",
+            "description": (
+                "Get customer retention analytics: total registered customers, "
+                "new customers in the period, repeat-purchase rate, at-risk "
+                "customers (no purchase in 30–89 days), churned customers "
+                "(90+ days silent), SMS/WhatsApp consent rates, follow-up "
+                "delivery stats, top customers by spend, and the top products "
+                "most frequently purchased by registered customers. "
+                "Only available in online_pos mode where customers are registered."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -316,6 +333,15 @@ class AIManagerService:
             db, organization_id=organization_id, branch_id=effective_branch_id, limit=10,
         )
 
+        # Customer analytics — from live Customer/Sale tables (available in both modes)
+        try:
+            customer_analytics = CustomerAnalyticsService.summary(
+                db, organization_id=organization_id, branch_id=effective_branch_id,
+                period_days=effective_period_days,
+            )
+        except Exception:
+            customer_analytics = {"error": "customer analytics unavailable"}
+
         tool_results = {
             "time_window": {
                 "label": reporting_window["label"],
@@ -333,6 +359,7 @@ class AIManagerService:
             "dead_stock": dead_stock,
             "revenue_comparison": revenue_comparison,
             "reconciliation": reconciliation,
+            "customer_analytics": customer_analytics,
         }
 
         trust_warning = AIManagerService._build_trust_warning(sync_health, reconciliation)
@@ -348,7 +375,7 @@ class AIManagerService:
             dead_stock=dead_stock, revenue_comparison=revenue_comparison,
             reconciliation=reconciliation, period_days=effective_period_days,
             window_label=reporting_window["label"], product_sales=product_sales,
-            branch_id=effective_branch_id,
+            branch_id=effective_branch_id, customer_analytics=customer_analytics,
         )
         if trust_warning:
             deterministic_answer = f"DATA TRUST WARNING: {trust_warning}\n\n{deterministic_answer}"
@@ -538,6 +565,7 @@ class AIManagerService:
             "get_dead_stock": "dead_stock",
             "get_revenue_comparison": "revenue_comparison",
             "get_reconciliation": "reconciliation",
+            "get_customer_analytics": "customer_analytics",
         }
 
         def _resolve_window(period: str):
@@ -610,6 +638,11 @@ class AIManagerService:
                 return CloudReconciliationService.reconcile(
                     db, organization_id=organization_id, branch_id=branch_id,
                     limit=limit,
+                )
+            if tool_name == "get_customer_analytics":
+                return CustomerAnalyticsService.summary(
+                    db, organization_id=organization_id, branch_id=branch_id,
+                    period_days=period_days,
                 )
             return {"error": f"Unknown tool: {tool_name}"}
 
@@ -928,6 +961,7 @@ class AIManagerService:
         window_label: str,
         product_sales: List[Dict[str, Any]],
         branch_id: Optional[int],
+        customer_analytics: Optional[Dict[str, Any]] = None,
     ) -> str:
         scope = f"branch {branch_id}" if branch_id is not None else "all permitted branches"
         top_branch = max(branch_sales, key=lambda row: row["total_revenue"], default=None)
@@ -1082,6 +1116,37 @@ class AIManagerService:
                 f"+{inventory_summary['total_positive_quantity']} received/positive quantity, "
                 f"{inventory_summary['total_negative_quantity']} negative quantity, and "
                 f"{inventory_summary['net_quantity_delta']} net quantity movement."
+            )
+
+        if any(keyword in message for keyword in [
+            "customer", "customers", "retention", "churn", "churned",
+            "at risk", "at-risk", "repeat", "follow up", "follow-up", "followup", "consent",
+        ]):
+            ca = customer_analytics or {}
+            if ca.get("error"):
+                return (
+                    "Customer analytics are not available in this deployment mode — "
+                    "customers are only registered in online_pos mode."
+                )
+            total = ca.get("total_customers", 0)
+            new   = ca.get("new_customers_in_period", 0)
+            repeat_rate = ca.get("repeat_rate_pct", 0.0)
+            at_risk = ca.get("at_risk_customers", 0)
+            churned = ca.get("churned_customers", 0)
+            top = (ca.get("top_customers") or [{}])[0]
+            top_text = (
+                f" Top customer by spend: {top.get('full_name', 'N/A')} "
+                f"(GHS {top.get('total_spend', 0):.2f}, {top.get('purchase_count', 0)} purchase(s))."
+            ) if top.get("full_name") else ""
+            consent = ca.get("consent_stats", {})
+            fu = ca.get("follow_up_stats", {})
+            return (
+                f"For {scope} over {window_label}: {total} registered customer(s), "
+                f"{new} new this period, {repeat_rate:.1f}% repeat-purchase rate, "
+                f"{at_risk} at-risk (no purchase in 30–89 days), {churned} churned (90+ days).{top_text} "
+                f"SMS consent granted: {consent.get('sms_granted', 0)} "
+                f"({consent.get('sms_rate_pct', 0):.1f}%). "
+                f"Follow-ups: {fu.get('sent', 0)} sent, {fu.get('pending', 0)} pending, {fu.get('failed', 0)} failed."
             )
 
         return (

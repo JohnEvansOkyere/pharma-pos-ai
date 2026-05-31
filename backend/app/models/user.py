@@ -1,7 +1,7 @@
 """
 User model for authentication and authorization.
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum as SQLEnum, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum as SQLEnum, ForeignKey, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum
@@ -54,8 +54,8 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    email = Column(String(100), unique=True, index=True, nullable=False)
+    username = Column(String(50), index=True, nullable=False)
+    email = Column(String(100), index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(100), nullable=False)
     role = Column(SQLEnum(UserRole), default=UserRole.CASHIER, nullable=False)
@@ -75,6 +75,14 @@ class User(Base):
 
     def __repr__(self):
         return f"<User(id={self.id}, username='{self.username}', role='{self.role}')>"
+
+    # Composite unique constraints: scoped per organization for multi-tenant
+    # cloud deployments. NULLS NOT DISTINCT (enforced by migration index) keeps
+    # local_pos uniqueness when organization_id IS NULL.
+    __table_args__ = (
+        UniqueConstraint("organization_id", "username", name="uq_users_org_username"),
+        UniqueConstraint("organization_id", "email", name="uq_users_org_email"),
+    )
 
     @property
     def effective_permissions(self) -> set[str]:

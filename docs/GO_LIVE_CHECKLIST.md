@@ -713,6 +713,67 @@
 
 ---
 
+## Phase E: Customer Retention Module (online_pos only)
+
+> This phase covers the customer registration, digital receipts, health follow-up automation, and analytics features available in `online_pos` mode. Not applicable to village `local_pos` installs.
+
+### E.1 Customer Registration & Database
+
+- [x] `Customer` model with org/branch scoping, phone uniqueness, consent fields, soft-delete ✅ *(2026-05-28)*
+- [x] `CustomerFollowUp` model: scheduled messages, delivery tracking, retry count, channel ✅ *(2026-05-28)*
+- [x] Alembic migration `o5d6e7f8g9h0`: creates `customers`, `customer_follow_ups` tables; adds `customer_id` FK and `receipt_sent` flag to `sales` ✅ *(2026-05-28)*
+- [x] `customer_id` (optional FK) linked to `Sale` at POS checkout ✅ *(2026-05-28)*
+
+### E.2 Customer Consent & Data Protection
+
+- [x] Consent captured at registration for SMS and WhatsApp separately (`granted` / `declined` / `pending`) ✅ *(2026-05-28)*
+- [x] Receipt and follow-up dispatch check consent before sending — no messages sent without `granted` ✅ *(2026-05-28)*
+- [x] `consent_recorded_at` timestamp recorded on all consent changes for audit trail ✅ *(2026-05-28)*
+- [ ] Opt-out webhook handler to update consent on "STOP" reply — requires provider webhook setup *(deferred to provider integration)*
+
+### E.3 SMS/WhatsApp Delivery
+
+- [x] `MessageAdapter` abstract base with `send()`, `send_receipt()`, `send_follow_up()` ✅ *(2026-05-28)*
+- [x] `StubAdapter`: default — logs messages, marks follow-ups as sent, no cost ✅ *(2026-05-28)*
+- [x] `AfricasTalkingAdapter`: Ghana SMS via Africa's Talking API. Activated by `SMS_PROVIDER=africas_talking` + `SMS_USERNAME` + `SMS_API_KEY` ✅ *(2026-05-29)*
+  - Ghana number normalisation (0244… → +233244…, E.164 passthrough)
+  - statusCode 101/102 = sent/queued; other codes = failure
+  - WhatsApp falls back to SMS with a warning log (AT has no native WA API yet)
+  - Sender ID: configurable `SMS_SENDER_ID`, capped at 11 chars (AT Ghana requirement)
+- [x] Hubtel adapter path wired in `get_adapter()` — set `SMS_PROVIDER=hubtel` + `SMS_CLIENT_ID` + `SMS_CLIENT_SECRET` + `SMS_FROM_NUMBER` ✅ *(2026-05-29)*
+  - Requires `_hubtel_adapter.py` (interface defined, implementation to fill in on contract award)
+- [x] All SMS config typed in `Settings` class: `SMS_PROVIDER`, `SMS_SENDER_ID`, `SMS_API_KEY`, `SMS_USERNAME`, `SMS_FROM_NUMBER`, `SMS_CLIENT_ID`, `SMS_CLIENT_SECRET` ✅ *(2026-05-29)*
+- [x] Follow-up scheduling: `CUSTOMER_FOLLOWUP_DAYS` (default 3 days after purchase), `CUSTOMER_FOLLOWUP_HOUR` (default 10:00) ✅ *(2026-05-29)*
+- [ ] **Production gate:** Set `SMS_PROVIDER` to `africas_talking` and provide real credentials before go-live. Verify with sandbox first.
+
+### E.4 Retention Service & Scheduler
+
+- [x] `CustomerRetentionService.dispatch_receipt()`: non-fatal; called after each sale commit in online_pos mode ✅ *(2026-05-28)*
+- [x] `CustomerRetentionService.schedule_follow_up()`: creates PENDING follow-up record ✅ *(2026-05-28)*
+- [x] `CustomerRetentionService.process_pending_follow_ups()`: processes overdue PENDING follow-ups ✅ *(2026-05-28)*
+- [x] Hourly scheduler job `dispatch_customer_follow_ups` in `online_pos` mode only ✅ *(2026-05-28)*
+
+### E.5 Frontend — Customer Module
+
+- [x] `CustomerModal.tsx`: POS search (250ms debounce) + new registration + consent capture ✅ *(2026-05-28)*
+- [x] `CustomersPage.tsx`: customer directory with profile drill-down, purchase count, follow-up history ✅ *(2026-05-28)*
+- [x] `FollowUpDashboard.tsx`: operator view — status tiles, overdue alerts, sortable table ✅ *(2026-05-28)*
+- [x] `CustomerAnalyticsPage.tsx`: 5 KPI cards, lifecycle funnel, consent panel, top customers, product affinity ✅ *(2026-05-29)*
+- [x] Sidebar: Customers, Customer Analytics, Follow-ups — visible in `online_pos` mode only ✅ *(2026-05-29)*
+
+### E.6 AI Integration
+
+- [x] `get_customer_analytics` AI tool registered in `TOOL_SCHEMAS` ✅ *(2026-05-29)*
+- [x] `_compose_answer()` keyword routing: customer/retention/churn/at-risk etc. queries answered deterministically ✅ *(2026-05-29)*
+- [x] Telegram daily briefing includes retention block (total/new/repeat rate/at-risk/churned/follow-up stats) in `online_pos` mode ✅ *(2026-05-29)*
+
+### E.7 Test Coverage
+
+- [x] 21 tests in `test_customer_retention.py`: registration, consent, analytics service (7 scenarios), StubAdapter, get_adapter fallback, AT number normalisation (5 cases) ✅ *(2026-05-29)*
+- [x] Full suite: **158 tests pass** *(2026-05-29)*
+
+---
+
 ## Sign-Off
 
 | Role | Name | Date | Approved |

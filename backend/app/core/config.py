@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Application
     APP_NAME: str = "GYSBIN PHARMACY ANNEX"
     APP_VERSION: str = "1.0.0"
-    APP_MODE: str = "local_pos"  # local_pos or cloud_reporting
+    APP_MODE: str = "local_pos"  # local_pos, online_pos, or cloud_reporting
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
 
@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     CLOUD_SYNC_MAX_RETRIES: int = 10
     CLOUD_SYNC_INTERVAL_MINUTES: int = 5
     CLOUD_HEARTBEAT_INTERVAL_MINUTES: int = 5
+    CLOUD_CATALOG_SNAPSHOT_SYNC_ENABLED: bool = True
+    CLOUD_CATALOG_SNAPSHOT_SYNC_HOUR: int = 23
+    CLOUD_CATALOG_SNAPSHOT_SYNC_MINUTE: int = 0
     CLOUD_SYNC_REQUIRE_TOKEN: bool = True
     CLOUD_PROJECTION_ENABLED: bool = False
     CLOUD_PROJECTION_INTERVAL_MINUTES: int = 5
@@ -121,6 +124,22 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
 
+    # SMS / WhatsApp delivery (Customer Retention Module)
+    # Set SMS_PROVIDER to activate a real provider. Default = stub (logs only).
+    #   stub              — development/staging; logs but never sends
+    #   africas_talking   — Africa's Talking (Ghana, Nigeria, Kenya, +20 markets)
+    #   hubtel            — Hubtel (Ghana-specific, high delivery rates)
+    SMS_PROVIDER: str = "stub"             # stub | africas_talking | hubtel
+    SMS_SENDER_ID: str = "PharmaPOS"       # Alphanumeric sender ID (max 11 chars for GH)
+    SMS_API_KEY: Optional[str] = None      # Africa's Talking or Hubtel API key
+    SMS_USERNAME: Optional[str] = None     # Africa's Talking username ("sandbox" for test)
+    SMS_FROM_NUMBER: Optional[str] = None  # Hubtel: registered sender number (E.164)
+    SMS_CLIENT_ID: Optional[str] = None    # Hubtel: client ID
+    SMS_CLIENT_SECRET: Optional[str] = None  # Hubtel: client secret
+    # Follow-up scheduling
+    CUSTOMER_FOLLOWUP_DAYS: int = 3        # Days after purchase before health follow-up
+    CUSTOMER_FOLLOWUP_HOUR: int = 10       # Hour of day to dispatch follow-ups (local tz)
+
     # Business Rules
     LOW_STOCK_THRESHOLD: int = 10
     EXPIRY_WARNING_DAYS: int = 30
@@ -141,8 +160,8 @@ class Settings(BaseSettings):
         backend = self.DATABASE_BACKEND.lower()
         self.APP_MODE = self.APP_MODE.strip().lower()
 
-        if self.APP_MODE not in {"local_pos", "cloud_reporting"}:
-            raise ValueError("APP_MODE must be either 'local_pos' or 'cloud_reporting'.")
+        if self.APP_MODE not in {"local_pos", "online_pos", "cloud_reporting"}:
+            raise ValueError("APP_MODE must be 'local_pos', 'online_pos', or 'cloud_reporting'.")
 
         if backend != "postgresql":
             raise ValueError(

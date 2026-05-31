@@ -60,7 +60,7 @@ Use:
 What it does:
 
 - creates a Windows Task Scheduler job
-- runs the backup every day at 8:00 PM
+- runs the backup every day at 11:00 PM
 - writes output to `backups\backup.log`
 
 ## Windows Restore
@@ -120,12 +120,12 @@ bash scripts/install_backup_cron.sh
 
 Default schedule:
 
-- every day at 8:00 PM
+- every day at 11:00 PM
 
 Optional environment variable:
 
 ```env
-BACKUP_CRON_SCHEDULE=0 20 * * *
+BACKUP_CRON_SCHEDULE=0 23 * * *
 ```
 
 ## Linux Restore

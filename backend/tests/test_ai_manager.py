@@ -32,6 +32,22 @@ from app.models.user import User, UserPermission, UserRole
 from app.schemas.ai_manager import AIExternalProviderSettingUpsert, AIFindingStatusUpdate, AIManagerChatRequest
 from app.services.ai_llm_provider import AIManagerLLMProvider
 from app.services.telegram_alert_service import TelegramAlertService
+from app.api.endpoints.ai_manager import _ai_chat_calls
+
+
+@pytest.fixture(autouse=True)
+def _reset_ai_rate_limiter():
+    """Clear the in-process rate limiter state before every test.
+
+    The rate limiter uses a module-level defaultdict that persists for the
+    lifetime of the test process. Without this fixture, tests that call
+    chat_with_ai_manager more than _AI_RATE_LIMIT_MAX times total will start
+    failing with 429 — not because they are misbehaving, but because the
+    counter isn't reset between tests.
+    """
+    _ai_chat_calls.clear()
+    yield
+    _ai_chat_calls.clear()
 
 
 def _tenant(db_session):

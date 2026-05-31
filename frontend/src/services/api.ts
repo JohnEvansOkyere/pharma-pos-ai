@@ -540,6 +540,52 @@ class ApiClient {
     await this.client.delete(`/users/${userId}`)
   }
 
+  // Customer retention endpoints
+  async registerCustomer(data: any) {
+    const response = await this.client.post('/customers', data)
+    return response.data
+  }
+
+  async getCustomers(params?: any) {
+    const response = await this.client.get('/customers', { params })
+    return response.data
+  }
+
+  async searchCustomers(q: string, limit = 10) {
+    const response = await this.client.get('/customers/search', { params: { q, limit } })
+    return response.data
+  }
+
+  async getCustomer(id: number) {
+    const response = await this.client.get(`/customers/${id}`)
+    return response.data
+  }
+
+  async updateCustomer(id: number, data: any) {
+    const response = await this.client.patch(`/customers/${id}`, data)
+    return response.data
+  }
+
+  async updateCustomerConsent(id: number, data: any) {
+    const response = await this.client.patch(`/customers/${id}/consent`, data)
+    return response.data
+  }
+
+  async getCustomerFollowUps(customerId: number) {
+    const response = await this.client.get(`/customers/${customerId}/follow-ups`)
+    return response.data
+  }
+
+  async getCustomerAnalytics(periodDays = 30) {
+    const response = await this.client.get('/customers/analytics', { params: { period_days: periodDays } })
+    return response.data
+  }
+
+  async getPendingFollowUps(limit = 200) {
+    const response = await this.client.get('/customers/follow-ups/pending', { params: { limit } })
+    return response.data
+  }
+
   // Admin — client / tenancy management (vendor-only)
   async getAdminOrganizations(activeOnly = false) {
     const response = await this.client.get('/admin/organizations', { params: { active_only: activeOnly } })
@@ -599,6 +645,18 @@ class ApiClient {
 
   async triggerBackupNow() {
     const response = await this.client.post('/system/backup-now')
+    return response.data
+  }
+
+  async getSyncStatus() {
+    const response = await this.client.get('/system/sync-status')
+    return response.data
+  }
+
+  async triggerCloudSyncNow(includeInactive = false) {
+    const response = await this.client.post('/system/cloud-sync-now', null, {
+      params: { include_inactive: includeInactive },
+    })
     return response.data
   }
 

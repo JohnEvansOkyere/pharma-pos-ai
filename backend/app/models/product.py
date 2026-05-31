@@ -2,7 +2,7 @@
 Product and ProductBatch models for inventory management.
 Enhanced for professional pharmaceutical POS system.
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, Enum as SQLEnum, Numeric
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, Date, ForeignKey, Enum as SQLEnum, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from enum import Enum
@@ -44,8 +44,8 @@ class Product(Base):
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True, index=True)
     name = Column(String(200), nullable=False, index=True)
     generic_name = Column(String(200))
-    sku = Column(String(50), unique=True, nullable=False, index=True)
-    barcode = Column(String(100), unique=True, index=True)
+    sku = Column(String(50), nullable=False, index=True)
+    barcode = Column(String(100), index=True)
     description = Column(Text)
 
     # Pharmaceutical-specific fields
@@ -91,6 +91,15 @@ class Product(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Composite unique constraints: scoped per organization so two pharmacies
+    # on the same cloud DB can each have their own product catalog.
+    # NULLS NOT DISTINCT (enforced by the migration index) means local_pos
+    # installs (organization_id IS NULL) retain uniqueness within the single tenant.
+    __table_args__ = (
+        UniqueConstraint("organization_id", "sku", name="uq_products_org_sku"),
+        UniqueConstraint("organization_id", "barcode", name="uq_products_org_barcode"),
+    )
 
     def __repr__(self):
         return f"<Product(id={self.id}, name='{self.name}', form='{self.dosage_form}')>"

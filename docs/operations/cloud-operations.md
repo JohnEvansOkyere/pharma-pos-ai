@@ -47,6 +47,8 @@ Cloud reporting maintenance includes:
 
 On the cloud backend, set `CLOUD_PROJECTION_ENABLED=true` so accepted events are projected into dashboard and AI reporting tables on a schedule.
 
+Local installs can also trigger a manual cloud refresh from Settings. That workflow enqueues a fresh product/batch catalog snapshot, uploads pending local outbox events immediately, and the cloud backend projects accepted events during ingestion when projection is enabled. The same catalog snapshot sync runs automatically at 11:00 PM by default when `CLOUD_SYNC_ENABLED=true` and `CLOUD_CATALOG_SNAPSHOT_SYNC_ENABLED=true`.
+
 ## Supabase Operations
 
 For Supabase Postgres:

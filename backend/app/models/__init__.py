@@ -14,6 +14,7 @@ from app.models.stock_adjustment import StockAdjustment
 from app.models.inventory_movement import InventoryMovement
 from app.models.stock_take import StockTake, StockTakeItem
 from app.models.restore_drill import RestoreDrill
+from app.models.customer import Customer, CustomerFollowUp
 from app.models.sync_event import SyncEvent, SyncEventCounter
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.ai_report import (
@@ -54,6 +55,8 @@ __all__ = [
     "StockTake",
     "StockTakeItem",
     "RestoreDrill",
+    "Customer",
+    "CustomerFollowUp",
     "SyncEvent",
     "SyncEventCounter",
     "IngestedSyncEvent",
