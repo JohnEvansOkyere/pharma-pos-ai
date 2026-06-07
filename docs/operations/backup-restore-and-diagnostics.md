@@ -12,6 +12,11 @@ System operations expose:
 
 Backup scripts exist for Windows and Linux paths. The system reads latest backup metadata from the backup directory and status file.
 
+Hosted tenants use a separate path: a dedicated Render cron job creates an
+encrypted logical backup and uploads it to off-platform S3-compatible storage.
+See [Hosted Tenant Backups](hosted-backups.md). Local backup status files do not
+prove that the hosted off-platform job succeeded.
+
 ## Backup Status
 
 Backup status reports:

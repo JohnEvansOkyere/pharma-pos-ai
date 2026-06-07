@@ -61,7 +61,12 @@ Africa's Talking example schema:
   "SMS_PROVIDER": "africas_talking",
   "SMS_API_KEY": "<tenant-specific-key>",
   "SMS_USERNAME": "<tenant-specific-username>",
-  "SMS_SENDER_ID": "<approved-sender-id>"
+  "SMS_SENDER_ID": "<approved-sender-id>",
+  "BACKUP_S3_BUCKET": "<backup-bucket>",
+  "BACKUP_S3_ENDPOINT_URL": "<s3-compatible-endpoint>",
+  "BACKUP_S3_REGION": "<storage-region>",
+  "BACKUP_S3_ACCESS_KEY_ID": "<tenant-scoped-access-key>",
+  "BACKUP_S3_SECRET_ACCESS_KEY": "<tenant-scoped-secret>"
 }
 ```
 
@@ -73,7 +78,12 @@ Hubtel example schema:
   "SMS_CLIENT_ID": "<tenant-specific-client-id>",
   "SMS_CLIENT_SECRET": "<tenant-specific-client-secret>",
   "SMS_FROM_NUMBER": "<registered-number>",
-  "SMS_SENDER_ID": "<approved-sender-id>"
+  "SMS_SENDER_ID": "<approved-sender-id>",
+  "BACKUP_S3_BUCKET": "<backup-bucket>",
+  "BACKUP_S3_ENDPOINT_URL": "<s3-compatible-endpoint>",
+  "BACKUP_S3_REGION": "<storage-region>",
+  "BACKUP_S3_ACCESS_KEY_ID": "<tenant-scoped-access-key>",
+  "BACKUP_S3_SECRET_ACCESS_KEY": "<tenant-scoped-secret>"
 }
 ```
 
@@ -116,6 +126,11 @@ become available, migrates and seeds it through the temporarily allowlisted
 external connection, registers the control-plane rows, creates a dedicated
 backend service using the internal database URL, and disables external database
 access.
+
+The same apply creates a Docker-based Render cron service that runs encrypted
+off-platform logical backups at `02:00 UTC` by default. Override with
+`RENDER_BACKUP_SCHEDULE` when required. See
+[Hosted Tenant Backups](hosted-backups.md).
 
 Hosted apply refuses `SMS_PROVIDER=stub`, missing provider credentials, broad
 secret-file permissions, or a sensitive key fingerprint already assigned to

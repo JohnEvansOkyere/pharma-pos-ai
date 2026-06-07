@@ -21,6 +21,7 @@ os.environ.setdefault("SECRET_KEY", "provisioning-tool-only-secret-key-0001")
 from app.services.tenant_provisioning_service import (  # noqa: E402
     RenderAPIClient,
     build_render_postgres_payload,
+    build_render_backup_cron_payload,
     build_render_service_payload,
     configure_tenant_runtime_secrets,
     load_or_create_state,
@@ -96,6 +97,15 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--render-service-plan",
         default=os.getenv("RENDER_SERVICE_PLAN", "starter"),
+    )
+    parser.add_argument(
+        "--render-backup-plan",
+        default=os.getenv("RENDER_BACKUP_PLAN", "starter"),
+    )
+    parser.add_argument(
+        "--render-backup-schedule",
+        default=os.getenv("RENDER_BACKUP_SCHEDULE", "0 2 * * *"),
+        help="UTC cron schedule for encrypted tenant backups",
     )
     parser.add_argument(
         "--render-repo",
@@ -282,6 +292,32 @@ def main() -> int:
             service.get("serviceDetails") or {}
         ).get("url")
         state["steps"]["render_service"] = "created"
+        save_state(state_dir, state)
+
+    if render_client is not None and not state["render"].get(
+        "backup_cron_service_id"
+    ):
+        backup_response = render_client.create_service(
+            build_render_backup_cron_payload(
+                slug=tenant_slug,
+                owner_id=args.render_owner_id,
+                region=args.render_region,
+                plan=args.render_backup_plan,
+                repo=args.render_repo,
+                branch=args.render_branch,
+                schedule=args.render_backup_schedule,
+                database_url=internal_database_url,
+                identity=identity,
+                tenant_secrets=tenant_secrets,
+                environment_id=args.render_environment_id,
+            )
+        )
+        backup_service = backup_response["service"]
+        state["render"]["backup_cron_service_id"] = backup_service["id"]
+        state["render"]["backup_cron_dashboard_url"] = backup_service.get(
+            "dashboardUrl"
+        )
+        state["steps"]["render_backup_cron"] = "created"
         save_state(state_dir, state)
 
     if (

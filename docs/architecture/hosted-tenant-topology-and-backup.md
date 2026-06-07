@@ -81,6 +81,14 @@ application version, schema revision, backup timestamp, size, and checksum, and
 must alert on failure or staleness. Encryption keys must not be stored with the
 backup objects.
 
+The implemented tenant provisioner creates a dedicated Docker-based Render cron
+service that runs `backend/scripts/backup_tenant.py`. It creates a PostgreSQL
+custom dump, encrypts it with tenant-unique AES-256-GCM, uploads the encrypted
+object and manifest to tenant-scoped S3-compatible storage, and enforces daily
+and monthly retention. See `docs/operations/hosted-backups.md`. This automation
+is not considered operationally proven until a real provider run and restore
+drill succeed.
+
 The central reporting/control database follows the same off-platform logical
 backup rule in addition to Supabase-managed project backups.
 
@@ -115,4 +123,3 @@ be promised to clients before a timed restore drill proves it.
 - [Render Postgres plans and PITR](https://render.com/pricing)
 - [Supabase database backups](https://supabase.com/docs/guides/platform/backups)
 - [Supabase project database model](https://supabase.com/docs/guides/platform)
-

@@ -9,4 +9,5 @@ Read in this order:
 3. [Cloud Operations](cloud-operations.md)
 4. [Render And Vercel Deployment](render-vercel-deployment.md)
 5. [Isolated Tenant Provisioning](tenant-provisioning.md)
+6. [Hosted Tenant Backups](hosted-backups.md)
 5. [Incident Response](incident-response.md)

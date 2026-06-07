@@ -10,6 +10,7 @@ from app.models.user import User, UserRole
 from app.services.tenant_provisioning_service import (
     TenantIdentity,
     TenantSecrets,
+    build_render_backup_cron_payload,
     build_render_postgres_payload,
     build_render_service_payload,
     configure_tenant_runtime_secrets,
@@ -35,6 +36,7 @@ def _secrets() -> TenantSecrets:
         secret_key="s" * 64,
         sync_token="sync-token-value",
         admin_password="Admin-Password-123",
+        backup_encryption_key="Y" * 44,
     )
 
 
@@ -213,11 +215,17 @@ def test_render_service_payload_uses_isolated_runtime_and_global_ids():
             secret_key="s" * 64,
             sync_token="sync-token-value",
             admin_password="Admin-Password-123",
+            backup_encryption_key="Y" * 44,
             runtime_env={
                 "SMS_PROVIDER": "africas_talking",
                 "SMS_API_KEY": "tenant-sms-key",
                 "SMS_USERNAME": "tenant-account",
                 "SMS_SENDER_ID": "PharmaPOS",
+                "BACKUP_S3_BUCKET": "tenant-backups",
+                "BACKUP_S3_ENDPOINT_URL": "https://objects.example",
+                "BACKUP_S3_REGION": "auto",
+                "BACKUP_S3_ACCESS_KEY_ID": "tenant-backup-user",
+                "BACKUP_S3_SECRET_ACCESS_KEY": "tenant-backup-secret",
             },
         ),
         control_plane_ids={"organization_id": 10, "branch_id": 20},
@@ -241,6 +249,7 @@ def test_render_service_payload_uses_isolated_runtime_and_global_ids():
     assert environment["CLOUD_SYNC_DEPLOYMENT_UID"] == identity.deployment_uid
     assert environment["SMS_PROVIDER"] == "africas_talking"
     assert environment["SMS_API_KEY"] == "tenant-sms-key"
+    assert "BACKUP_S3_SECRET_ACCESS_KEY" not in environment
 
 
 def test_runtime_secret_file_requires_owner_only_permissions(tmp_path):
@@ -274,12 +283,44 @@ def test_configure_runtime_secrets_requires_real_hosted_sms_provider(tmp_path):
         )
 
 
+def test_configure_runtime_secrets_requires_hosted_backup_storage(tmp_path):
+    state, _identity_value, tenant_secrets = load_or_create_state(
+        tmp_path / "tenant-a",
+        organization_name="Tenant A",
+        branch_name="Main Branch",
+        branch_code="MAIN",
+        device_name="Hosted Backend",
+        admin_username="owner",
+        admin_email="owner@example.com",
+        admin_full_name="Owner",
+    )
+
+    with pytest.raises(ValueError, match="backup storage credentials"):
+        configure_tenant_runtime_secrets(
+            tmp_path / "tenant-a",
+            state,
+            tenant_secrets,
+            {
+                "SMS_PROVIDER": "africas_talking",
+                "SMS_API_KEY": "tenant-key",
+                "SMS_USERNAME": "tenant-account",
+                "SMS_SENDER_ID": "PharmaPOS",
+            },
+            require_sms_credentials=True,
+        )
+
+
 def test_configure_runtime_secrets_rejects_cross_tenant_key_reuse(tmp_path):
     runtime_env = {
         "SMS_PROVIDER": "africas_talking",
         "SMS_API_KEY": "shared-key-is-not-allowed",
         "SMS_USERNAME": "tenant-account",
         "SMS_SENDER_ID": "PharmaPOS",
+        "BACKUP_S3_BUCKET": "tenant-backups",
+        "BACKUP_S3_ENDPOINT_URL": "https://objects.example",
+        "BACKUP_S3_REGION": "auto",
+        "BACKUP_S3_ACCESS_KEY_ID": "tenant-backup-user",
+        "BACKUP_S3_SECRET_ACCESS_KEY": "shared-backup-secret",
     }
     first_state, _first_identity, first_secrets = load_or_create_state(
         tmp_path / "tenant-a",
@@ -348,7 +389,61 @@ def test_configure_runtime_secrets_rejects_reserved_deployment_variables(
                 "SMS_API_KEY": "tenant-key",
                 "SMS_USERNAME": "tenant-account",
                 "SMS_SENDER_ID": "PharmaPOS",
+                "BACKUP_S3_BUCKET": "tenant-backups",
+                "BACKUP_S3_ENDPOINT_URL": "https://objects.example",
+                "BACKUP_S3_REGION": "auto",
+                "BACKUP_S3_ACCESS_KEY_ID": "tenant-backup-user",
+                "BACKUP_S3_SECRET_ACCESS_KEY": "tenant-backup-secret",
                 "DATABASE_URL": "postgresql://wrong-database",
             },
             require_sms_credentials=True,
         )
+
+
+def test_render_backup_cron_receives_backup_secrets_only():
+    identity = _identity()
+    tenant_secrets = TenantSecrets(
+        secret_key="s" * 64,
+        sync_token="sync-token-value",
+        admin_password="Admin-Password-123",
+        backup_encryption_key="Z" * 44,
+        runtime_env={
+            "SMS_PROVIDER": "africas_talking",
+            "SMS_API_KEY": "tenant-sms-key",
+            "SMS_USERNAME": "tenant-account",
+            "SMS_SENDER_ID": "PharmaPOS",
+            "BACKUP_S3_BUCKET": "tenant-backups",
+            "BACKUP_S3_ENDPOINT_URL": "https://objects.example",
+            "BACKUP_S3_REGION": "auto",
+            "BACKUP_S3_ACCESS_KEY_ID": "tenant-backup-user",
+            "BACKUP_S3_SECRET_ACCESS_KEY": "tenant-backup-secret",
+        },
+    )
+
+    payload = build_render_backup_cron_payload(
+        slug="provisioned-pharmacy",
+        owner_id="tea-owner",
+        region="frankfurt",
+        plan="starter",
+        repo="https://github.com/example/pharma-pos-ai.git",
+        branch="main",
+        schedule="0 2 * * *",
+        database_url="postgresql://tenant-internal",
+        identity=identity,
+        tenant_secrets=tenant_secrets,
+    )
+    environment = {
+        item["key"]: item["value"]
+        for item in payload["envVars"]
+    }
+
+    assert payload["type"] == "cron_job"
+    assert payload["serviceDetails"]["schedule"] == "0 2 * * *"
+    assert payload["serviceDetails"]["runtime"] == "docker"
+    assert payload["serviceDetails"]["envSpecificDetails"]["dockerCommand"] == (
+        "python scripts/backup_tenant.py"
+    )
+    assert environment["BACKUP_ENCRYPTION_KEY"] == "Z" * 44
+    assert environment["BACKUP_S3_BUCKET"] == "tenant-backups"
+    assert "SMS_API_KEY" not in environment
+    assert "SECRET_KEY" not in environment

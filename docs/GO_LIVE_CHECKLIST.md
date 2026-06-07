@@ -823,7 +823,7 @@
 
 ### 10.3 P0 Backup / Restore Proof (depends on 10.0 topology)
 
-- [ ] **Encrypted per-tenant backups** automated for every hosted tenant database. *(2026-06-06 UTC)*
+- [/] **Encrypted per-tenant backups** automated for every hosted tenant database. *(updated 2026-06-07 09:10 UTC — provisioning now creates a dedicated Docker Render cron job per tenant; each run performs `pg_dump`, tenant-unique AES-256-GCM encryption, S3-compatible off-platform upload, authenticated manifest/checksums, 35-day daily retention, and 12-month monthly retention. Remaining acceptance evidence: run the job against a real hosted tenant and verify the stored object/manifest and failure alerting.)*
 - [ ] **Rehearsed single-tenant restore drill** — prove one pharmacy can be restored to a point in time without touching any other tenant. If tenant databases share one managed server, this requires **logical per-DB backups (`pg_dump`)**, not instance-level PITR. A restore procedure on paper does not count. *(2026-06-07 UTC)*
 - [ ] Per-tenant logical export ("give me my data" / clean offboarding). *(2026-06-06 UTC)*
 

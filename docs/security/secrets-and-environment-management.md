@@ -63,6 +63,18 @@ Hosted provisioning requires a real SMS provider. Supported required sets:
 - Hubtel: `SMS_CLIENT_ID`, `SMS_CLIENT_SECRET`, `SMS_FROM_NUMBER`,
   `SMS_SENDER_ID`
 
+Hosted bundles also require tenant-scoped off-platform backup storage:
+
+- `BACKUP_S3_BUCKET`
+- `BACKUP_S3_ENDPOINT_URL`
+- `BACKUP_S3_REGION`
+- `BACKUP_S3_ACCESS_KEY_ID`
+- `BACKUP_S3_SECRET_ACCESS_KEY`
+
+The provisioner generates `BACKUP_ENCRYPTION_KEY` independently for each
+tenant. Backup storage and encryption credentials are injected only into the
+dedicated backup cron service, not the operational web backend.
+
 `SMS_PROVIDER=stub` remains valid only for deployments where customer messaging
 is intentionally disabled, such as a basic offline profile.
 

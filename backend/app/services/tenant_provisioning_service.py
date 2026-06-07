@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+from base64 import urlsafe_b64encode
 import hashlib
 from ipaddress import ip_network
 import json
@@ -48,6 +49,11 @@ ALLOWED_TENANT_RUNTIME_ENV = {
     "SMTP_FROM_NAME",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET",
+    "BACKUP_S3_BUCKET",
+    "BACKUP_S3_ENDPOINT_URL",
+    "BACKUP_S3_REGION",
+    "BACKUP_S3_ACCESS_KEY_ID",
+    "BACKUP_S3_SECRET_ACCESS_KEY",
 }
 SENSITIVE_TENANT_RUNTIME_ENV = {
     "SMS_API_KEY",
@@ -59,6 +65,15 @@ SENSITIVE_TENANT_RUNTIME_ENV = {
     "SMTP_PASSWORD",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_WEBHOOK_SECRET",
+    "BACKUP_S3_ACCESS_KEY_ID",
+    "BACKUP_S3_SECRET_ACCESS_KEY",
+}
+BACKUP_RUNTIME_ENV_KEYS = {
+    "BACKUP_S3_BUCKET",
+    "BACKUP_S3_ENDPOINT_URL",
+    "BACKUP_S3_REGION",
+    "BACKUP_S3_ACCESS_KEY_ID",
+    "BACKUP_S3_SECRET_ACCESS_KEY",
 }
 
 
@@ -118,6 +133,7 @@ class TenantSecrets:
     secret_key: str
     sync_token: str
     admin_password: str
+    backup_encryption_key: str
     runtime_env: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -126,6 +142,7 @@ class TenantSecrets:
             secret_key=secrets.token_urlsafe(64),
             sync_token=secrets.token_urlsafe(48),
             admin_password=secrets.token_urlsafe(24),
+            backup_encryption_key=urlsafe_b64encode(os.urandom(32)).decode(),
             runtime_env={},
         )
 
@@ -207,6 +224,13 @@ def validate_tenant_runtime_env(
             f"{provider} tenant credentials are missing: "
             + ", ".join(sorted(missing))
         )
+    if require_sms_credentials:
+        missing_backup = BACKUP_RUNTIME_ENV_KEYS - set(validated)
+        if missing_backup:
+            raise ValueError(
+                "Hosted backup storage credentials are missing: "
+                + ", ".join(sorted(missing_backup))
+            )
     return validated
 
 
@@ -214,6 +238,7 @@ def secret_fingerprints(tenant_secrets: TenantSecrets) -> dict[str, str]:
     values = {
         "SECRET_KEY": tenant_secrets.secret_key,
         "CLOUD_SYNC_API_TOKEN": tenant_secrets.sync_token,
+        "BACKUP_ENCRYPTION_KEY": tenant_secrets.backup_encryption_key,
         **{
             key: value
             for key, value in tenant_secrets.runtime_env.items()
@@ -302,8 +327,14 @@ def load_or_create_state(
             secret_key=stored_secrets["secret_key"],
             sync_token=stored_secrets["sync_token"],
             admin_password=stored_secrets["admin_password"],
+            backup_encryption_key=stored_secrets.get(
+                "backup_encryption_key"
+            )
+            or urlsafe_b64encode(os.urandom(32)).decode(),
             runtime_env=stored_secrets.get("runtime_env", {}),
         )
+        if "backup_encryption_key" not in stored_secrets:
+            write_secrets_private(secrets_path, tenant_secrets)
         identity = TenantIdentity.from_dict(state["identity"])
         requested = (
             organization_name,
@@ -772,7 +803,13 @@ def build_render_service_payload(
         "CLOUD_SYNC_BRANCH_UID": identity.branch_uid,
         "CLOUD_PROJECTION_ENABLED": "false",
     }
-    environment.update(tenant_secrets.runtime_env)
+    environment.update(
+        {
+            key: value
+            for key, value in tenant_secrets.runtime_env.items()
+            if key not in BACKUP_RUNTIME_ENV_KEYS
+        }
+    )
     payload: dict[str, Any] = {
         "type": "web_service",
         "name": f"pharma-{slug}-backend",
@@ -798,6 +835,66 @@ def build_render_service_payload(
                 "startCommand": (
                     "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
                 ),
+            },
+        },
+    }
+    if environment_id:
+        payload["environmentId"] = environment_id
+    return payload
+
+
+def build_render_backup_cron_payload(
+    *,
+    slug: str,
+    owner_id: str,
+    region: str,
+    plan: str,
+    repo: str,
+    branch: str,
+    schedule: str,
+    database_url: str,
+    identity: TenantIdentity,
+    tenant_secrets: TenantSecrets,
+    environment_id: Optional[str] = None,
+) -> dict[str, Any]:
+    missing = BACKUP_RUNTIME_ENV_KEYS - set(tenant_secrets.runtime_env)
+    if missing:
+        raise ValueError(
+            "Hosted backup cron is missing storage configuration: "
+            + ", ".join(sorted(missing))
+        )
+    environment = {
+        "DATABASE_URL": database_url,
+        "CLOUD_SYNC_ORGANIZATION_UID": identity.organization_uid,
+        "BACKUP_ENCRYPTION_KEY": tenant_secrets.backup_encryption_key,
+        "BACKUP_DAILY_RETENTION_DAYS": "35",
+        "BACKUP_MONTHLY_RETENTION_DAYS": "366",
+        **{
+            key: tenant_secrets.runtime_env[key]
+            for key in sorted(BACKUP_RUNTIME_ENV_KEYS)
+        },
+    }
+    payload: dict[str, Any] = {
+        "type": "cron_job",
+        "name": f"pharma-{slug}-backup",
+        "ownerId": owner_id,
+        "repo": repo,
+        "branch": branch,
+        "autoDeploy": "yes",
+        "rootDir": "backend",
+        "envVars": [
+            {"key": key, "value": value}
+            for key, value in sorted(environment.items())
+        ],
+        "serviceDetails": {
+            "runtime": "docker",
+            "plan": plan,
+            "region": region,
+            "schedule": schedule,
+            "envSpecificDetails": {
+                "dockerCommand": "python scripts/backup_tenant.py",
+                "dockerContext": ".",
+                "dockerfilePath": "./Dockerfile",
             },
         },
     }
