@@ -16,6 +16,7 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.services.cloud_projection_service import CloudProjectionService
+from app.services.sync_identity_service import build_aggregate_uid
 
 
 def _hash(payload: dict) -> str:
@@ -60,10 +61,12 @@ def _ingested_event(
         organization_id=organization.id,
         branch_id=branch.id,
         source_device_id=device.id,
+        deployment_uid=device.deployment_uid,
         local_sequence_number=sequence,
         event_type=event_type,
         aggregate_type=aggregate_type,
         aggregate_id=aggregate_id,
+        aggregate_uid=build_aggregate_uid(device.deployment_uid, aggregate_type, aggregate_id),
         schema_version=1,
         payload=payload,
         payload_hash=_hash(payload),

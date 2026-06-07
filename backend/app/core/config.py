@@ -71,8 +71,11 @@ class Settings(BaseSettings):
     CLOUD_SYNC_INGEST_URL: Optional[str] = None
     CLOUD_SYNC_API_TOKEN: Optional[str] = None
     CLOUD_SYNC_DEVICE_UID: Optional[str] = None
+    CLOUD_SYNC_DEPLOYMENT_UID: Optional[str] = None
     CLOUD_SYNC_ORGANIZATION_ID: Optional[int] = None
     CLOUD_SYNC_BRANCH_ID: Optional[int] = None
+    CLOUD_SYNC_ORGANIZATION_UID: Optional[str] = None
+    CLOUD_SYNC_BRANCH_UID: Optional[str] = None
     CLOUD_SYNC_BATCH_SIZE: int = 50
     CLOUD_SYNC_TIMEOUT_SECONDS: int = 15
     CLOUD_SYNC_MAX_RETRIES: int = 10

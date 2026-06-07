@@ -2,6 +2,7 @@
 Tenant, branch, and device models for hybrid cloud readiness.
 """
 from enum import Enum
+from uuid import uuid4
 
 from sqlalchemy import Boolean, Column, DateTime, Enum as SQLEnum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
@@ -24,6 +25,13 @@ class Organization(Base):
     __tablename__ = "organizations"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_uid = Column(
+        String(36),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: str(uuid4()),
+    )
     name = Column(String(200), nullable=False, index=True)
     legal_name = Column(String(200))
     contact_phone = Column(String(20))
@@ -45,6 +53,13 @@ class Branch(Base):
     __table_args__ = (UniqueConstraint("organization_id", "code", name="uq_branches_org_code"),)
 
     id = Column(Integer, primary_key=True, index=True)
+    branch_uid = Column(
+        String(36),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: str(uuid4()),
+    )
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     name = Column(String(200), nullable=False, index=True)
     code = Column(String(50), nullable=False, index=True)
@@ -70,6 +85,12 @@ class Device(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False, index=True)
     device_uid = Column(String(100), unique=True, nullable=False, index=True)
+    deployment_uid = Column(
+        String(36),
+        nullable=False,
+        index=True,
+        default=lambda: str(uuid4()),
+    )
     name = Column(String(200), nullable=False)
     token_hash = Column(String(64), nullable=True)
     status = Column(SQLEnum(DeviceStatus), default=DeviceStatus.ACTIVE, nullable=False, index=True)

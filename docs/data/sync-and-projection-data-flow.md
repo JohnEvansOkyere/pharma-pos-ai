@@ -31,7 +31,10 @@ Behavior:
 
 - skips when disabled
 - skips when ingest URL is missing
-- resolves organization, branch, and device identity
+- resolves organization, branch, deployment, and device identity
+- sends control-plane organization, branch, and deployment UUIDs
+- derives a deterministic aggregate UUID from deployment, aggregate type, and
+  local aggregate ID
 - sends JSON payload to configured ingestion URL
 - uses bearer token when configured
 - marks successful uploads as sent
@@ -46,6 +49,8 @@ Important fields:
 
 - event id
 - organization/branch/device
+- deployment UUID
+- deterministic aggregate UUID
 - device local sequence
 - event type
 - payload hash
@@ -54,6 +59,10 @@ Important fields:
 - projection error
 
 Duplicate delivery should not duplicate reporting facts.
+
+The registered device is authoritative for the central organization and branch.
+Local numeric tenant IDs are not treated as globally unique. See
+[Global Identifiers And Event Identity](global-identifiers-and-event-identity.md).
 
 ## Projection Tables
 

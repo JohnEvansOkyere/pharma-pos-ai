@@ -29,6 +29,7 @@ Current migration themes include:
 - stock takes
 - batch-aware stock adjustments
 - cloud reconciliation acknowledgements
+- globally stable tenant, deployment, and aggregate identifiers
 
 Do not manually edit production database schemas. Add an Alembic migration for schema changes.
 
@@ -42,9 +43,9 @@ Identity and security:
 
 Tenant topology:
 
-- `organizations`
-- `branches`
-- `devices`
+- `organizations`, with globally unique `organization_uid`
+- `branches`, with globally unique `branch_uid`
+- `devices`, with globally unique `device_uid` and stable `deployment_uid`
 
 Catalog and inventory:
 
@@ -116,6 +117,8 @@ Important patterns already present:
 - unique product SKU/barcode
 - unique branch code per organization
 - unique device UID
+- unique organization UID
+- unique branch UID
 - unique local sync event id
 - unique local sequence number
 - unique cloud ingested event id

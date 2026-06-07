@@ -5,6 +5,7 @@ from app.models import Branch, Device, Organization, SyncEvent
 from app.models.sync_event import SyncEventStatus, SyncEventType
 from app.models.tenancy import DeviceStatus
 from app.services.sync_outbox_service import SyncOutboxService
+from app.services.sync_identity_service import build_aggregate_uid
 from app.services.sync_upload_service import SyncUploadService
 
 
@@ -79,6 +80,14 @@ def test_upload_pending_marks_event_sent(monkeypatch, db_session):
     assert event.sent_at is not None
     assert event.acknowledged_at is not None
     assert _FakeClient.calls[0]["json"]["device_uid"] == "upload-device-001"
+    assert _FakeClient.calls[0]["json"]["organization_uid"] == organization.organization_uid
+    assert _FakeClient.calls[0]["json"]["branch_uid"] == branch.branch_uid
+    assert _FakeClient.calls[0]["json"]["deployment_uid"] == device.deployment_uid
+    assert _FakeClient.calls[0]["json"]["aggregate_uid"] == build_aggregate_uid(
+        device.deployment_uid,
+        "sale",
+        1,
+    )
     assert _FakeClient.calls[0]["headers"]["Authorization"] == "Bearer secret-token"
 
 
@@ -97,6 +106,18 @@ def test_hosted_operational_mode_records_outbox_event(monkeypatch, db_session):
 
     assert event is not None
     assert event.local_sequence_number == 1
+
+
+def test_aggregate_uid_is_stable_within_deployment_and_isolated_between_deployments():
+    deployment_a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    deployment_b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    first = build_aggregate_uid(deployment_a, "sale", 42)
+    repeated = build_aggregate_uid(deployment_a, "sale", 42)
+    other_deployment = build_aggregate_uid(deployment_b, "sale", 42)
+
+    assert first == repeated
+    assert first != other_deployment
 
 
 def test_upload_pending_marks_missing_identity_failed(monkeypatch, db_session):

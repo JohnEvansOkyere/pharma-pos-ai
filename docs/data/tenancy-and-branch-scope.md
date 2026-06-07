@@ -9,6 +9,13 @@ Terms:
 - organization: one pharmacy client/business tenant
 - branch: one physical pharmacy location
 - device: one installed local server, till, or workstation identity
+- deployment: one operational backend/database installation, which may have
+  one or more registered devices
+
+Organization, branch, deployment, and device identities that cross database
+boundaries are control-plane identifiers. Local integer primary keys are
+database-internal only. See
+[Global Identifiers And Event Identity](global-identifiers-and-event-identity.md).
 
 ## Scope Columns
 

@@ -40,6 +40,7 @@ from app.schemas.ai_manager import (
 from app.services.ai_report_delivery_service import AIReportDeliveryService
 from app.services.ai_weekly_report_service import AIWeeklyReportService
 from app.services.scheduler import SchedulerService
+from app.services.sync_identity_service import build_aggregate_uid
 
 
 def _tenant(db_session):
@@ -125,15 +126,18 @@ def _delivery_setting(
 
 
 def _ingested(db_session, organization, branch, device, *, event_id: str, sequence: int, event_type: SyncEventType):
+    aggregate_type = "sale" if event_type == SyncEventType.SALE_CREATED else "stock"
     event = IngestedSyncEvent(
         event_id=event_id,
         organization_id=organization.id,
         branch_id=branch.id,
         source_device_id=device.id,
+        deployment_uid=device.deployment_uid,
         local_sequence_number=sequence,
         event_type=event_type,
-        aggregate_type="sale" if event_type == SyncEventType.SALE_CREATED else "stock",
+        aggregate_type=aggregate_type,
         aggregate_id=sequence,
+        aggregate_uid=build_aggregate_uid(device.deployment_uid, aggregate_type, sequence),
         schema_version=1,
         payload={"id": sequence},
         payload_hash=str(sequence) * 64,

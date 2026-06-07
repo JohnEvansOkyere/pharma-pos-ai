@@ -23,6 +23,7 @@ class Organization(OrganizationBase):
     """Organization response schema."""
 
     id: int
+    organization_uid: str
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -44,6 +45,7 @@ class Branch(BranchBase):
     """Branch response schema."""
 
     id: int
+    branch_uid: str
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -56,6 +58,7 @@ class DeviceBase(BaseModel):
     organization_id: int
     branch_id: int
     device_uid: str = Field(..., min_length=1, max_length=100)
+    deployment_uid: str = Field(..., min_length=36, max_length=36)
     name: str = Field(..., min_length=1, max_length=200)
     status: DeviceStatus = DeviceStatus.ACTIVE
 
@@ -90,6 +93,7 @@ class OrganizationUpdate(BaseModel):
 
 class OrganizationDetail(BaseModel):
     id: int
+    organization_uid: str
     name: str
     legal_name: Optional[str]
     contact_phone: Optional[str]
@@ -118,6 +122,7 @@ class BranchUpdate(BaseModel):
 
 class BranchDetail(BaseModel):
     id: int
+    branch_uid: str
     organization_id: int
     name: str
     code: str
@@ -132,6 +137,7 @@ class BranchDetail(BaseModel):
 
 class DeviceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+    deployment_uid: Optional[str] = Field(None, min_length=36, max_length=36)
 
 
 class DeviceStatusUpdate(BaseModel):
@@ -143,6 +149,7 @@ class DeviceDetail(BaseModel):
     organization_id: int
     branch_id: int
     device_uid: str
+    deployment_uid: str
     name: str
     status: DeviceStatus
     last_seen_at: Optional[datetime]
@@ -159,6 +166,9 @@ class DeviceProvisionResponse(BaseModel):
     organization_id: int
     branch_id: int
     device_uid: str
+    deployment_uid: str
+    organization_uid: str
+    branch_uid: str
     name: str
     status: DeviceStatus
     created_at: datetime

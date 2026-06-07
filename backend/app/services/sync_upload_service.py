@@ -12,16 +12,35 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.sync_event import SyncEvent, SyncEventStatus
 from app.models.tenancy import Device
+from app.services.sync_identity_service import (
+    build_aggregate_uid,
+    legacy_branch_uid,
+    legacy_deployment_uid,
+    legacy_organization_uid,
+)
 
 
 class SyncUploadService:
     """Upload pending local outbox events to the configured cloud ingestion API."""
 
     @staticmethod
-    def _resolve_event_identity(db: Session, event: SyncEvent) -> tuple[Optional[int], Optional[int], Optional[str]]:
-        organization_id = event.organization_id or settings.CLOUD_SYNC_ORGANIZATION_ID
-        branch_id = event.branch_id or settings.CLOUD_SYNC_BRANCH_ID
+    def _resolve_event_identity(
+        db: Session,
+        event: SyncEvent,
+    ) -> tuple[
+        Optional[int],
+        Optional[int],
+        Optional[str],
+        Optional[str],
+        Optional[str],
+        Optional[str],
+    ]:
+        organization_id = settings.CLOUD_SYNC_ORGANIZATION_ID or event.organization_id
+        branch_id = settings.CLOUD_SYNC_BRANCH_ID or event.branch_id
         device_uid = settings.CLOUD_SYNC_DEVICE_UID
+        organization_uid = settings.CLOUD_SYNC_ORGANIZATION_UID
+        branch_uid = settings.CLOUD_SYNC_BRANCH_UID
+        deployment_uid = settings.CLOUD_SYNC_DEPLOYMENT_UID
 
         if event.source_device_id:
             device = db.query(Device).filter(Device.id == event.source_device_id).first()
@@ -29,24 +48,70 @@ class SyncUploadService:
                 organization_id = organization_id or device.organization_id
                 branch_id = branch_id or device.branch_id
                 device_uid = device_uid or device.device_uid
+                organization_uid = (
+                    organization_uid
+                    or getattr(device.organization, "organization_uid", None)
+                )
+                branch_uid = branch_uid or getattr(device.branch, "branch_uid", None)
+                deployment_uid = deployment_uid or device.deployment_uid
 
-        return organization_id, branch_id, device_uid
+        if organization_id and not organization_uid:
+            organization_uid = legacy_organization_uid(organization_id)
+        if organization_id and branch_id and not branch_uid:
+            branch_uid = legacy_branch_uid(organization_id, branch_id)
+        if device_uid and not deployment_uid:
+            deployment_uid = legacy_deployment_uid(device_uid)
+
+        return (
+            organization_id,
+            branch_id,
+            organization_uid,
+            branch_uid,
+            deployment_uid,
+            device_uid,
+        )
 
     @staticmethod
     def _build_upload_payload(db: Session, event: SyncEvent) -> dict[str, Any]:
-        organization_id, branch_id, device_uid = SyncUploadService._resolve_event_identity(db, event)
-        if not organization_id or not branch_id or not device_uid:
-            raise ValueError("Sync event is missing organization, branch, or device identity")
+        (
+            organization_id,
+            branch_id,
+            organization_uid,
+            branch_uid,
+            deployment_uid,
+            device_uid,
+        ) = SyncUploadService._resolve_event_identity(db, event)
+        if not all(
+            [
+                organization_id,
+                branch_id,
+                organization_uid,
+                branch_uid,
+                deployment_uid,
+                device_uid,
+            ]
+        ):
+            raise ValueError(
+                "Sync event is missing organization, branch, deployment, or device identity"
+            )
 
         return {
             "event_id": event.event_id,
             "organization_id": organization_id,
             "branch_id": branch_id,
+            "organization_uid": organization_uid,
+            "branch_uid": branch_uid,
+            "deployment_uid": deployment_uid,
             "device_uid": device_uid,
             "local_sequence_number": event.local_sequence_number,
             "event_type": event.event_type.value,
             "aggregate_type": event.aggregate_type,
             "aggregate_id": event.aggregate_id,
+            "aggregate_uid": build_aggregate_uid(
+                deployment_uid,
+                event.aggregate_type,
+                event.aggregate_id,
+            ),
             "schema_version": event.schema_version,
             "payload": event.payload,
             "payload_hash": event.payload_hash,

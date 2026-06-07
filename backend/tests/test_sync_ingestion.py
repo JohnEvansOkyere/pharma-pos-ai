@@ -13,6 +13,7 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.schemas.sync_ingestion import SyncIngestionRequest
+from app.services.sync_identity_service import build_aggregate_uid
 
 
 def _payload_hash(payload: dict) -> str:
@@ -46,6 +47,7 @@ def registered_device(db_session):
 
 
 def _request(organization, branch, *, event_id: str = "11111111-1111-1111-1111-111111111111", sequence: int = 1):
+    device = branch.devices[0]
     payload = {
         "sale_id": 10,
         "invoice_number": "INV-20260429-000010",
@@ -55,11 +57,15 @@ def _request(organization, branch, *, event_id: str = "11111111-1111-1111-1111-1
         event_id=event_id,
         organization_id=organization.id,
         branch_id=branch.id,
+        organization_uid=organization.organization_uid,
+        branch_uid=branch.branch_uid,
+        deployment_uid=device.deployment_uid,
         device_uid="sync-device-001",
         local_sequence_number=sequence,
         event_type=SyncEventType.SALE_CREATED,
         aggregate_type="sale",
         aggregate_id=10,
+        aggregate_uid=build_aggregate_uid(device.deployment_uid, "sale", 10),
         schema_version=1,
         payload=payload,
         payload_hash=_payload_hash(payload),
@@ -95,7 +101,61 @@ def test_ingest_sync_event_accepts_registered_device_event(db_session, registere
     assert response.local_sequence_number == 1
     assert ingested.event_type == SyncEventType.SALE_CREATED
     assert ingested.payload["invoice_number"] == "INV-20260429-000010"
+    assert ingested.deployment_uid == _device.deployment_uid
+    assert ingested.aggregate_uid == build_aggregate_uid(
+        _device.deployment_uid,
+        "sale",
+        10,
+    )
     assert ingested.duplicate_count == 0
+
+
+def test_global_identity_maps_local_numeric_ids_to_control_plane_scope(
+    db_session,
+    registered_device,
+):
+    organization, branch, _device = registered_device
+    request = _request(organization, branch)
+    request.organization_id = 9001
+    request.branch_id = 9002
+
+    response = _ingest(request, db_session=db_session)
+
+    ingested = db_session.query(IngestedSyncEvent).filter(
+        IngestedSyncEvent.event_id == response.event_id
+    ).one()
+    assert ingested.organization_id == organization.id
+    assert ingested.branch_id == branch.id
+
+
+def test_legacy_identity_rejects_wrong_numeric_scope(db_session, registered_device):
+    organization, branch, _device = registered_device
+    request = _request(organization, branch)
+    request.organization_uid = None
+    request.branch_uid = None
+    request.deployment_uid = None
+    request.organization_id = 9001
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(request, db_session=db_session)
+
+    assert exc.value.status_code == 403
+    assert "submitted organization and branch" in exc.value.detail
+
+
+def test_ingest_sync_event_rejects_partial_global_identity(
+    db_session,
+    registered_device,
+):
+    organization, branch, _device = registered_device
+    request = _request(organization, branch)
+    request.branch_uid = None
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(request, db_session=db_session)
+
+    assert exc.value.status_code == 403
+    assert "must be submitted together" in exc.value.detail
 
 
 def test_ingest_sync_event_is_idempotent_for_same_event_and_hash(db_session, registered_device):
@@ -162,6 +222,36 @@ def test_ingest_sync_event_rejects_inactive_device(db_session, registered_device
 
     assert exc.value.status_code == 403
     assert "not active" in exc.value.detail
+
+
+def test_ingest_sync_event_rejects_wrong_deployment_identity(
+    db_session,
+    registered_device,
+):
+    organization, branch, _device = registered_device
+    request = _request(organization, branch)
+    request.deployment_uid = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(request, db_session=db_session)
+
+    assert exc.value.status_code == 403
+    assert "deployment identity" in exc.value.detail
+
+
+def test_ingest_sync_event_rejects_wrong_aggregate_uid(
+    db_session,
+    registered_device,
+):
+    organization, branch, _device = registered_device
+    request = _request(organization, branch)
+    request.aggregate_uid = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+    with pytest.raises(HTTPException) as exc:
+        _ingest(request, db_session=db_session)
+
+    assert exc.value.status_code == 409
+    assert "Aggregate UID" in exc.value.detail
 
 
 def test_ingest_sync_event_rejects_missing_sync_token(db_session, registered_device):

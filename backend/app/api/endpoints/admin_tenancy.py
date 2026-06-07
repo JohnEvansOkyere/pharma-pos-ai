@@ -49,6 +49,7 @@ from app.schemas.tenancy import (
     OrganizationDetail,
     OrganizationUpdate,
 )
+from app.services.sync_identity_service import canonical_uuid
 
 router = APIRouter(prefix="/admin", tags=["Admin — Client Management"])
 
@@ -60,6 +61,7 @@ def _org_detail(db: Session, org: Organization) -> OrganizationDetail:
     device_count = db.query(func.count(Device.id)).filter(Device.organization_id == org.id).scalar() or 0
     return OrganizationDetail(
         id=org.id,
+        organization_uid=org.organization_uid,
         name=org.name,
         legal_name=org.legal_name,
         contact_phone=org.contact_phone,
@@ -75,6 +77,7 @@ def _branch_detail(db: Session, branch: Branch) -> BranchDetail:
     device_count = db.query(func.count(Device.id)).filter(Device.branch_id == branch.id).scalar() or 0
     return BranchDetail(
         id=branch.id,
+        branch_uid=branch.branch_uid,
         organization_id=branch.organization_id,
         name=branch.name,
         code=branch.code,
@@ -92,6 +95,7 @@ def _device_detail(device: Device) -> DeviceDetail:
         organization_id=device.organization_id,
         branch_id=device.branch_id,
         device_uid=device.device_uid,
+        deployment_uid=device.deployment_uid,
         name=device.name,
         status=device.status,
         last_seen_at=device.last_seen_at,
@@ -111,9 +115,12 @@ def _env_block(device: Device, raw_token: str) -> str:
         "CLOUD_SYNC_ENABLED=true\n"
         f"CLOUD_SYNC_INGEST_URL={ingest_url}\n"
         f"CLOUD_SYNC_API_TOKEN={raw_token}\n"
+        f"CLOUD_SYNC_DEPLOYMENT_UID={device.deployment_uid}\n"
         f"CLOUD_SYNC_DEVICE_UID={device.device_uid}\n"
         f"CLOUD_SYNC_ORGANIZATION_ID={device.organization_id}\n"
         f"CLOUD_SYNC_BRANCH_ID={device.branch_id}\n"
+        f"CLOUD_SYNC_ORGANIZATION_UID={device.organization.organization_uid}\n"
+        f"CLOUD_SYNC_BRANCH_UID={device.branch.branch_uid}\n"
         "# ---------------------------------------------------\n"
         "# IMPORTANT: This token is shown once. Store it securely.\n"
         "# If lost, rotate the token from the vendor dashboard."
@@ -812,11 +819,17 @@ def provision_device(
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     device_uid = str(uuid.uuid4())
+    deployment_uid = (
+        canonical_uuid(data.deployment_uid)
+        if data.deployment_uid
+        else str(uuid.uuid4())
+    )
 
     device = Device(
         organization_id=org_id,
         branch_id=branch_id,
         device_uid=device_uid,
+        deployment_uid=deployment_uid,
         name=data.name,
         token_hash=token_hash,
         status=DeviceStatus.ACTIVE,
@@ -830,6 +843,9 @@ def provision_device(
         organization_id=device.organization_id,
         branch_id=device.branch_id,
         device_uid=device.device_uid,
+        deployment_uid=device.deployment_uid,
+        organization_uid=device.organization.organization_uid,
+        branch_uid=device.branch.branch_uid,
         name=device.name,
         status=device.status,
         created_at=device.created_at,
@@ -879,6 +895,9 @@ def rotate_device_token(
         organization_id=device.organization_id,
         branch_id=device.branch_id,
         device_uid=device.device_uid,
+        deployment_uid=device.deployment_uid,
+        organization_uid=device.organization.organization_uid,
+        branch_uid=device.branch.branch_uid,
         name=device.name,
         status=device.status,
         created_at=device.created_at,

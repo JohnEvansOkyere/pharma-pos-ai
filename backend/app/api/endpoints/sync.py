@@ -17,6 +17,7 @@ from app.models.tenancy import Device, DeviceStatus
 from app.schemas.cloud_projection import CloudProjectionRunResult, CloudProjectionStatus
 from app.schemas.sync_ingestion import SyncIngestionRequest, SyncIngestionResponse
 from app.services.cloud_projection_service import CloudProjectionService
+from app.services.sync_identity_service import build_aggregate_uid
 from app.models.user import User
 
 router = APIRouter(prefix="/sync", tags=["Sync"])
@@ -29,8 +30,37 @@ def _authenticate_device(db: Session, payload: SyncIngestionRequest, authorizati
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is not registered")
     if device.status != DeviceStatus.ACTIVE:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is not active")
-    if device.organization_id != payload.organization_id or device.branch_id != payload.branch_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device does not belong to the submitted organization and branch")
+    submitted_identity = {
+        "organization": str(payload.organization_uid) if payload.organization_uid else None,
+        "branch": str(payload.branch_uid) if payload.branch_uid else None,
+        "deployment": str(payload.deployment_uid) if payload.deployment_uid else None,
+    }
+    expected_identity = {
+        "organization": device.organization.organization_uid,
+        "branch": device.branch.branch_uid,
+        "deployment": device.deployment_uid,
+    }
+    submitted_values = list(submitted_identity.values())
+    if any(submitted_values):
+        if not all(submitted_values):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization, branch, and deployment identities must be submitted together",
+            )
+        for identity_name, submitted_value in submitted_identity.items():
+            if submitted_value != expected_identity[identity_name]:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Device {identity_name} identity does not match control-plane registration",
+                )
+    elif (
+        device.organization_id != payload.organization_id
+        or device.branch_id != payload.branch_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Device does not belong to the submitted organization and branch",
+        )
 
     if settings.CLOUD_SYNC_REQUIRE_TOKEN:
         if not authorization or not authorization.startswith("Bearer "):
@@ -77,6 +107,14 @@ def ingest_sync_event(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Event ID already exists with a different payload hash",
                 )
+            if (
+                existing_by_event_id.source_device_id != device.id
+                or existing_by_event_id.deployment_uid != device.deployment_uid
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Event ID already belongs to a different deployment or device",
+                )
             existing_by_event_id.duplicate_count += 1
             existing_by_event_id.last_duplicate_at = datetime.now(timezone.utc)
             db.commit()
@@ -100,15 +138,28 @@ def ingest_sync_event(
                 detail="Device local sequence number already exists with a different event ID",
             )
 
+        aggregate_uid = build_aggregate_uid(
+            device.deployment_uid,
+            payload.aggregate_type,
+            payload.aggregate_id,
+        )
+        if payload.aggregate_uid and str(payload.aggregate_uid) != aggregate_uid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Aggregate UID does not match deployment, aggregate type, and local ID",
+            )
+
         ingested = IngestedSyncEvent(
             event_id=payload.event_id,
-            organization_id=payload.organization_id,
-            branch_id=payload.branch_id,
+            organization_id=device.organization_id,
+            branch_id=device.branch_id,
             source_device_id=device.id,
+            deployment_uid=device.deployment_uid,
             local_sequence_number=payload.local_sequence_number,
             event_type=payload.event_type,
             aggregate_type=payload.aggregate_type,
             aggregate_id=payload.aggregate_id,
+            aggregate_uid=aggregate_uid,
             schema_version=payload.schema_version,
             payload=payload.payload,
             payload_hash=payload.payload_hash,

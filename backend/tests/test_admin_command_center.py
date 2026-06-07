@@ -10,6 +10,7 @@ from app.models.sync_event import SyncEventType
 from app.models.sync_ingestion import IngestedSyncEvent
 from app.models.tenancy import DeviceStatus
 from app.services.cloud_projection_service import CloudProjectionService
+from app.services.sync_identity_service import build_aggregate_uid
 
 
 def _hash(payload: dict) -> str:
@@ -59,10 +60,12 @@ def test_command_center_surfaces_heartbeat_readiness(db_session, admin_user):
         organization_id=organization.id,
         branch_id=branch.id,
         source_device_id=device.id,
+        deployment_uid=device.deployment_uid,
         local_sequence_number=1,
         event_type=SyncEventType.SYSTEM_HEARTBEAT,
         aggregate_type="system",
         aggregate_id=None,
+        aggregate_uid=build_aggregate_uid(device.deployment_uid, "system", None),
         schema_version=1,
         payload=payload,
         payload_hash=_hash(payload),

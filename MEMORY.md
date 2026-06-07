@@ -80,6 +80,7 @@ backend/
 │       ├── audit_service.py     # Tamper-evident SHA-256 hash chain audit logging
 │       ├── inventory_service.py # FEFO batch queries, stock recalculation, movement records
 │       ├── sync_outbox_service.py # Monotonic sequence + payload hash outbox events
+│       ├── sync_identity_service.py # Stable cross-database UUID and aggregate identity helpers
 │       ├── sync_upload_service.py # Upload pending sync events to cloud API
 │       ├── system_heartbeat_service.py # Enqueue local install health telemetry through sync outbox
 │       ├── full_snapshot_sync_service.py # Enqueue one-time catalog/batch snapshots for cloud hydration
@@ -163,6 +164,7 @@ render.yaml                      # Render infrastructure config
 - Customer retention, receipts, follow-ups, outbox delivery, and the hosted browser queue are explicit feature flags.
 - `APP_MODE=cloud_reporting` remains the central read/reporting runtime and rejects operational writes.
 - Legacy `local_pos` and `online_pos` environment values normalize to `operational_pos` temporarily for migration compatibility.
+- Cross-database sync uses control-plane `organization_uid`, `branch_uid`, `deployment_uid`, and `device_uid`; local integer keys remain internal to each operational database.
 
 ---
 
@@ -283,6 +285,11 @@ Every hosted operational database uses Render point-in-time recovery plus encryp
 
 All operational writes now create transactional outbox events; `CLOUD_SYNC_ENABLED` controls asynchronous delivery to the central plane. The former `local_pos` and `online_pos` values are accepted only as migration aliases and normalize to `operational_pos`. `cloud_reporting` remains separate because it is a central read/reporting boundary that rejects till writes. See `docs/architecture/unified-operational-runtime.md`.
 
+### 3.37 Why Cross-Database Identity Uses Control-Plane UUIDs
+Each isolated operational database may assign the same integer primary keys to unrelated organizations, branches, sales, products, or batches. Those integers are therefore database-local implementation details, not fleet identifiers. The control plane allocates stable UUIDs for organization, branch, deployment, and device identity; provisioning must seed the tenant database with the same organization and branch UUIDs.
+
+Every new sync upload carries the complete UUID identity envelope. Central ingestion authenticates the device token, validates those UUIDs against the registered device, and stamps the accepted event with the control-plane organization and branch rows. Submitted numeric organization and branch IDs are retained only for legacy compatibility and are not authoritative when the UUID envelope is present. Business aggregate identity is deterministic UUIDv5 over `(deployment_uid, aggregate_type, local aggregate_id)`, so retries are stable while identical local integers from different deployments cannot collide. See `docs/data/global-identifiers-and-event-identity.md`.
+
 ### 3.22 Why AI Provider Selection Is Server-Side
 External AI provider and model selection is a vendor/deployment concern, not a pharmacy customer workflow. The cloud dashboard no longer asks tenant admins to choose OpenAI/Claude/Groq or enter model names. `AIProviderPolicyService.resolve_provider()` now auto-selects an available server-side provider from configured API keys, honoring `AI_MANAGER_PROVIDER` when set to a usable provider and otherwise falling back to the first configured provider. `AIManagerLLMProvider` supplies provider-specific default models when `AI_MANAGER_MODEL` is blank. If no external API key is configured, the deterministic offline-safe assistant remains the fallback.
 
@@ -354,6 +361,7 @@ The cloud dashboard is for owner/CEO decision-making first. Business cards shoul
 | ONLINE-P1-01 | 🟠 High | `online_pos` offline sale queue is browser IndexedDB only, has no durable invoice/receipt ledger, and failed flushes can be cleared from the UI | `offlineQueue.ts`, `POSPage.tsx`, `OfflineBanner.tsx` | ⚠️ Accepted — only safe as a temporary network-drop buffer |
 | ONLINE-P1-02 | 🟠 High | Hosted connectivity check could treat a non-2xx heartbeat response as online | `useOnlineStatus.ts`, `auth.py` | ✅ Fixed — authenticated heartbeat exists and the frontend now requires `response.ok` |
 | ONLINE-P1-03 | 🟠 High | Categories and suppliers are global tables with globally unique names, but `online_pos` exposes them as pharmacy-managed resources | `models/category.py`, `models/supplier.py`, `categories.py`, `suppliers.py` | ⚠️ Needs product decision: shared master data vs tenant-owned |
+| ONLINE-P0-06 | 🔴 Critical | Sync identity relied on local organization, branch, and aggregate integers that can collide across isolated tenant databases | tenancy/sync models, ingestion, upload, provisioning | ✅ Fixed — control-plane UUID envelope, deployment-scoped aggregate UUID, authenticated central scope stamping, and migration backfill |
 
 ---
 
@@ -371,6 +379,8 @@ The cloud dashboard is for owner/CEO decision-making first. Business cards shoul
 | `ENVIRONMENT`               | `production` or `development`        | ✅       |
 | `ENABLE_BACKGROUND_SCHEDULER` | Enable APScheduler cron jobs       | ⚠️       |
 | `CLOUD_SYNC_ENABLED`        | Enable sync upload to cloud          | Optional |
+| `CLOUD_SYNC_ORGANIZATION_UID` / `CLOUD_SYNC_BRANCH_UID` | Control-plane tenant UUIDs used across isolated databases | Required when sync is enabled |
+| `CLOUD_SYNC_DEPLOYMENT_UID` / `CLOUD_SYNC_DEVICE_UID` | Stable deployment and device identity for central ingestion | Required when sync is enabled |
 | `CLOUD_HEARTBEAT_INTERVAL_MINUTES` | Local installation telemetry enqueue interval when cloud sync is enabled | Optional |
 | `AI_MANAGER_PROVIDER`       | `deterministic`, `openai`, `claude`, `groq` | Optional |
 | `OPENAI_API_KEY`            | OpenAI API key (if AI enabled)       | Optional |
@@ -487,6 +497,7 @@ alembic revision --autogenerate -m "description"  # Generate migration
 
 | Date | Who | What | Why | Files |
 | ---- | --- | ---- | --- | ----- |
+| 2026-06-07 08:18 UTC | Codex | Added globally stable tenant, branch, deployment, device, event, and aggregate identity across the isolated-database sync boundary | Local integer primary keys can repeat in separate pharmacy databases. Control-plane UUIDs now travel in every new upload, central ingestion derives tenant scope from the authenticated device registration, aggregate UUIDs are deterministic per deployment, and existing records receive repeatable migration backfills | tenancy and sync models/schemas/endpoints/services, provisioning and env templates, Alembic migration `q2r3s4t5u6v7`, sync/projection/reporting tests, `docs/data/`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 08:05 UTC | Codex | Replaced the pharmacy `local_pos` / `online_pos` behavior split with one `operational_pos` runtime and explicit hosted/offline feature flags | Hosted and offline pharmacies must share one tenancy and transactional model. Customer retention, receipts, follow-ups, browser queue, and outbox delivery are now configuration features; all operational writes create outbox events, and old mode values remain migration aliases only | `backend/app/core/app_mode.py`, `backend/app/core/config.py`, `backend/app/services/sync_outbox_service.py`, `backend/app/services/scheduler.py`, `backend/app/services/telegram_alert_service.py`, `backend/app/api/endpoints/sales.py`, `backend/app/api/endpoints/auth.py`, backend/frontend env templates, `docker-compose.yml`, frontend app-mode/routes/sidebar/connectivity/POS files, tests, `docs/architecture/unified-operational-runtime.md`, current architecture/deployment docs, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 07:55 UTC | Codex | Selected the hosted tenant provider, isolation topology, and backup mechanism and reconciled the Phase 10 topology wording | Separate paid Render Postgres instances provide per-tenant PITR and recovery boundaries at the initial fleet scale. The existing Supabase project remains central reporting/control-plane only; encrypted off-platform logical backups preserve provider-independent recovery and offboarding | `docs/architecture/hosted-tenant-topology-and-backup.md`, `docs/architecture/README.md`, `docs/architecture/system-overview.md`, `docs/architecture/hybrid-cloud-architecture.md`, `docs/architecture/runtime-and-deployment-topology.md`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 07:51 UTC | Codex | Enforced branch-level authorization across operational routes and dashboard aggregates | Dedicated databases isolate pharmacies, not branches. Branch-assigned users now see and mutate only their branch, organization-level admins retain cross-branch access within their organization, and unscoped online users are rejected | `backend/app/core/app_mode.py`, `backend/app/api/endpoints/sales.py`, `backend/app/api/endpoints/products.py`, `backend/app/api/endpoints/stock_adjustments.py`, `backend/app/api/endpoints/stock_takes.py`, `backend/app/api/endpoints/customers.py`, `backend/app/api/endpoints/users.py`, `backend/app/api/endpoints/dashboard.py`, `backend/tests/test_branch_authorization.py`, `backend/tests/test_inventory_workflows.py`, `docs/data/tenancy-and-branch-scope.md`, `docs/domains/user-and-operator-workflows.md`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |

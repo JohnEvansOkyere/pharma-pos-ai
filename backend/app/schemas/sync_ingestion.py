@@ -3,6 +3,7 @@ Schemas for cloud sync ingestion.
 """
 from datetime import datetime
 from typing import Any, Optional
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,11 +16,15 @@ class SyncIngestionRequest(BaseModel):
     event_id: str = Field(..., min_length=36, max_length=36)
     organization_id: int
     branch_id: int
+    organization_uid: Optional[UUID] = None
+    branch_uid: Optional[UUID] = None
+    deployment_uid: Optional[UUID] = None
     device_uid: str = Field(..., min_length=1, max_length=100)
     local_sequence_number: int = Field(..., ge=1)
     event_type: SyncEventType
     aggregate_type: str = Field(..., min_length=1, max_length=50)
     aggregate_id: Optional[int] = None
+    aggregate_uid: Optional[UUID] = None
     schema_version: int = Field(1, ge=1)
     payload: dict[str, Any]
     payload_hash: str = Field(..., min_length=64, max_length=64)

@@ -57,3 +57,6 @@ def test_tenant_branch_device_schema_links_to_business_records(db_session, categ
     assert saved_device.organization_id == organization.id
     assert saved_device.branch_id == branch.id
     assert branch.organization_id == organization.id
+    assert len(organization.organization_uid) == 36
+    assert len(branch.branch_uid) == 36
+    assert len(saved_device.deployment_uid) == 36

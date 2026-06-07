@@ -95,11 +95,13 @@ def main() -> int:
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
         device_uid = str(uuid.uuid4())
+        deployment_uid = str(uuid.uuid4())
 
         device = Device(
             organization_id=org.id,
             branch_id=branch.id,
             device_uid=device_uid,
+            deployment_uid=deployment_uid,
             name=device_name,
             token_hash=token_hash,
             status=DeviceStatus.ACTIVE,
@@ -111,7 +113,10 @@ def main() -> int:
         print("PROVISIONING COMPLETE")
         print("=" * 60)
         print(f"  Organization : {org.name} (id={org.id})")
+        print(f"  Organization UID: {org.organization_uid}")
         print(f"  Branch       : {branch.name} / {branch.code} (id={branch.id})")
+        print(f"  Branch UID   : {branch.branch_uid}")
+        print(f"  Deployment UID: {deployment_uid}")
         print(f"  Device       : {device.name} (uid={device_uid})")
         print("=" * 60)
         print("\nPaste these values into setup-env.bat when prompted,")
@@ -120,9 +125,12 @@ def main() -> int:
         print("CLOUD_SYNC_ENABLED=true")
         print(f"CLOUD_SYNC_INGEST_URL=https://pharma-pos-ai.onrender.com/api/sync/ingest")
         print(f"CLOUD_SYNC_API_TOKEN={raw_token}")
+        print(f"CLOUD_SYNC_DEPLOYMENT_UID={deployment_uid}")
         print(f"CLOUD_SYNC_DEVICE_UID={device_uid}")
         print(f"CLOUD_SYNC_ORGANIZATION_ID={org.id}")
         print(f"CLOUD_SYNC_BRANCH_ID={branch.id}")
+        print(f"CLOUD_SYNC_ORGANIZATION_UID={org.organization_uid}")
+        print(f"CLOUD_SYNC_BRANCH_UID={branch.branch_uid}")
         print("# -----------------------------------------------------\n")
         print("IMPORTANT: The token above is shown once. Store it securely.")
         print("If lost, you must provision a new device.\n")

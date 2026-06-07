@@ -40,6 +40,7 @@ from app.models.tenancy import DeviceStatus
 from app.models.user import User, UserPermission, UserRole
 from app.core.security import get_password_hash
 from app.schemas.cloud_reports import CloudReconciliationIssueActionRequest, CloudReconciliationRepairRequest
+from app.services.sync_identity_service import build_aggregate_uid
 
 
 def _tenant(db_session, *, name: str, branch_code: str):
@@ -86,15 +87,18 @@ def _report_user(
 
 
 def _ingested(db_session, organization, branch, device, *, event_id: str, sequence: int, event_type: SyncEventType):
+    aggregate_type = "sale" if event_type == SyncEventType.SALE_CREATED else "stock_adjustment"
     event = IngestedSyncEvent(
         event_id=event_id,
         organization_id=organization.id,
         branch_id=branch.id,
         source_device_id=device.id,
+        deployment_uid=device.deployment_uid,
         local_sequence_number=sequence,
         event_type=event_type,
-        aggregate_type="sale" if event_type == SyncEventType.SALE_CREATED else "stock_adjustment",
+        aggregate_type=aggregate_type,
         aggregate_id=sequence,
+        aggregate_uid=build_aggregate_uid(device.deployment_uid, aggregate_type, sequence),
         schema_version=1,
         payload={"id": sequence},
         payload_hash="a" * 64,
