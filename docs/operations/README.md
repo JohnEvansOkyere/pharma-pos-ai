@@ -8,4 +8,5 @@ Read in this order:
 2. [Backup Restore And Diagnostics](backup-restore-and-diagnostics.md)
 3. [Cloud Operations](cloud-operations.md)
 4. [Render And Vercel Deployment](render-vercel-deployment.md)
+5. [Isolated Tenant Provisioning](tenant-provisioning.md)
 5. [Incident Response](incident-response.md)

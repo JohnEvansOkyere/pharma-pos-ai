@@ -82,6 +82,7 @@ backend/
 │       ├── sync_outbox_service.py # Monotonic sequence + payload hash outbox events
 │       ├── sync_identity_service.py # Stable cross-database UUID and aggregate identity helpers
 │       ├── sync_upload_service.py # Upload pending sync events to cloud API
+│       ├── tenant_provisioning_service.py # Resumable isolated DB/control-plane/Render provisioning
 │       ├── system_heartbeat_service.py # Enqueue local install health telemetry through sync outbox
 │       ├── full_snapshot_sync_service.py # Enqueue one-time catalog/batch snapshots for cloud hydration
 │       ├── cloud_projection_service.py # Project ingested events into reporting tables
@@ -165,6 +166,7 @@ render.yaml                      # Render infrastructure config
 - `APP_MODE=cloud_reporting` remains the central read/reporting runtime and rejects operational writes.
 - Legacy `local_pos` and `online_pos` environment values normalize to `operational_pos` temporarily for migration compatibility.
 - Cross-database sync uses control-plane `organization_uid`, `branch_uid`, `deployment_uid`, and `device_uid`; local integer keys remain internal to each operational database.
+- `backend/scripts/provision_tenant.py` is the canonical full-tenant provisioner; `provision_client.py` is limited to registering a device for an existing offline installation.
 
 ---
 
@@ -290,6 +292,11 @@ Each isolated operational database may assign the same integer primary keys to u
 
 Every new sync upload carries the complete UUID identity envelope. Central ingestion authenticates the device token, validates those UUIDs against the registered device, and stamps the accepted event with the control-plane organization and branch rows. Submitted numeric organization and branch IDs are retained only for legacy compatibility and are not authoritative when the UUID envelope is present. Business aggregate identity is deterministic UUIDv5 over `(deployment_uid, aggregate_type, local aggregate_id)`, so retries are stable while identical local integers from different deployments cannot collide. See `docs/data/global-identifiers-and-event-identity.md`.
 
+### 3.38 Why Tenant Provisioning Is One Resumable Vendor Operation
+An isolated database is not a valid tenant until its schema, UUID identity, admin scope, control-plane registration, publish token, and backend configuration all agree. Running those steps manually creates partial tenants and identity drift. `backend/scripts/provision_tenant.py` therefore records generated UUIDs and credentials first, then executes idempotent migration, tenant seeding, control-plane registration, and optional Render resource creation from one vendor workstation.
+
+The state under ignored `var/provisioning/<tenant>/` allows a failed run to resume without allocating another identity or token. Files are owner-only `0600`; infrastructure is never auto-deleted after a partial failure. Render-hosted runs reject the free database plan, temporarily allow only one exact provisioner IP for migration/seeding, use the internal database URL for the backend, and disable external database access after completion. See `docs/operations/tenant-provisioning.md`.
+
 ### 3.22 Why AI Provider Selection Is Server-Side
 External AI provider and model selection is a vendor/deployment concern, not a pharmacy customer workflow. The cloud dashboard no longer asks tenant admins to choose OpenAI/Claude/Groq or enter model names. `AIProviderPolicyService.resolve_provider()` now auto-selects an available server-side provider from configured API keys, honoring `AI_MANAGER_PROVIDER` when set to a usable provider and otherwise falling back to the first configured provider. `AIManagerLLMProvider` supplies provider-specific default models when `AI_MANAGER_MODEL` is blank. If no external API key is configured, the deterministic offline-safe assistant remains the fallback.
 
@@ -362,6 +369,7 @@ The cloud dashboard is for owner/CEO decision-making first. Business cards shoul
 | ONLINE-P1-02 | 🟠 High | Hosted connectivity check could treat a non-2xx heartbeat response as online | `useOnlineStatus.ts`, `auth.py` | ✅ Fixed — authenticated heartbeat exists and the frontend now requires `response.ok` |
 | ONLINE-P1-03 | 🟠 High | Categories and suppliers are global tables with globally unique names, but `online_pos` exposes them as pharmacy-managed resources | `models/category.py`, `models/supplier.py`, `categories.py`, `suppliers.py` | ⚠️ Needs product decision: shared master data vs tenant-owned |
 | ONLINE-P0-06 | 🔴 Critical | Sync identity relied on local organization, branch, and aggregate integers that can collide across isolated tenant databases | tenancy/sync models, ingestion, upload, provisioning | ✅ Fixed — control-plane UUID envelope, deployment-scoped aggregate UUID, authenticated central scope stamping, and migration backfill |
+| ONLINE-P0-07 | 🔴 Critical | No repeatable workflow created an isolated tenant database, migrated it, seeded scoped ownership, registered matching control-plane identity, and deployed the backend | tenant provisioning and deployment tooling | ✅ Fixed — resumable Render/existing-Postgres provisioner with private state and fail-closed identity checks |
 
 ---
 
@@ -497,6 +505,7 @@ alembic revision --autogenerate -m "description"  # Generate migration
 
 | Date | Who | What | Why | Files |
 | ---- | --- | ---- | --- | ----- |
+| 2026-06-07 08:37 UTC | Codex | Added repeatable isolated-tenant provisioning for Render-hosted and existing PostgreSQL deployments | Manual database, migration, admin, identity, token, and backend setup could leave partial tenants or mismatched control-plane records. The new resumable vendor CLI coordinates the full sequence, limits temporary database access, and preserves private recovery state without committing credentials | `backend/app/services/tenant_provisioning_service.py`, `backend/scripts/provision_tenant.py`, `backend/scripts/provision_client.py`, `backend/tests/test_tenant_provisioning_service.py`, `docs/operations/tenant-provisioning.md`, `docs/operations/render-vercel-deployment.md`, `docs/operations/README.md`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 08:18 UTC | Codex | Added globally stable tenant, branch, deployment, device, event, and aggregate identity across the isolated-database sync boundary | Local integer primary keys can repeat in separate pharmacy databases. Control-plane UUIDs now travel in every new upload, central ingestion derives tenant scope from the authenticated device registration, aggregate UUIDs are deterministic per deployment, and existing records receive repeatable migration backfills | tenancy and sync models/schemas/endpoints/services, provisioning and env templates, Alembic migration `q2r3s4t5u6v7`, sync/projection/reporting tests, `docs/data/`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 08:05 UTC | Codex | Replaced the pharmacy `local_pos` / `online_pos` behavior split with one `operational_pos` runtime and explicit hosted/offline feature flags | Hosted and offline pharmacies must share one tenancy and transactional model. Customer retention, receipts, follow-ups, browser queue, and outbox delivery are now configuration features; all operational writes create outbox events, and old mode values remain migration aliases only | `backend/app/core/app_mode.py`, `backend/app/core/config.py`, `backend/app/services/sync_outbox_service.py`, `backend/app/services/scheduler.py`, `backend/app/services/telegram_alert_service.py`, `backend/app/api/endpoints/sales.py`, `backend/app/api/endpoints/auth.py`, backend/frontend env templates, `docker-compose.yml`, frontend app-mode/routes/sidebar/connectivity/POS files, tests, `docs/architecture/unified-operational-runtime.md`, current architecture/deployment docs, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |
 | 2026-06-07 07:55 UTC | Codex | Selected the hosted tenant provider, isolation topology, and backup mechanism and reconciled the Phase 10 topology wording | Separate paid Render Postgres instances provide per-tenant PITR and recovery boundaries at the initial fleet scale. The existing Supabase project remains central reporting/control-plane only; encrypted off-platform logical backups preserve provider-independent recovery and offboarding | `docs/architecture/hosted-tenant-topology-and-backup.md`, `docs/architecture/README.md`, `docs/architecture/system-overview.md`, `docs/architecture/hybrid-cloud-architecture.md`, `docs/architecture/runtime-and-deployment-topology.md`, `docs/GO_LIVE_CHECKLIST.md`, `MEMORY.md` |

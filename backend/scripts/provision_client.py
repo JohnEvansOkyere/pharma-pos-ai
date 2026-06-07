@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Register a new pharmacy client in the cloud database.
+Register a device for an existing offline pharmacy in the control plane.
+
+New isolated hosted tenants must use scripts/provision_tenant.py. This legacy
+tool remains for adding a branch/device to an already-created installation.
 
 Run this on YOUR machine (not the client's) before each installation:
 
