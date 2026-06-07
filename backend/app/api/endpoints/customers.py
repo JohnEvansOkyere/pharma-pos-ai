@@ -19,7 +19,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_active_user, require_manage_users
-from app.core.app_mode import is_online_pos_mode
+from app.core.app_mode import scope_query_to_user
 from app.core.config import settings
 from app.db.base import get_db
 from app.models.customer import ConsentStatus, Customer, CustomerFollowUp, FollowUpStatus
@@ -39,11 +39,14 @@ router = APIRouter(prefix="/customers", tags=["Customers"])
 
 
 
-def _org_scope(query, current_user: User):
-    """Scope a customer query to the user's organization in online_pos mode."""
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        return query.filter(Customer.organization_id == current_user.organization_id)
-    return query
+def _customer_scope(query, current_user: User, *, include_branch: bool = True):
+    return scope_query_to_user(
+        query,
+        Customer,
+        current_user,
+        app_mode=settings.APP_MODE,
+        include_branch=include_branch,
+    )
 
 
 @router.post("", response_model=CustomerSchema, status_code=status.HTTP_201_CREATED)
@@ -66,9 +69,8 @@ def register_customer(
 
     # De-duplicate by phone within org
     existing = (
-        db.query(Customer)
+        _customer_scope(db.query(Customer), current_user, include_branch=False)
         .filter(
-            Customer.organization_id == current_user.organization_id,
             Customer.phone == data.phone.strip(),
         )
         .first()
@@ -119,7 +121,7 @@ def list_customers(
     current_user: User = Depends(get_current_active_user),
 ):
     """List all customers with pagination."""
-    query = _org_scope(db.query(Customer), current_user)
+    query = _customer_scope(db.query(Customer), current_user)
     if is_active is not None:
         query = query.filter(Customer.is_active == is_active)
     customers = query.order_by(Customer.full_name).offset(skip).limit(limit).all()
@@ -137,7 +139,7 @@ def search_customers(
 ):
     """Search customers by name or phone — used for POS autocomplete."""
     term = f"%{q}%"
-    query = _org_scope(db.query(Customer), current_user).filter(
+    query = _customer_scope(db.query(Customer), current_user).filter(
         Customer.is_active == True,
         (Customer.full_name.ilike(term)) | (Customer.phone.ilike(term)),
     )
@@ -151,13 +153,14 @@ def list_pending_follow_ups(
     current_user: User = Depends(get_current_active_user),
 ):
     """Operator view: all PENDING follow-ups across the organization."""
-    query = db.query(CustomerFollowUp).filter(
+    query = scope_query_to_user(
+        db.query(CustomerFollowUp),
+        CustomerFollowUp,
+        current_user,
+        app_mode=settings.APP_MODE,
+    ).filter(
         CustomerFollowUp.status == FollowUpStatus.PENDING
     )
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(
-            CustomerFollowUp.organization_id == current_user.organization_id
-        )
     return query.order_by(CustomerFollowUp.scheduled_at).limit(limit).all()
 
 
@@ -266,7 +269,12 @@ def list_customer_follow_ups(
     """List follow-up history for a specific customer."""
     _get_or_404(db, customer_id, current_user)  # access check
     follow_ups = (
-        db.query(CustomerFollowUp)
+        scope_query_to_user(
+            db.query(CustomerFollowUp),
+            CustomerFollowUp,
+            current_user,
+            app_mode=settings.APP_MODE,
+        )
         .filter(CustomerFollowUp.customer_id == customer_id)
         .order_by(CustomerFollowUp.scheduled_at.desc())
         .limit(limit)
@@ -278,13 +286,10 @@ def list_customer_follow_ups(
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _get_or_404(db: Session, customer_id: int, current_user: User) -> Customer:
-    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    customer = _customer_scope(
+        db.query(Customer),
+        current_user,
+    ).filter(Customer.id == customer_id).first()
     if not customer:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found")
-    if (
-        is_online_pos_mode(settings.APP_MODE)
-        and current_user.organization_id is not None
-        and customer.organization_id != current_user.organization_id
-    ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization access denied")
     return customer

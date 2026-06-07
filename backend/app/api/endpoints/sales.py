@@ -38,7 +38,7 @@ from app.schemas.sale import (
     SaleSummary,
 )
 from app.api.dependencies import get_current_active_user, require_refund_sale, require_view_reports, require_void_sale
-from app.core.app_mode import apply_tenant_scope, is_online_pos_mode, require_online_tenant_scope
+from app.core.app_mode import apply_tenant_scope, require_online_tenant_scope, scope_query_to_user
 from app.core.config import settings
 from app.services import customer_retention_service as retention
 
@@ -206,7 +206,13 @@ def _reverse_sale(
     target_status: SaleStatus,
 ) -> Sale:
     try:
-        sale = db.query(Sale).filter(Sale.id == sale_id).with_for_update().first()
+        sale_query = scope_query_to_user(
+            db.query(Sale),
+            Sale,
+            current_user,
+            app_mode=settings.APP_MODE,
+        )
+        sale = sale_query.filter(Sale.id == sale_id).with_for_update().first()
         if not sale:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -347,7 +353,13 @@ def create_sale(
         for item in sale_data.items:
             # Lock the product row first to keep stock checks and updates
             # consistent across concurrent tills.
-            product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+            product_query = scope_query_to_user(
+                db.query(Product),
+                Product,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            product = product_query.filter(Product.id == item.product_id).with_for_update().first()
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -654,11 +666,12 @@ def list_sales(
     Returns:
         List of sales with items
     """
-    query = db.query(Sale)
-
-    # In online_pos mode, scope the list to the authenticated user's organization.
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(Sale.organization_id == current_user.organization_id)
+    query = scope_query_to_user(
+        db.query(Sale),
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
     if start_date:
         query = query.filter(func.date(Sale.created_at) >= start_date)
@@ -687,30 +700,50 @@ def get_today_sales_summary(
     """
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    sales_stats = db.query(
-        func.count(Sale.id).label("total_sales"),
-        func.coalesce(func.sum(Sale.total_amount), 0).label("total_revenue"),
-    ).filter(
+    sales_query = scope_query_to_user(
+        db.query(
+            func.count(Sale.id).label("total_sales"),
+            func.coalesce(func.sum(Sale.total_amount), 0).label("total_revenue"),
+        ),
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    sales_stats = sales_query.filter(
         Sale.created_at >= today_start,
         Sale.status == SaleStatus.COMPLETED,
     ).one()
 
-    total_items_sold = db.query(
+    items_query = db.query(
         func.coalesce(func.sum(SaleItem.quantity), 0)
     ).join(
         Sale, Sale.id == SaleItem.sale_id
-    ).filter(
+    )
+    items_query = scope_query_to_user(
+        items_query,
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    total_items_sold = items_query.filter(
         Sale.created_at >= today_start,
         Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0
 
-    total_profit = db.query(
+    profit_query = db.query(
         func.coalesce(func.sum((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity), 0)
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).join(
         Product, Product.id == SaleItem.product_id
-    ).filter(
+    )
+    profit_query = scope_query_to_user(
+        profit_query,
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    total_profit = profit_query.filter(
         Sale.created_at >= today_start,
         Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0
@@ -731,11 +764,18 @@ def get_end_of_day_closeout(
 ):
     closeout_date = business_date or date.today()
 
-    status_rows = db.query(
+    status_query = db.query(
         Sale.status,
         func.count(Sale.id).label("count"),
         func.coalesce(func.sum(Sale.total_amount), 0).label("amount"),
-    ).filter(
+    )
+    status_query = scope_query_to_user(
+        status_query,
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    status_rows = status_query.filter(
         func.date(Sale.created_at) == closeout_date
     ).group_by(
         Sale.status
@@ -746,10 +786,17 @@ def get_end_of_day_closeout(
         for row in status_rows
     }
 
-    payment_rows = db.query(
+    payment_query = db.query(
         Sale.payment_method,
         func.coalesce(func.sum(Sale.total_amount), 0).label("amount"),
-    ).filter(
+    )
+    payment_query = scope_query_to_user(
+        payment_query,
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    payment_rows = payment_query.filter(
         func.date(Sale.created_at) == closeout_date,
         Sale.status == SaleStatus.COMPLETED,
     ).group_by(
@@ -829,7 +876,13 @@ def get_sale(
     Raises:
         HTTPException: If sale not found
     """
-    sale = db.query(Sale).filter(Sale.id == sale_id).first()
+    query = scope_query_to_user(
+        db.query(Sale),
+        Sale,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    sale = query.filter(Sale.id == sale_id).first()
     if not sale:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

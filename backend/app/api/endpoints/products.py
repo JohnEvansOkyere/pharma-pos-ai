@@ -31,10 +31,29 @@ from app.schemas.product import (
     StockReceiptResult,
 )
 from app.api.dependencies import get_current_active_user, require_manage_products
-from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.app_mode import apply_tenant_scope, scope_query_to_user
 from app.core.config import settings
 
 router = APIRouter(prefix="/products", tags=["Products"])
+
+
+def _product_query(db: Session, current_user: User, *, include_branch: bool = True):
+    return scope_query_to_user(
+        db.query(Product),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+        include_branch=include_branch,
+    )
+
+
+def _batch_query(db: Session, current_user: User):
+    return scope_query_to_user(
+        db.query(ProductBatch),
+        ProductBatch,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
 
 def _normalize_optional_text(value: Optional[str]) -> Optional[str]:
@@ -247,11 +266,12 @@ def list_products(
     Returns:
         List of products with expiry information
     """
-    query = db.query(Product).options(joinedload(Product.category))
-
-    # In online_pos mode, scope to the authenticated user's organization.
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(Product.organization_id == current_user.organization_id)
+    query = scope_query_to_user(
+        db.query(Product).options(joinedload(Product.category)),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
     if category_id:
         query = query.filter(Product.category_id == category_id)
@@ -276,11 +296,12 @@ def list_products_catalog(
     current_user: User = Depends(get_current_active_user),
 ):
     """Paginated product catalog for operator search screens."""
-    query = db.query(Product).options(joinedload(Product.category))
-
-    # In online_pos mode, scope to the authenticated user's organization.
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(Product.organization_id == current_user.organization_id)
+    query = scope_query_to_user(
+        db.query(Product).options(joinedload(Product.category)),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
     if category_id:
         query = query.filter(Product.category_id == category_id)
@@ -332,7 +353,12 @@ def search_products(
         List of matching products with expiry information
     """
     search_term = f"%{q}%"
-    query = db.query(Product).options(joinedload(Product.category)).filter(
+    query = scope_query_to_user(
+        db.query(Product).options(joinedload(Product.category)),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+    ).filter(
         or_(
             Product.name.ilike(search_term),
             Product.sku.ilike(search_term),
@@ -341,9 +367,6 @@ def search_products(
         ),
         Product.is_active == True
     )
-    # In online_pos mode, scope to the authenticated user's organization.
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(Product.organization_id == current_user.organization_id)
     products = query.limit(limit).all()
     _refresh_product_stocks(db, products)
     nearest_expiry_map = _nearest_expiry_by_product_ids(db, [product.id for product in products])
@@ -365,7 +388,13 @@ def get_low_stock_products(
     Returns:
         List of low stock products
     """
-    products = db.query(Product).filter(Product.is_active == True).all()
+    query = scope_query_to_user(
+        db.query(Product),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    products = query.filter(Product.is_active == True).all()
     _refresh_product_stocks(db, products)
 
     products = [
@@ -397,7 +426,13 @@ def get_product(
     Raises:
         HTTPException: If product not found
     """
-    product = db.query(Product).filter(Product.id == product_id).first()
+    query = scope_query_to_user(
+        db.query(Product),
+        Product,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    product = query.filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -440,14 +475,20 @@ def create_product(
     )
 
     # Check for duplicate SKU
-    if db.query(Product).filter(Product.sku == payload["sku"]).first():
+    if _product_query(db, current_user, include_branch=False).filter(
+        Product.sku == payload["sku"]
+    ).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="SKU already exists"
         )
 
     # Check for duplicate barcode if provided
-    if payload.get("barcode") and db.query(Product).filter(Product.barcode == payload["barcode"]).first():
+    if payload.get("barcode") and _product_query(
+        db,
+        current_user,
+        include_branch=False,
+    ).filter(Product.barcode == payload["barcode"]).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Barcode already exists"
@@ -518,7 +559,7 @@ def update_product(
     Raises:
         HTTPException: If product not found
     """
-    db_product = db.query(Product).filter(Product.id == product_id).first()
+    db_product = _product_query(db, current_user).filter(Product.id == product_id).first()
     if not db_product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -532,7 +573,7 @@ def update_product(
     update_data = _normalize_product_money_fields(update_data)
 
     if "sku" in update_data:
-        duplicate_sku = db.query(Product).filter(
+        duplicate_sku = _product_query(db, current_user, include_branch=False).filter(
             Product.sku == update_data["sku"],
             Product.id != product_id,
         ).first()
@@ -543,7 +584,7 @@ def update_product(
             )
 
     if "barcode" in update_data and update_data["barcode"]:
-        duplicate_barcode = db.query(Product).filter(
+        duplicate_barcode = _product_query(db, current_user, include_branch=False).filter(
             Product.barcode == update_data["barcode"],
             Product.id != product_id,
         ).first()
@@ -611,7 +652,7 @@ def delete_product(
     Raises:
         HTTPException: If product not found
     """
-    db_product = db.query(Product).filter(Product.id == product_id).first()
+    db_product = _product_query(db, current_user).filter(Product.id == product_id).first()
     if not db_product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -670,7 +711,7 @@ def add_product_batch(
         HTTPException: If product not found
     """
     # Verify product exists
-    product = db.query(Product).filter(Product.id == product_id).first()
+    product = _product_query(db, current_user).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -691,7 +732,7 @@ def add_product_batch(
         manufacture_date=batch_data.get("manufacture_date"),
     )
 
-    duplicate_batch = db.query(ProductBatch).filter(
+    duplicate_batch = _batch_query(db, current_user).filter(
         ProductBatch.product_id == product_id,
         ProductBatch.batch_number == batch_data["batch_number"],
         ProductBatch.expiry_date == batch_data["expiry_date"],
@@ -775,14 +816,16 @@ def update_product_batch(
     status, and corrected batch identifiers.
     """
     try:
-        product = db.query(Product).filter(Product.id == product_id).with_for_update().first()
+        product = _product_query(db, current_user).filter(
+            Product.id == product_id
+        ).with_for_update().first()
         if not product:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Product not found",
             )
 
-        batch = db.query(ProductBatch).filter(
+        batch = _batch_query(db, current_user).filter(
             ProductBatch.id == batch_id,
             ProductBatch.product_id == product_id,
         ).with_for_update().first()
@@ -811,7 +854,7 @@ def update_product_batch(
 
         target_batch_number = update_data.get("batch_number", batch.batch_number)
         target_expiry_date = update_data.get("expiry_date", batch.expiry_date)
-        duplicate_batch = db.query(ProductBatch).filter(
+        duplicate_batch = _batch_query(db, current_user).filter(
             ProductBatch.product_id == product_id,
             ProductBatch.id != batch.id,
             ProductBatch.batch_number == target_batch_number,
@@ -891,7 +934,9 @@ def receive_stock(
                 detail="Batch number is required",
             )
 
-        product = db.query(Product).filter(Product.id == product_id).with_for_update().first()
+        product = _product_query(db, current_user).filter(
+            Product.id == product_id
+        ).with_for_update().first()
         if not product:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -923,7 +968,7 @@ def receive_stock(
         previous_stock = InventoryService.recalculate_product_stock(db, product)
         price_updated = False
 
-        existing_batch = db.query(ProductBatch).filter(
+        existing_batch = _batch_query(db, current_user).filter(
             ProductBatch.product_id == product.id,
             ProductBatch.batch_number == batch_number,
             ProductBatch.expiry_date == receipt.expiry_date,

@@ -122,3 +122,30 @@ def require_online_tenant_scope(current_user: "User", *, app_mode: str | None) -
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Online POS user must be assigned to an organization and branch",
         )
+
+
+def scope_query_to_user(
+    query,
+    model: Any,
+    current_user: "User",
+    *,
+    app_mode: str | None,
+    include_branch: bool = True,
+):
+    """Apply organization and optional branch ownership to an ORM query."""
+    organization_id = getattr(current_user, "organization_id", None)
+    branch_id = getattr(current_user, "branch_id", None)
+
+    if organization_id is None:
+        if is_online_pos_mode(app_mode):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Online POS user must be assigned to an organization",
+            )
+        return query
+
+    if hasattr(model, "organization_id"):
+        query = query.filter(model.organization_id == organization_id)
+    if include_branch and branch_id is not None and hasattr(model, "branch_id"):
+        query = query.filter(model.branch_id == branch_id)
+    return query

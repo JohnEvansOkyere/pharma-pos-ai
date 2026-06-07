@@ -26,9 +26,16 @@ Application-level rule:
 
 - users assigned to an organization can access only that organization
 - branch-assigned users are scoped to that branch
-- platform/admin users without organization assignment are treated as transition-period operators
+- role permissions do not expand data scope: a branch-assigned admin remains branch-restricted
+- organization-level admins use an organization assignment with no branch and can access all branches in that organization
+- organization-unscoped users are rejected from `online_pos` operational queries
 - report access requires report permission
 - repair and audit operations require admin role
+
+The shared `scope_query_to_user()` helper applies this policy to operational
+sales, products, batches, stock adjustments, stock takes, customers, users,
+and dashboard aggregates. Direct object access and aggregate reporting use the
+same rule, so guessing another branch's row ID cannot bypass list filtering.
 
 ## Frontend Scope
 
@@ -44,6 +51,7 @@ Use these rules for all future work:
 
 - every cloud query must include `organization_id`
 - branch-specific views must include `branch_id`
+- use `scope_query_to_user()` instead of duplicating endpoint-specific filters
 - never trust frontend-sent organization or branch id without checking the authenticated user
 - avoid global admin behavior unless it is explicitly a platform operation
 - audit sensitive tenant-scoped changes with organization and branch ids

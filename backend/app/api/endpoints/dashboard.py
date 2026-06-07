@@ -12,6 +12,8 @@ from app.models.sale import Sale, SaleItem, SaleStatus
 from app.models.product import Product, ProductBatch
 from app.models.user import User
 from app.api.dependencies import require_view_reports
+from app.core.app_mode import scope_query_to_user
+from app.core.config import settings
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -22,6 +24,15 @@ def _sum_or_zero(expression):
 
 def _count_or_zero(expression):
     return func.coalesce(func.count(expression), 0)
+
+
+def _scope(query, model, current_user: User):
+    return scope_query_to_user(
+        query,
+        model,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
 
 @router.get("/kpis")
@@ -37,45 +48,53 @@ def get_dashboard_kpis(
     """
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    sales_stats = db.query(
+    sales_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("total_sales_today"),
         _count_or_zero(Sale.id).label("total_sales_count"),
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= today_start,
         Sale.status == SaleStatus.COMPLETED,
     ).one()
 
-    total_profit_today = db.query(
+    total_profit_today = _scope(db.query(
         _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity)
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).join(
         Product, Product.id == SaleItem.product_id
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= today_start,
         Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0.0
 
-    inventory_value = db.query(
+    inventory_value = _scope(db.query(
         _sum_or_zero(Product.cost_price * Product.total_stock)
-    ).filter(Product.is_active == True).scalar() or 0.0
+    ), Product, current_user).filter(Product.is_active == True).scalar() or 0.0
 
     # Items near expiry (next 30 days)
     expiry_threshold = date.today() + timedelta(days=30)
-    near_expiry_count = db.query(ProductBatch).filter(
+    near_expiry_count = _scope(
+        db.query(ProductBatch),
+        ProductBatch,
+        current_user,
+    ).filter(
         ProductBatch.expiry_date <= expiry_threshold,
         ProductBatch.expiry_date >= date.today(),
         ProductBatch.quantity > 0
     ).count()
 
     # Low stock items
-    low_stock_count = db.query(Product).filter(
+    low_stock_count = _scope(db.query(Product), Product, current_user).filter(
         Product.total_stock <= Product.low_stock_threshold,
         Product.is_active == True
     ).count()
 
     # Total products
-    total_products = db.query(Product).filter(Product.is_active == True).count()
+    total_products = _scope(
+        db.query(Product),
+        Product,
+        current_user,
+    ).filter(Product.is_active == True).count()
 
     return {
         "total_sales_today": float(sales_stats.total_sales_today or 0.0),
@@ -109,7 +128,7 @@ def get_fast_moving_products(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    results = db.query(
+    results = _scope(db.query(
         Product.id,
         Product.name,
         Product.sku,
@@ -119,7 +138,7 @@ def get_fast_moving_products(
         SaleItem, SaleItem.product_id == Product.id
     ).join(
         Sale, Sale.id == SaleItem.sale_id
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).group_by(
@@ -161,25 +180,25 @@ def get_slow_moving_products(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    sales_subquery = db.query(
+    sales_subquery = _scope(db.query(
         SaleItem.product_id,
         func.coalesce(func.sum(SaleItem.quantity), 0).label("total_sold")
     ).join(
         Sale, Sale.id == SaleItem.sale_id
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).group_by(
         SaleItem.product_id
     ).subquery()
 
-    products = db.query(
+    products = _scope(db.query(
         Product.id,
         Product.name,
         Product.sku,
         Product.total_stock,
         func.coalesce(sales_subquery.c.total_sold, 0).label("total_sold"),
-    ).outerjoin(
+    ), Product, current_user).outerjoin(
         sales_subquery, sales_subquery.c.product_id == Product.id
     ).filter(
         Product.is_active == True
@@ -217,7 +236,7 @@ def get_low_stock_items(
     Returns:
         List of low stock products with details
     """
-    products = db.query(Product).filter(
+    products = _scope(db.query(Product), Product, current_user).filter(
         Product.is_active == True,
         Product.total_stock <= Product.low_stock_threshold
     ).order_by(
@@ -260,11 +279,11 @@ def get_sales_trend(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    results = db.query(
+    results = _scope(db.query(
         func.date(Sale.created_at).label("date"),
         func.count(Sale.id).label("sales_count"),
         func.sum(Sale.total_amount).label("total_revenue")
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).group_by(
@@ -302,7 +321,7 @@ def get_staff_performance(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    results = db.query(
+    results = _scope(db.query(
         User.id,
         User.full_name,
         User.username,
@@ -310,7 +329,7 @@ def get_staff_performance(
         func.sum(Sale.total_amount).label("total_revenue")
     ).join(
         Sale, Sale.user_id == User.id
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).group_by(
@@ -352,7 +371,7 @@ def get_expiring_products(
     """
     expiry_threshold = date.today() + timedelta(days=days)
 
-    results = db.query(
+    results = _scope(db.query(
         Product.id,
         Product.name,
         Product.sku,
@@ -364,7 +383,7 @@ def get_expiring_products(
         ProductBatch.quantity.label("batch_quantity"),
         ProductBatch.expiry_date,
         Product.cost_price
-    ).join(
+    ), Product, current_user).join(
         ProductBatch, ProductBatch.product_id == Product.id
     ).filter(
         ProductBatch.expiry_date <= expiry_threshold,
@@ -409,7 +428,7 @@ def get_overstock_items(
     Returns:
         List of overstocked products
     """
-    products = db.query(Product).filter(
+    products = _scope(db.query(Product), Product, current_user).filter(
         Product.is_active == True,
         Product.total_stock > Product.reorder_level * 3  # 3x reorder level
     ).all()
@@ -451,13 +470,13 @@ def get_profit_by_category(
 
     start_date = datetime.now() - timedelta(days=days)
 
-    results = db.query(
+    results = _scope(db.query(
         Category.id,
         Category.name,
         _sum_or_zero(SaleItem.total_price).label("total_revenue"),
         _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity).label("total_profit"),
         func.coalesce(func.sum(SaleItem.quantity), 0).label("total_quantity"),
-    ).join(
+    ), Sale, current_user).join(
         Product, Product.category_id == Category.id
     ).join(
         SaleItem, SaleItem.product_id == Product.id
@@ -514,20 +533,20 @@ def get_revenue_analysis(
 
     _completed = Sale.status == SaleStatus.COMPLETED
 
-    daily_stats = db.query(
+    daily_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= today_start, _completed).one()
+    ), Sale, current_user).filter(Sale.created_at >= today_start, _completed).one()
 
-    weekly_stats = db.query(
+    weekly_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= week_start, _completed).one()
+    ), Sale, current_user).filter(Sale.created_at >= week_start, _completed).one()
 
-    monthly_stats = db.query(
+    monthly_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("revenue"),
         _count_or_zero(Sale.id).label("transactions"),
-    ).filter(Sale.created_at >= month_start, _completed).one()
+    ), Sale, current_user).filter(Sale.created_at >= month_start, _completed).one()
 
     avg_basket = (
         float(daily_stats.revenue or 0.0) / int(daily_stats.transactions)
@@ -565,23 +584,23 @@ def get_financial_kpis(
     """
     start_date = datetime.now() - timedelta(days=days)
 
-    sales_stats = db.query(
+    sales_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("total_revenue"),
         _count_or_zero(Sale.id).label("total_transactions"),
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).one()
 
     total_revenue = float(sales_stats.total_revenue or 0.0)
 
-    gross_profit = db.query(
+    gross_profit = _scope(db.query(
         _sum_or_zero((SaleItem.unit_price - Product.cost_price) * SaleItem.quantity)
     ).join(
         Sale, Sale.id == SaleItem.sale_id
     ).join(
         Product, Product.id == SaleItem.product_id
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.status == SaleStatus.COMPLETED,
     ).scalar() or 0.0
@@ -598,10 +617,10 @@ def get_financial_kpis(
     )
 
     # Credit sales (sales with payment method = credit)
-    credit_stats = db.query(
+    credit_stats = _scope(db.query(
         _sum_or_zero(Sale.total_amount).label("outstanding_credit"),
         _count_or_zero(Sale.id).label("credit_sales_count"),
-    ).filter(
+    ), Sale, current_user).filter(
         Sale.created_at >= start_date,
         Sale.payment_method == "credit",
         Sale.status == SaleStatus.COMPLETED,

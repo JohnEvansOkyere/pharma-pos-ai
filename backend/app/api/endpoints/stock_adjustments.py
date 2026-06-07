@@ -21,7 +21,7 @@ from app.schemas.stock_adjustment import (
     StockAdjustmentCreate,
 )
 from app.services.inventory_service import InventoryService
-from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.app_mode import apply_tenant_scope, scope_query_to_user
 from app.core.config import settings
 
 router = APIRouter(prefix="/stock-adjustments", tags=["Stock Adjustments"])
@@ -85,11 +85,12 @@ def list_stock_adjustments(
     current_user: User = Depends(get_current_active_user),
 ):
     """List stock adjustments for review and reporting."""
-    query = db.query(StockAdjustment)
-
-    # In online_pos mode, scope to the authenticated user's organization.
-    if is_online_pos_mode(settings.APP_MODE) and current_user.organization_id is not None:
-        query = query.filter(StockAdjustment.organization_id == current_user.organization_id)
+    query = scope_query_to_user(
+        db.query(StockAdjustment),
+        StockAdjustment,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
 
     if product_id is not None:
         query = query.filter(StockAdjustment.product_id == product_id)
@@ -111,7 +112,15 @@ def create_stock_adjustment(
     and controlled inventory corrections.
     """
     try:
-        product = db.query(Product).filter(Product.id == adjustment.product_id).with_for_update().first()
+        product_query = scope_query_to_user(
+            db.query(Product),
+            Product,
+            current_user,
+            app_mode=settings.APP_MODE,
+        )
+        product = product_query.filter(
+            Product.id == adjustment.product_id
+        ).with_for_update().first()
         if not product:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -120,7 +129,13 @@ def create_stock_adjustment(
 
         batch: Optional[ProductBatch] = None
         if adjustment.batch_id is not None:
-            batch = db.query(ProductBatch).filter(
+            batch_query = scope_query_to_user(
+                db.query(ProductBatch),
+                ProductBatch,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            batch = batch_query.filter(
                 ProductBatch.id == adjustment.batch_id
             ).with_for_update().first()
             if not batch or batch.product_id != product.id:

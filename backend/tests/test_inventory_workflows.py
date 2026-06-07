@@ -500,12 +500,16 @@ def test_create_sale_links_customer_from_same_organization_and_branch(
         phone="0244000004",
     )
     product = product_factory(category.id, name="Valid Customer Product", sku="VALID-CUST")
-    batch_factory(
+    batch = batch_factory(
         product.id,
         batch_number="VALID-CUST-B1",
         quantity=2,
         expiry_offset_days=180,
     )
+    product.organization_id = organization.id
+    product.branch_id = branch.id
+    batch.organization_id = organization.id
+    batch.branch_id = branch.id
     db_session.add(customer)
     db_session.commit()
     db_session.refresh(customer)

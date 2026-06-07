@@ -809,7 +809,7 @@
 
 - [x] Customer↔sale ownership validated (a sale links only to an active customer in the same tenant/branch, before any stock mutation). ✅ *(2026-06-07 07:31 UTC)*
 - [x] Inventory stamping/integrity consistent across every write path (`ProductBatch`, all `InventoryMovement` sources, source documents, sync metadata, and audit records). ✅ *(2026-06-07 07:42 UTC)*
-- [ ] Branch-level authorization enforced within a tenant (a branch user sees only permitted branch data). *(2026-06-07 UTC)*
+- [x] Branch-level authorization enforced within a tenant across sales, products, inventory, stock takes, customers, users, and dashboard aggregates. Branch-assigned users are restricted to their branch; organization-level admins can work across their organization. ✅ *(2026-06-07 07:51 UTC)*
 
 ### 10.2 P0 Provisioning, Identifiers & Unified Runtime
 

@@ -23,7 +23,7 @@ from app.schemas.stock_take import (
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
 from app.services.sync_outbox_service import SyncOutboxService
-from app.core.app_mode import apply_tenant_scope
+from app.core.app_mode import apply_tenant_scope, scope_query_to_user
 from app.core.config import settings
 
 router = APIRouter(prefix="/stock-takes", tags=["Stock Takes"])
@@ -36,8 +36,14 @@ def list_stock_takes(
     current_user: User = Depends(get_current_active_user),
 ):
     """List recent stock take sessions."""
+    query = scope_query_to_user(
+        db.query(StockTake),
+        StockTake,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
     return (
-        db.query(StockTake)
+        query
         .options(joinedload(StockTake.items))
         .order_by(StockTake.created_at.desc())
         .limit(limit)
@@ -52,8 +58,14 @@ def get_stock_take(
     current_user: User = Depends(get_current_active_user),
 ):
     """Get one stock take session with counted lines."""
+    query = scope_query_to_user(
+        db.query(StockTake),
+        StockTake,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
     stock_take = (
-        db.query(StockTake)
+        query
         .options(joinedload(StockTake.items))
         .filter(StockTake.id == stock_take_id)
         .first()
@@ -94,14 +106,26 @@ def create_stock_take(
                 )
             seen_batch_ids.add(item.batch_id)
 
-            product = db.query(Product).filter(Product.id == item.product_id).first()
+            product_query = scope_query_to_user(
+                db.query(Product),
+                Product,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            product = product_query.filter(Product.id == item.product_id).first()
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Product {item.product_id} not found",
                 )
 
-            batch = db.query(ProductBatch).filter(ProductBatch.id == item.batch_id).first()
+            batch_query = scope_query_to_user(
+                db.query(ProductBatch),
+                ProductBatch,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            batch = batch_query.filter(ProductBatch.id == item.batch_id).first()
             if not batch or batch.product_id != product.id:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -167,8 +191,14 @@ def complete_stock_take(
 ):
     """Approve a stock take and apply audited batch-level corrections."""
     try:
+        stock_take_query = scope_query_to_user(
+            db.query(StockTake),
+            StockTake,
+            current_user,
+            app_mode=settings.APP_MODE,
+        )
         stock_take = (
-            db.query(StockTake)
+            stock_take_query
             .options(selectinload(StockTake.items))
             .filter(StockTake.id == stock_take_id)
             .with_for_update()
@@ -191,7 +221,15 @@ def complete_stock_take(
         completed_lines = []
 
         for item in stock_take.items:
-            batch = db.query(ProductBatch).filter(ProductBatch.id == item.batch_id).with_for_update().first()
+            batch_query = scope_query_to_user(
+                db.query(ProductBatch),
+                ProductBatch,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            batch = batch_query.filter(
+                ProductBatch.id == item.batch_id
+            ).with_for_update().first()
             if not batch:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -209,7 +247,15 @@ def complete_stock_take(
             if item.variance_quantity == 0:
                 continue
 
-            product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+            product_query = scope_query_to_user(
+                db.query(Product),
+                Product,
+                current_user,
+                app_mode=settings.APP_MODE,
+            )
+            product = product_query.filter(
+                Product.id == item.product_id
+            ).with_for_update().first()
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,

@@ -10,6 +10,8 @@ from app.models.user import User, UserRole
 from app.models.sync_event import SyncEventType
 from app.schemas.user import User as UserSchema, UserCreate, UserUpdate
 from app.api.dependencies import get_current_active_user, require_manage_users
+from app.core.app_mode import apply_tenant_scope, scope_query_to_user
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.services.audit_service import AuditService
 from app.services.sync_outbox_service import SyncOutboxService
@@ -32,7 +34,12 @@ def list_users(
     Returns:
         List of users
     """
-    users = db.query(User).order_by(User.created_at.desc()).all()
+    users = scope_query_to_user(
+        db.query(User),
+        User,
+        current_user,
+        app_mode=settings.APP_MODE,
+    ).order_by(User.created_at.desc()).all()
     return users
 
 
@@ -72,14 +79,21 @@ def create_user(
             )
 
     # Check if username exists
-    if db.query(User).filter(User.username == normalized_username).first():
+    organization_users = scope_query_to_user(
+        db.query(User),
+        User,
+        current_user,
+        app_mode=settings.APP_MODE,
+        include_branch=False,
+    )
+    if organization_users.filter(User.username == normalized_username).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered",
         )
 
     # Check if email exists
-    if db.query(User).filter(User.email == normalized_email).first():
+    if organization_users.filter(User.email == normalized_email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered",
@@ -97,6 +111,7 @@ def create_user(
         is_active=user_data.is_active if user_data.is_active is not None else True,
     )
 
+    apply_tenant_scope(db_user, current_user, app_mode=settings.APP_MODE)
     db.add(db_user)
     db.flush()
     SyncOutboxService.record_event(
@@ -123,6 +138,8 @@ def create_user(
         entity_id=db_user.id,
         description=f"Created user {db_user.username}",
         extra_data={"role": db_user.role.value, "is_active": db_user.is_active},
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
     )
     db.commit()
     db.refresh(db_user)
@@ -159,7 +176,13 @@ def update_user(
     normalized_email = user_data.email.strip().lower() if user_data.email is not None else None
     normalized_full_name = user_data.full_name.strip() if user_data.full_name is not None else None
 
-    db_user = db.query(User).filter(User.id == user_id).first()
+    scoped_users = scope_query_to_user(
+        db.query(User),
+        User,
+        current_user,
+        app_mode=settings.APP_MODE,
+    )
+    db_user = scoped_users.filter(User.id == user_id).first()
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -181,7 +204,13 @@ def update_user(
 
     # Update fields
     if normalized_username is not None:
-        existing = db.query(User).filter(
+        existing = scope_query_to_user(
+            db.query(User),
+            User,
+            current_user,
+            app_mode=settings.APP_MODE,
+            include_branch=False,
+        ).filter(
             User.username == normalized_username,
             User.id != user_id
         ).first()
@@ -194,7 +223,13 @@ def update_user(
 
     if normalized_email is not None:
         # Check if email is already taken by another user
-        existing = db.query(User).filter(
+        existing = scope_query_to_user(
+            db.query(User),
+            User,
+            current_user,
+            app_mode=settings.APP_MODE,
+            include_branch=False,
+        ).filter(
             User.email == normalized_email,
             User.id != user_id
         ).first()
@@ -250,6 +285,8 @@ def update_user(
             "is_active": db_user.is_active,
             "password_updated": user_data.password is not None,
         },
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
     )
     db.commit()
     db.refresh(db_user)
@@ -283,7 +320,12 @@ def delete_user(
             detail="Cannot delete your own account"
         )
 
-    db_user = db.query(User).filter(User.id == user_id).first()
+    db_user = scope_query_to_user(
+        db.query(User),
+        User,
+        current_user,
+        app_mode=settings.APP_MODE,
+    ).filter(User.id == user_id).first()
     if not db_user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -326,5 +368,7 @@ def delete_user(
         entity_id=db_user.id,
         description=f"Deactivated user {db_user.username} (soft-delete)",
         extra_data={"role": db_user.role.value},
+        organization_id=db_user.organization_id,
+        branch_id=db_user.branch_id,
     )
     db.commit()
