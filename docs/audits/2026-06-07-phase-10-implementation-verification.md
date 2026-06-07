@@ -6,10 +6,10 @@
 
 ## Verdict
 
-Claude's release-blocking conclusion is correct: the hosted operational profile is not
-verified by a green system-level regression suite and must not be treated as deployable.
-The architecture and focused tests are useful foundation work, but hosted release
-acceptance is incomplete.
+Claude's release-blocking conclusion was correct when reviewed: the hosted operational
+profile was not verified by a green system-level regression suite and could not be
+treated as deployable. The blocking verification defects described below were remediated
+on 2026-06-07 and the resulting offline/hosted PostgreSQL matrix is now green.
 
 One statement was too absolute: there is a passing configuration. With
 `APP_MODE=operational_pos POS_DEPLOYMENT_PROFILE=auto`, the full backend suite passes
@@ -76,6 +76,10 @@ Verification results:
 - SQLite fallback hosted profile: `204 passed, 1 warning`.
 - Frontend: `22 passed`; `npx tsc --noEmit` passed.
 - GitHub workflow YAML parsed successfully.
+- GitHub Actions run
+  [`27093777473`](https://github.com/JohnEvansOkyere/pharma-pos-ai/actions/runs/27093777473)
+  completed `Backend Tests (offline)`, `Backend Tests (hosted)`, and `Frontend Tests`
+  successfully for commit `33892d5`.
 
-The code-side remediation is complete. Final checklist acceptance remains
-pending until the pushed GitHub Actions matrix reports green.
+The remediation and its release gate are complete. This closes the hosted-profile
+verification blocker; it does not close the other open Phase 10 rollout work.
