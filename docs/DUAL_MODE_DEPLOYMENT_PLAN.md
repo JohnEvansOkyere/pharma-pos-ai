@@ -1,8 +1,15 @@
 # Dual-Mode Deployment Plan — Online-First + Offline-First
 
 > **Created:** 2026-05-28 UTC
-> **Status:** 📋 PLANNING
+> **Status:** SUPERSEDED on 2026-06-07
 > **Context:** Market feedback confirms city pharmacies want online-first features (customer retention, digital receipts, health follow-ups, real-time AI), while village pharmacies need a fully offline local installation. One codebase must serve both.
+>
+> The shared-database `online_pos` proposal in this document is historical.
+> Current architecture uses one `operational_pos` runtime, hosted/offline feature
+> flags, a dedicated operational database per pharmacy organization, and a
+> central reporting plane. See
+> `docs/architecture/unified-operational-runtime.md` and
+> `docs/architecture/hosted-tenant-topology-and-backup.md`.
 
 ---
 

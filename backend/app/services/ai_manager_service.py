@@ -231,7 +231,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 "(90+ days silent), SMS/WhatsApp consent rates, follow-up "
                 "delivery stats, top customers by spend, and the top products "
                 "most frequently purchased by registered customers. "
-                "Only available in online_pos mode where customers are registered."
+                "Only available when customer-retention features are enabled."
             ),
             "parameters": {"type": "object", "properties": {}},
         },
@@ -1126,7 +1126,7 @@ class AIManagerService:
             if ca.get("error"):
                 return (
                     "Customer analytics are not available in this deployment mode — "
-                    "customers are only registered in online_pos mode."
+                    "customers are only registered when retention features are enabled."
                 )
             total = ca.get("total_customers", 0)
             new   = ca.get("new_customers_in_period", 0)

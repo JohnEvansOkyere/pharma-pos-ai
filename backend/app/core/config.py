@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     # Application
     APP_NAME: str = "GYSBIN PHARMACY ANNEX"
     APP_VERSION: str = "1.0.0"
-    APP_MODE: str = "local_pos"  # local_pos, online_pos, or cloud_reporting
+    APP_MODE: str = "operational_pos"  # operational_pos or cloud_reporting
+    POS_DEPLOYMENT_PROFILE: str = "auto"  # offline or hosted
     DEBUG: bool = False
     ENVIRONMENT: str = "production"
 
@@ -139,6 +140,9 @@ class Settings(BaseSettings):
     # Follow-up scheduling
     CUSTOMER_FOLLOWUP_DAYS: int = 3        # Days after purchase before health follow-up
     CUSTOMER_FOLLOWUP_HOUR: int = 10       # Hour of day to dispatch follow-ups (local tz)
+    CUSTOMER_RETENTION_ENABLED: Optional[bool] = None
+    CUSTOMER_RECEIPTS_ENABLED: Optional[bool] = None
+    CUSTOMER_FOLLOWUPS_ENABLED: Optional[bool] = None
 
     # Business Rules
     LOW_STOCK_THRESHOLD: int = 10
@@ -158,10 +162,38 @@ class Settings(BaseSettings):
         """Build derived settings and enforce production-safe defaults."""
         environment = self.ENVIRONMENT.lower()
         backend = self.DATABASE_BACKEND.lower()
-        self.APP_MODE = self.APP_MODE.strip().lower()
+        raw_app_mode = self.APP_MODE.strip().lower()
 
-        if self.APP_MODE not in {"local_pos", "online_pos", "cloud_reporting"}:
-            raise ValueError("APP_MODE must be 'local_pos', 'online_pos', or 'cloud_reporting'.")
+        if raw_app_mode not in {
+            "operational_pos",
+            "cloud_reporting",
+            "local_pos",
+            "online_pos",
+        }:
+            raise ValueError(
+                "APP_MODE must be 'operational_pos' or 'cloud_reporting'. "
+                "'local_pos' and 'online_pos' are accepted only as migration aliases."
+            )
+
+        self.APP_MODE = (
+            "operational_pos"
+            if raw_app_mode in {"local_pos", "online_pos"}
+            else raw_app_mode
+        )
+
+        deployment_profile = self.POS_DEPLOYMENT_PROFILE.strip().lower()
+        if deployment_profile == "auto":
+            deployment_profile = "hosted" if raw_app_mode == "online_pos" else "offline"
+        if deployment_profile not in {"offline", "hosted"}:
+            raise ValueError("POS_DEPLOYMENT_PROFILE must be 'offline' or 'hosted'.")
+        self.POS_DEPLOYMENT_PROFILE = deployment_profile
+
+        if self.CUSTOMER_RETENTION_ENABLED is None:
+            self.CUSTOMER_RETENTION_ENABLED = deployment_profile == "hosted"
+        if self.CUSTOMER_RECEIPTS_ENABLED is None:
+            self.CUSTOMER_RECEIPTS_ENABLED = self.CUSTOMER_RETENTION_ENABLED
+        if self.CUSTOMER_FOLLOWUPS_ENABLED is None:
+            self.CUSTOMER_FOLLOWUPS_ENABLED = self.CUSTOMER_RETENTION_ENABLED
 
         if backend != "postgresql":
             raise ValueError(

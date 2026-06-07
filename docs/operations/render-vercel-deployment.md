@@ -94,7 +94,8 @@ POSTGRES_PORT=5432
 POSTGRES_DB=pharma_pos
 POSTGRES_USER=pharma_user
 POSTGRES_PASSWORD=<local-password>
-APP_MODE=local_pos
+APP_MODE=operational_pos
+POS_DEPLOYMENT_PROFILE=offline
 ```
 
 Then configure sync to the Render backend:

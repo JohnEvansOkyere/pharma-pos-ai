@@ -155,10 +155,7 @@ class TelegramAlertService:
                     scope_label="All branches",
                 )
 
-                # Append customer retention summary when online_pos mode is active
-                from app.core.config import settings as _s
-                from app.core.app_mode import is_online_pos_mode
-                if is_online_pos_mode(_s.APP_MODE):
+                if settings.CUSTOMER_RETENTION_ENABLED:
                     try:
                         from app.services.customer_analytics_service import CustomerAnalyticsService
                         ca = CustomerAnalyticsService.summary(

@@ -57,13 +57,15 @@ Use this for:
 
 ### For Installers And Support Technicians
 
-#### 🏙️ City Pharmacy (online_pos — cloud database, internet required)
+#### City Pharmacy (hosted operational deployment, internet required)
 
 - [**SETUP_ONLINE_CITY_PHARMACY.md**](SETUP_ONLINE_CITY_PHARMACY.md)
 
-Use this for: provisioning a new city pharmacy in the cloud, on-site Docker install for `online_pos` mode, Supabase/SMS config, offline queue demo, and the city handover checklist.
+Use this for: the historical city setup flow. The shared-Supabase instructions
+are superseded by the dedicated Render backend/database topology and must be
+revised before client use.
 
-#### 🏘️ Village / Rural Pharmacy (local_pos — fully offline)
+#### Village / Rural Pharmacy (offline operational deployment)
 
 - [**SETUP_OFFLINE_VILLAGE_PHARMACY.md**](SETUP_OFFLINE_VILLAGE_PHARMACY.md)
 
@@ -71,7 +73,7 @@ Use this for: offline install on a local machine, configuring local PostgreSQL a
 
 #### Technical Reference
 
-- [Windows Local Deployment Runbook](WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md) — detailed technical reference for `local_pos` mode
+- [Windows Local Deployment Runbook](WINDOWS_LOCAL_DEPLOYMENT_RUNBOOK.md) — detailed technical reference for the offline profile
 
 ### For Backup And Recovery
 

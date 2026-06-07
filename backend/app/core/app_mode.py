@@ -1,16 +1,14 @@
 """
-Application mode helpers.
+Application mode and deployment-profile helpers.
 
-The same codebase can run in three modes:
+The canonical runtime modes are:
 
-- ``local_pos``        — offline-first pharmacy installation (local PostgreSQL)
-- ``online_pos``       — online-first pharmacy installation (cloud Supabase DB,
-                         full POS writes, customer retention features enabled)
-- ``cloud_reporting``  — vendor reporting portal (read-only, no POS writes)
+- ``operational_pos`` — pharmacy operations against that pharmacy's database
+- ``cloud_reporting`` — vendor reporting portal (read-only, no POS writes)
 
-Cloud reporting mode must not behave like a second till.
-``online_pos`` mode behaves identically to ``local_pos`` for POS write
-operations but skips the sync outbox (writes go directly to the cloud DB).
+``local_pos`` and ``online_pos`` remain temporary configuration aliases for
+``operational_pos``. Hosted/offline differences are deployment features, not
+different tenancy models.
 """
 
 from __future__ import annotations
@@ -24,10 +22,20 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-LOCAL_POS_MODE = "local_pos"
-ONLINE_POS_MODE = "online_pos"
+OPERATIONAL_POS_MODE = "operational_pos"
 CLOUD_REPORTING_MODE = "cloud_reporting"
-VALID_APP_MODES = {LOCAL_POS_MODE, ONLINE_POS_MODE, CLOUD_REPORTING_MODE}
+LEGACY_LOCAL_POS_MODE = "local_pos"
+LEGACY_ONLINE_POS_MODE = "online_pos"
+VALID_APP_MODES = {
+    OPERATIONAL_POS_MODE,
+    CLOUD_REPORTING_MODE,
+    LEGACY_LOCAL_POS_MODE,
+    LEGACY_ONLINE_POS_MODE,
+}
+
+OFFLINE_DEPLOYMENT = "offline"
+HOSTED_DEPLOYMENT = "hosted"
+VALID_DEPLOYMENT_PROFILES = {OFFLINE_DEPLOYMENT, HOSTED_DEPLOYMENT}
 
 SAFE_HTTP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -44,9 +52,11 @@ LOCAL_OPERATIONAL_PREFIXES: tuple[str, ...] = (
 
 
 def normalize_app_mode(value: str | None) -> str:
-    mode = (value or LOCAL_POS_MODE).strip().lower()
+    mode = (value or OPERATIONAL_POS_MODE).strip().lower()
     if mode not in VALID_APP_MODES:
-        return LOCAL_POS_MODE
+        return OPERATIONAL_POS_MODE
+    if mode in {LEGACY_LOCAL_POS_MODE, LEGACY_ONLINE_POS_MODE}:
+        return OPERATIONAL_POS_MODE
     return mode
 
 
@@ -54,14 +64,30 @@ def is_cloud_reporting_mode(value: str | None) -> bool:
     return normalize_app_mode(value) == CLOUD_REPORTING_MODE
 
 
-def is_online_pos_mode(value: str | None) -> bool:
-    """True when the app is an online-first POS (city pharmacy)."""
-    return normalize_app_mode(value) == ONLINE_POS_MODE
-
-
 def is_pos_mode(value: str | None) -> bool:
-    """True when POS write operations are allowed (local_pos or online_pos)."""
-    return normalize_app_mode(value) in {LOCAL_POS_MODE, ONLINE_POS_MODE}
+    """True when pharmacy operational writes are allowed."""
+    return normalize_app_mode(value) == OPERATIONAL_POS_MODE
+
+
+def is_hosted_deployment(
+    deployment_profile: str | None = None,
+    *,
+    app_mode: str | None = None,
+) -> bool:
+    """Return whether the operational deployment is hosted."""
+    raw_mode = (app_mode or "").strip().lower()
+    if raw_mode == LEGACY_ONLINE_POS_MODE:
+        return True
+
+    profile = (deployment_profile or "").strip().lower()
+    if not profile:
+        try:
+            from app.core.config import settings
+
+            profile = settings.POS_DEPLOYMENT_PROFILE
+        except Exception:
+            profile = OFFLINE_DEPLOYMENT
+    return profile == HOSTED_DEPLOYMENT
 
 
 def is_local_operational_write(
@@ -86,14 +112,7 @@ def is_local_operational_write(
 
 
 def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) -> None:
-    """Stamp ``organization_id`` and ``branch_id`` from the authenticated user
-    onto an ORM object in ``online_pos`` mode.
-
-    In ``local_pos`` mode this is a no-op — tenancy is supplied through the
-    sync configuration (``CLOUD_SYNC_ORGANIZATION_ID`` / ``CLOUD_SYNC_BRANCH_ID``).
-    In ``online_pos`` mode every POS write must be scoped to the tenant of the
-    user making the request so that rows from different city pharmacies sharing
-    the same cloud database cannot bleed across organization boundaries.
+    """Stamp available user organization/branch scope on operational writes.
 
     Call this before ``db.add()`` / ``db.flush()`` so scope is present on the
     first INSERT.
@@ -102,7 +121,7 @@ def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) 
 
         apply_tenant_scope(db_sale, current_user, app_mode=settings.APP_MODE)
     """
-    if not is_online_pos_mode(app_mode):
+    if not is_pos_mode(app_mode):
         return
 
     if current_user.organization_id is not None:
@@ -112,15 +131,23 @@ def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) 
         obj.branch_id = current_user.branch_id
 
 
-def require_online_tenant_scope(current_user: "User", *, app_mode: str | None) -> None:
-    """Reject online POS writes from vendor or incompletely provisioned users."""
-    if not is_online_pos_mode(app_mode):
+def require_operational_tenant_scope(
+    current_user: "User",
+    *,
+    app_mode: str | None,
+    deployment_profile: str | None = None,
+) -> None:
+    """Reject hosted operational writes from incompletely provisioned users."""
+    if not is_pos_mode(app_mode) or not is_hosted_deployment(
+        deployment_profile,
+        app_mode=app_mode,
+    ):
         return
 
     if current_user.organization_id is None or current_user.branch_id is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Online POS user must be assigned to an organization and branch",
+            detail="Hosted POS user must be assigned to an organization and branch",
         )
 
 
@@ -131,16 +158,20 @@ def scope_query_to_user(
     *,
     app_mode: str | None,
     include_branch: bool = True,
+    deployment_profile: str | None = None,
 ):
     """Apply organization and optional branch ownership to an ORM query."""
     organization_id = getattr(current_user, "organization_id", None)
     branch_id = getattr(current_user, "branch_id", None)
 
     if organization_id is None:
-        if is_online_pos_mode(app_mode):
+        if is_pos_mode(app_mode) and is_hosted_deployment(
+            deployment_profile,
+            app_mode=app_mode,
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Online POS user must be assigned to an organization",
+                detail="Hosted POS user must be assigned to an organization",
             )
         return query
 

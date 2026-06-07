@@ -110,7 +110,7 @@ def heartbeat(current_user: User = Depends(get_current_active_user)):
     Lightweight connectivity probe used by the frontend online-status hook.
 
     Returns 200 when the backend is reachable and the token is valid.
-    Called every 15 seconds in online_pos mode — must be fast.
+    Called every 15 seconds when the hosted browser queue is enabled.
     """
     return {"status": "ok", "user_id": current_user.id}
 

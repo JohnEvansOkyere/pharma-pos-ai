@@ -20,7 +20,7 @@ import { enqueue, generateLocalInvoice } from '../services/offlineQueue'
 import { useCartStore } from '../stores/cartStore'
 import type { PricingMode } from '../stores/cartStore'
 import { useAuthStore } from '../stores/authStore'
-import { isOnlinePosMode } from '../config/appMode'
+import { isOfflineQueueEnabled } from '../config/appMode'
 import { useOnlineStatus } from '../hooks/useOnlineStatus'
 import CustomerModal from '../components/pos/CustomerModal'
 import type { LinkedCustomer } from '../components/pos/CustomerModal'
@@ -338,7 +338,7 @@ export default function POSPage() {
 
     try {
       // In online_pos mode and no connectivity: queue the sale locally.
-      if (isOnlinePosMode && !isOnline) {
+      if (isOfflineQueueEnabled && !isOnline) {
         const payload = {
           pricing_mode: pricingMode,
           items: items.map((item) => ({
@@ -439,7 +439,7 @@ export default function POSPage() {
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 Pharmacy POS
               </h1>
-              {isOnlinePosMode && !isOnline && (
+              {isOfflineQueueEnabled && !isOnline && (
                 <span
                   style={{
                     display: 'inline-flex',
@@ -845,7 +845,7 @@ export default function POSPage() {
                     Customer Name
                   </span>
                   {/* Link registered customer in online_pos mode */}
-                  {isOnlinePosMode && (
+                  {isOfflineQueueEnabled && (
                     <div style={{ marginBottom: 8 }}>
                       {linkedCustomer ? (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '8px 12px' }}>

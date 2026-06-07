@@ -83,11 +83,8 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Sync outbox jobs are only meaningful for local_pos installations.
-        # In online_pos mode, POS writes go directly to the cloud DB — no
-        # outbox upload, heartbeat, or catalog snapshot sync is needed.
-        from app.core.app_mode import is_online_pos_mode
-        if settings.CLOUD_SYNC_ENABLED and not is_online_pos_mode(settings.APP_MODE):
+        # Every operational deployment can publish its transactional outbox.
+        if settings.CLOUD_SYNC_ENABLED:
             self.scheduler.add_job(
                 self.enqueue_system_heartbeat,
                 "interval",
@@ -117,10 +114,12 @@ class SchedulerService:
                     replace_existing=True,
                 )
 
-        # Cloud projection is only meaningful for cloud_reporting deployments
-        # that ingest sync events from local installs. In online_pos mode the
-        # data is already in the main database tables.
-        if settings.CLOUD_PROJECTION_ENABLED and not is_online_pos_mode(settings.APP_MODE):
+        # Projection belongs only to the central reporting deployment.
+        from app.core.app_mode import is_cloud_reporting_mode
+        if (
+            settings.CLOUD_PROJECTION_ENABLED
+            and is_cloud_reporting_mode(settings.APP_MODE)
+        ):
             self.scheduler.add_job(
                 self.project_cloud_events,
                 "interval",
@@ -173,9 +172,7 @@ class SchedulerService:
                 replace_existing=True,
             )
 
-        # Customer follow-up dispatch — only meaningful in online_pos mode
-        # where the retention module is active and customers are registered.
-        if is_online_pos_mode(settings.APP_MODE):
+        if settings.CUSTOMER_FOLLOWUPS_ENABLED:
             self.scheduler.add_job(
                 self.dispatch_customer_follow_ups,
                 "interval",
@@ -397,9 +394,8 @@ class SchedulerService:
     def dispatch_customer_follow_ups():
         """Hourly task: send all due customer health follow-up messages.
 
-        Only runs in online_pos mode (registered via is_online_pos_mode guard
-        in start()). Uses the message adapter (stub by default) — plug in a
-        real SMS provider via SMS_PROVIDER env var.
+        Runs only when customer follow-up delivery is enabled. Uses the message
+        adapter (stub by default); configure a real provider with SMS_PROVIDER.
         """
         db: Session = SessionLocal()
         try:

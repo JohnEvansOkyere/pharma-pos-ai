@@ -2,7 +2,13 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { lazy, Suspense, useEffect } from 'react'
 import { useAuthStore } from './stores/authStore'
-import { getDefaultAuthenticatedPath, isCloudReportingMode, isPosMode } from './config/appMode'
+import {
+  getDefaultAuthenticatedPath,
+  isCloudReportingMode,
+  isCustomerRetentionEnabled,
+  isOfflineQueueEnabled,
+  isPosMode,
+} from './config/appMode'
 
 // Pages
 const LoginPage = lazy(() => import('./pages/LoginPage'))
@@ -157,24 +163,28 @@ function App() {
                     <SettingsPage />
                   </AdminOrManagerRoute>
                 } />
-                {/* Customer retention — online_pos only */}
-                <Route path="customers" element={<CustomersPage />} />
-                <Route path="customer-analytics" element={
-                  <AdminOrManagerRoute>
-                    <CustomerAnalyticsPage />
-                  </AdminOrManagerRoute>
-                } />
-                <Route path="follow-ups" element={
-                  <AdminOrManagerRoute>
-                    <FollowUpDashboard />
-                  </AdminOrManagerRoute>
-                } />
-                {/* Offline queue management — online_pos only */}
-                <Route path="offline-queue" element={
-                  <AdminOrManagerRoute>
-                    <OfflineQueuePage />
-                  </AdminOrManagerRoute>
-                } />
+                {isCustomerRetentionEnabled && (
+                  <>
+                    <Route path="customers" element={<CustomersPage />} />
+                    <Route path="customer-analytics" element={
+                      <AdminOrManagerRoute>
+                        <CustomerAnalyticsPage />
+                      </AdminOrManagerRoute>
+                    } />
+                    <Route path="follow-ups" element={
+                      <AdminOrManagerRoute>
+                        <FollowUpDashboard />
+                      </AdminOrManagerRoute>
+                    } />
+                  </>
+                )}
+                {isOfflineQueueEnabled && (
+                  <Route path="offline-queue" element={
+                    <AdminOrManagerRoute>
+                      <OfflineQueuePage />
+                    </AdminOrManagerRoute>
+                  } />
+                )}
               </>
             ) : (
               <>

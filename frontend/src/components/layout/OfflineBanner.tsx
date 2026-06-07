@@ -1,5 +1,5 @@
 /**
- * OfflineBanner — visible only in online_pos mode when connectivity is lost.
+ * OfflineBanner — visible when the hosted browser queue is enabled.
  *
  * Shows:
  *   - Red banner when offline with queue count
@@ -8,7 +8,7 @@
  */
 import { useEffect, useState } from 'react'
 import { FiAlertTriangle, FiCheckCircle, FiRefreshCw, FiWifiOff } from 'react-icons/fi'
-import { isOnlinePosMode } from '../../config/appMode'
+import { isOfflineQueueEnabled } from '../../config/appMode'
 import type { OnlineStatus } from '../../hooks/useOnlineStatus'
 import { clearFailed, flush, pendingCount } from '../../services/offlineQueue'
 import { api } from '../../services/api'
@@ -26,11 +26,10 @@ export default function OfflineBanner({ onlineStatus }: Props) {
   const [flushedCount, setFlushedCount] = useState(0)
   const [failedCount, setFailedCount] = useState(0)
 
-  // Not relevant in local_pos mode
-  if (!isOnlinePosMode) return null
-
   // Update queue size whenever visibility changes
   useEffect(() => {
+    if (!isOfflineQueueEnabled) return
+
     const update = async () => {
       const count = await pendingCount()
       setQueueSize(count)
@@ -42,6 +41,8 @@ export default function OfflineBanner({ onlineStatus }: Props) {
 
   // React to connectivity changes
   useEffect(() => {
+    if (!isOfflineQueueEnabled) return
+
     if (!isOnline) {
       setBannerState('offline')
       return
@@ -78,7 +79,7 @@ export default function OfflineBanner({ onlineStatus }: Props) {
     })
   }, [isOnline])
 
-  if (bannerState === 'hidden') return null
+  if (!isOfflineQueueEnabled || bannerState === 'hidden') return null
 
   // ── Offline banner ─────────────────────────────────────────────────────────
   if (bannerState === 'offline') {

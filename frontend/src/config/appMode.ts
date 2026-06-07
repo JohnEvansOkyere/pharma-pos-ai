@@ -1,14 +1,33 @@
-export const APP_MODE = (import.meta.env.VITE_APP_MODE || 'local_pos').trim().toLowerCase()
+const rawAppMode = (import.meta.env.VITE_APP_MODE || 'operational_pos').trim().toLowerCase()
+
+const normalizedAppMode =
+  rawAppMode === 'local_pos' || rawAppMode === 'online_pos'
+    ? 'operational_pos'
+    : rawAppMode
+export const APP_MODE =
+  normalizedAppMode === 'cloud_reporting' ? 'cloud_reporting' : 'operational_pos'
+
+export const DEPLOYMENT_PROFILE = (
+  import.meta.env.VITE_POS_DEPLOYMENT_PROFILE
+  || (rawAppMode === 'online_pos' ? 'hosted' : 'offline')
+).trim().toLowerCase()
+
+function envFlag(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === '') return fallback
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase())
+}
 
 export const isCloudReportingMode = APP_MODE === 'cloud_reporting'
-export const isOnlinePosMode = APP_MODE === 'online_pos'
-export const isLocalPosMode = APP_MODE === 'local_pos'
-
-/**
- * True when POS write operations are available (local_pos or online_pos).
- * In cloud_reporting mode, POS is disabled.
- */
-export const isPosMode = isLocalPosMode || isOnlinePosMode
+export const isPosMode = APP_MODE === 'operational_pos'
+export const isHostedDeployment = isPosMode && DEPLOYMENT_PROFILE === 'hosted'
+export const isCustomerRetentionEnabled = isPosMode && envFlag(
+  import.meta.env.VITE_CUSTOMER_RETENTION_ENABLED,
+  isHostedDeployment,
+)
+export const isOfflineQueueEnabled = isHostedDeployment && envFlag(
+  import.meta.env.VITE_OFFLINE_QUEUE_ENABLED,
+  true,
+)
 
 export function getDefaultAuthenticatedPath(user?: { role?: string; organization_id?: number | null } | null) {
   if (isCloudReportingMode) {
@@ -17,12 +36,5 @@ export function getDefaultAuthenticatedPath(user?: { role?: string; organization
     return '/login'
   }
 
-  // online_pos mode: admin/manager default to cloud-dashboard, cashier to POS
-  if (isOnlinePosMode) {
-    if (user?.role === 'admin' || user?.role === 'manager') return '/cloud-dashboard'
-    return '/pos'
-  }
-
-  // local_pos mode
   return user?.role === 'admin' ? '/dashboard' : '/pos'
 }

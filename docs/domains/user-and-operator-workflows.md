@@ -75,7 +75,7 @@ Roles grant actions; they do not grant wider data scope.
 - a branch-assigned cashier, manager, or admin can access only that branch;
 - an organization-level admin has an organization assignment and no branch,
   and can work across branches in that organization;
-- an organization-unscoped account cannot use `online_pos` operational
+- an organization-unscoped account cannot use hosted operational
   endpoints.
 
 The same rule applies to direct records and reports, including sales

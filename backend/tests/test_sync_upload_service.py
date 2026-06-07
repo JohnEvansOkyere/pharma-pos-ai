@@ -82,6 +82,23 @@ def test_upload_pending_marks_event_sent(monkeypatch, db_session):
     assert _FakeClient.calls[0]["headers"]["Authorization"] == "Bearer secret-token"
 
 
+def test_hosted_operational_mode_records_outbox_event(monkeypatch, db_session):
+    monkeypatch.setattr(settings, "APP_MODE", "operational_pos")
+    monkeypatch.setattr(settings, "POS_DEPLOYMENT_PROFILE", "hosted")
+
+    event = SyncOutboxService.record_event(
+        db_session,
+        event_type=SyncEventType.SALE_CREATED,
+        aggregate_type="sale",
+        aggregate_id=10,
+        payload={"sale_id": 10, "total_amount": "12.00"},
+    )
+    db_session.flush()
+
+    assert event is not None
+    assert event.local_sequence_number == 1
+
+
 def test_upload_pending_marks_missing_identity_failed(monkeypatch, db_session):
     monkeypatch.setattr(settings, "CLOUD_SYNC_ENABLED", True)
     monkeypatch.setattr(settings, "CLOUD_SYNC_INGEST_URL", "https://example.supabase.co/functions/v1/sync-ingest")

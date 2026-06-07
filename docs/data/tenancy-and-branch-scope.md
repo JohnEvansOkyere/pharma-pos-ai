@@ -28,7 +28,7 @@ Application-level rule:
 - branch-assigned users are scoped to that branch
 - role permissions do not expand data scope: a branch-assigned admin remains branch-restricted
 - organization-level admins use an organization assignment with no branch and can access all branches in that organization
-- organization-unscoped users are rejected from `online_pos` operational queries
+- organization-unscoped users are rejected from hosted operational queries
 - report access requires report permission
 - repair and audit operations require admin role
 

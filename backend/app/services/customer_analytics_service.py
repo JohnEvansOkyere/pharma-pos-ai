@@ -9,8 +9,8 @@ This service is used by:
   - The AI manager tool ``get_customer_analytics``
   - The daily Telegram briefing (retention summary block)
 
-All queries are org-scoped and work in both ``local_pos`` and ``online_pos``
-modes (the Customer table exists in both, but is only populated in online_pos).
+All queries are organization-scoped and work in the operational runtime. The
+Customer table is populated only when customer-retention features are enabled.
 """
 from __future__ import annotations
 

@@ -38,7 +38,11 @@ from app.schemas.sale import (
     SaleSummary,
 )
 from app.api.dependencies import get_current_active_user, require_refund_sale, require_view_reports, require_void_sale
-from app.core.app_mode import apply_tenant_scope, require_online_tenant_scope, scope_query_to_user
+from app.core.app_mode import (
+    apply_tenant_scope,
+    require_operational_tenant_scope,
+    scope_query_to_user,
+)
 from app.core.config import settings
 from app.services import customer_retention_service as retention
 
@@ -339,7 +343,11 @@ def create_sale(
         HTTPException: If product not found or insufficient stock
     """
     try:
-        require_online_tenant_scope(current_user, app_mode=settings.APP_MODE)
+        require_operational_tenant_scope(
+            current_user,
+            app_mode=settings.APP_MODE,
+            deployment_profile=settings.POS_DEPLOYMENT_PROFILE,
+        )
         linked_customer = _resolve_sale_customer(
             db,
             getattr(sale_data, "customer_id", None),
@@ -617,18 +625,20 @@ def create_sale(
         db.refresh(db_sale)
 
         # ── Customer retention: receipt + follow-up (non-fatal) ───────────
-        if linked_customer:
+        if linked_customer and settings.CUSTOMER_RETENTION_ENABLED:
             try:
-                retention.dispatch_receipt(
-                    db,
-                    customer=linked_customer,
-                    sale=db_sale,
-                )
-                retention.schedule_follow_up(
-                    db,
-                    customer=linked_customer,
-                    sale=db_sale,
-                )
+                if settings.CUSTOMER_RECEIPTS_ENABLED:
+                    retention.dispatch_receipt(
+                        db,
+                        customer=linked_customer,
+                        sale=db_sale,
+                    )
+                if settings.CUSTOMER_FOLLOWUPS_ENABLED:
+                    retention.schedule_follow_up(
+                        db,
+                        customer=linked_customer,
+                        sale=db_sale,
+                    )
                 db.commit()
             except Exception as retention_err:
                 import logging

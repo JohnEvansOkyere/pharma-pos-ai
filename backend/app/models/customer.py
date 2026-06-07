@@ -1,10 +1,10 @@
 """
 Customer model for the retention module.
 
-Only meaningful in ``online_pos`` mode where the pharmacy can register
-customers and send digital receipts + health follow-up messages.
+Only meaningful when customer-retention features are enabled and the pharmacy
+can register customers and send digital receipts + health follow-up messages.
 
-In ``local_pos`` mode this table exists but is unused — village pharmacies
+In offline deployments this table exists but can remain unused — village pharmacies
 capture customer_name and customer_phone on the Sale record directly and do
 not build a registered customer base.
 """

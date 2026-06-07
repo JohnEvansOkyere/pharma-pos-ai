@@ -1,10 +1,16 @@
 # Online-First POS Architecture (`online_pos` Mode)
 
 **Document type:** Technical reference  
-**Status:** Implementation complete — Phases A and B  
+**Status:** SUPERSEDED on 2026-06-07
 **Last updated:** 2026-05-28  
 **Author:** Antigravity agent  
 **Audience:** Any developer or agent continuing work on this system
+
+> This document describes the retired shared-Supabase `online_pos` design.
+> Do not use it as current implementation guidance. Hosted pharmacies now use
+> `APP_MODE=operational_pos`, `POS_DEPLOYMENT_PROFILE=hosted`, a dedicated
+> Render backend/database, and the transactional outbox. See
+> `docs/architecture/unified-operational-runtime.md`.
 
 ---
 

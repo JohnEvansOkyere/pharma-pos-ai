@@ -602,8 +602,8 @@
 
 ### 8.1 P0 Confusion Guardrails
 
-- [x] Add explicit app mode: `local_pos` for pharmacy installations and `cloud_reporting` for the deployed reporting portal. ✅ *(2026-05-19 11:33 UTC)*
-  - Fixed: backend `APP_MODE` and frontend `VITE_APP_MODE` are now explicit deployment choices.
+- [x] Add explicit app mode: `operational_pos` for pharmacy installations and `cloud_reporting` for the deployed reporting portal. ✅ *(updated 2026-06-07 08:05 UTC)*
+  - Fixed: hosted/offline differences now use deployment and feature flags; legacy `local_pos` / `online_pos` values are temporary aliases only.
 - [x] In `cloud_reporting` mode, hide local operational pages from the frontend: POS, Products, Sales, Stock Adjustments, Suppliers, Notifications, local Dashboard, and local Settings unless a specific cloud-safe setting is required. ✅ *(2026-05-19 11:33 UTC)*
   - Fixed: cloud reporting mode sidebar shows only cloud reporting/admin routes and operational routes redirect away.
 - [x] In `cloud_reporting` mode, backend must reject unsafe local operational write endpoints so users cannot create cloud-only sales/products by accident. ✅ *(2026-05-19 11:33 UTC)*
@@ -713,9 +713,9 @@
 
 ---
 
-## Phase E: Customer Retention Module (online_pos only)
+## Phase E: Customer Retention Module (Feature-Enabled Operational Deployments)
 
-> This phase covers the customer registration, digital receipts, health follow-up automation, and analytics features available in `online_pos` mode. Not applicable to village `local_pos` installs.
+> This phase covers customer registration, digital receipts, health follow-up automation, and analytics. These are controlled by explicit retention/receipt/follow-up flags in `operational_pos`, not by a separate tenancy mode. *(updated 2026-06-07 08:05 UTC)*
 
 ### E.1 Customer Registration & Database
 
@@ -748,10 +748,10 @@
 
 ### E.4 Retention Service & Scheduler
 
-- [x] `CustomerRetentionService.dispatch_receipt()`: non-fatal; called after each sale commit in online_pos mode ✅ *(2026-05-28)*
+- [x] `CustomerRetentionService.dispatch_receipt()`: non-fatal; called after sale commit when `CUSTOMER_RECEIPTS_ENABLED=true` ✅ *(updated 2026-06-07 08:05 UTC)*
 - [x] `CustomerRetentionService.schedule_follow_up()`: creates PENDING follow-up record ✅ *(2026-05-28)*
 - [x] `CustomerRetentionService.process_pending_follow_ups()`: processes overdue PENDING follow-ups ✅ *(2026-05-28)*
-- [x] Hourly scheduler job `dispatch_customer_follow_ups` in `online_pos` mode only ✅ *(2026-05-28)*
+- [x] Hourly scheduler job `dispatch_customer_follow_ups` runs when `CUSTOMER_FOLLOWUPS_ENABLED=true` ✅ *(updated 2026-06-07 08:05 UTC)*
 
 ### E.5 Frontend — Customer Module
 
@@ -759,13 +759,13 @@
 - [x] `CustomersPage.tsx`: customer directory with profile drill-down, purchase count, follow-up history ✅ *(2026-05-28)*
 - [x] `FollowUpDashboard.tsx`: operator view — status tiles, overdue alerts, sortable table ✅ *(2026-05-28)*
 - [x] `CustomerAnalyticsPage.tsx`: 5 KPI cards, lifecycle funnel, consent panel, top customers, product affinity ✅ *(2026-05-29)*
-- [x] Sidebar: Customers, Customer Analytics, Follow-ups — visible in `online_pos` mode only ✅ *(2026-05-29)*
+- [x] Sidebar: Customers, Customer Analytics, Follow-ups — visible when `VITE_CUSTOMER_RETENTION_ENABLED=true` ✅ *(updated 2026-06-07 08:05 UTC)*
 
 ### E.6 AI Integration
 
 - [x] `get_customer_analytics` AI tool registered in `TOOL_SCHEMAS` ✅ *(2026-05-29)*
 - [x] `_compose_answer()` keyword routing: customer/retention/churn/at-risk etc. queries answered deterministically ✅ *(2026-05-29)*
-- [x] Telegram daily briefing includes retention block (total/new/repeat rate/at-risk/churned/follow-up stats) in `online_pos` mode ✅ *(2026-05-29)*
+- [x] Telegram daily briefing includes retention block (total/new/repeat rate/at-risk/churned/follow-up stats) when customer retention is enabled ✅ *(updated 2026-06-07 08:05 UTC)*
 
 ### E.7 Test Coverage
 
@@ -813,8 +813,10 @@
 
 ### 10.2 P0 Provisioning, Identifiers & Unified Runtime
 
-- [ ] **Define one operational POS mode** with deployment feature flags for *hosted* vs *offline* (replaces the `local_pos` / `online_pos` split). Hosted and offline differ only by config, not by tenancy model. *(2026-06-06 UTC)*
+- [x] **Define one operational POS mode** with deployment feature flags for *hosted* vs *offline* (replaces the `local_pos` / `online_pos` split). Hosted and offline differ only by config, not by tenancy model. ✅ *(2026-06-07 08:05 UTC)*
   - Flags cover: hosted scheduling, outbox publishing target, customer-retention features, receipt/follow-up dispatch.
+  - `local_pos` and `online_pos` remain temporary aliases for deployment migration; new profiles use `operational_pos`.
+  - Hosted and offline operational writes both create transactional outbox events; delivery is controlled by `CLOUD_SYNC_ENABLED`.
 - [ ] **Globally stable tenant / deployment / device identifiers.** `event_id` is already a UUID and ingestion is idempotent on `(source_device_id, local_sequence_number)`, but `aggregate_id` is a local integer and org/branch/device IDs must be **allocated by the control plane, never local autoincrement**, so facts from separate tenant databases cannot collide in the central DB. *(2026-06-07 UTC)*
 - [ ] **Tenant provisioning tooling:** allocate global IDs → create tenant database → run migrations → seed admin user → register in control-plane → issue per-tenant secrets/token. Repeatable script/IaC. *(2026-06-06 UTC)*
 - [ ] **Per-tenant secrets management:** each backend gets its own `DATABASE_URL`, `SECRET_KEY`, SMS keys, and central-publish token, injected at deploy and never committed (extend the per-device sync-token pattern from decision 3.12). *(2026-06-06 UTC)*

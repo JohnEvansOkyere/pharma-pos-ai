@@ -1,11 +1,10 @@
 /**
- * Hook for detecting online/offline status in online_pos mode.
+ * Hook for detecting backend connectivity when the hosted queue is enabled.
  *
  * Uses two signals:
  *   1. navigator.onLine — instant DOM event (can lie on captive portals)
  *   2. API heartbeat — periodic GET to /api/auth/heartbeat to confirm the
- *      backend is reachable. Falls back to /api/products/catalog?limit=1
- *      if the heartbeat endpoint is unavailable.
+ *      authenticated backend is reachable.
  *
  * The hook exposes:
  *   - isOnline: boolean — true when backend is reachable
@@ -15,12 +14,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { isOnlinePosMode } from '../config/appMode'
+import { isOfflineQueueEnabled } from '../config/appMode'
 
 const HEARTBEAT_INTERVAL_MS = 15_000   // 15 s
 const HEARTBEAT_TIMEOUT_MS  = 8_000    // 8 s timeout per check
 const HEARTBEAT_URL = '/api/auth/heartbeat'
-const FALLBACK_URL  = '/api/products/catalog?limit=1'
 
 async function checkConnectivity(): Promise<boolean> {
   if (!navigator.onLine) return false
@@ -38,19 +36,9 @@ async function checkConnectivity(): Promise<boolean> {
       headers,
       signal: controller.signal,
     })
-    return res.status < 500
+    return res.ok
   } catch {
-    // heartbeat endpoint may not exist yet — try fallback
-    try {
-      const res = await fetch(FALLBACK_URL, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-      })
-      return res.status < 500
-    } catch {
-      return false
-    }
+    return false
   } finally {
     clearTimeout(timeout)
   }
@@ -65,13 +53,12 @@ export interface OnlineStatus {
 
 /**
  * Returns online status for the current deployment.
- * In local_pos mode always returns { isOnline: true } because the backend
+ * In offline deployments always returns { isOnline: true } because the backend
  * is on the same machine and offline detection is not meaningful.
  */
 export function useOnlineStatus(): OnlineStatus {
-  const isPosOnline = isOnlinePosMode
+  const shouldMonitor = isOfflineQueueEnabled
 
-  // In local_pos mode, always report online.
   const [isOnline, setIsOnline] = useState<boolean>(true)
   const [isChecking, setIsChecking] = useState<boolean>(false)
   const [lastChecked, setLastChecked] = useState<Date | null>(null)
@@ -79,7 +66,7 @@ export function useOnlineStatus(): OnlineStatus {
   const isMountedRef = useRef(true)
 
   const doCheck = useCallback(async () => {
-    if (!isPosOnline) return        // no-op for local_pos
+    if (!shouldMonitor) return
     if (!isMountedRef.current) return
     setIsChecking(true)
     try {
@@ -91,14 +78,14 @@ export function useOnlineStatus(): OnlineStatus {
     } finally {
       if (isMountedRef.current) setIsChecking(false)
     }
-  }, [isPosOnline])
+  }, [shouldMonitor])
 
   const recheckNow = useCallback(() => {
     doCheck()
   }, [doCheck])
 
   useEffect(() => {
-    if (!isPosOnline) return
+    if (!shouldMonitor) return
 
     isMountedRef.current = true
 
@@ -121,9 +108,9 @@ export function useOnlineStatus(): OnlineStatus {
       window.removeEventListener('offline', onOffline)
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [doCheck, isPosOnline])
+  }, [doCheck, shouldMonitor])
 
-  if (!isPosOnline) {
+  if (!shouldMonitor) {
     return { isOnline: true, isChecking: false, lastChecked: null, recheckNow: () => {} }
   }
 
