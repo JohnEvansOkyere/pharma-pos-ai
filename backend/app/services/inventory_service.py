@@ -56,9 +56,15 @@ class InventoryService:
         source_document_id: Optional[int],
         reason: Optional[str],
         created_by: Optional[int],
+        organization_id: Optional[int] = None,
+        branch_id: Optional[int] = None,
+        source_device_id: Optional[int] = None,
     ) -> InventoryMovement:
         """Append an inventory movement row for a committed stock change."""
         movement = InventoryMovement(
+            organization_id=organization_id,
+            branch_id=branch_id,
+            source_device_id=source_device_id,
             product_id=product_id,
             batch_id=batch_id,
             movement_type=movement_type,

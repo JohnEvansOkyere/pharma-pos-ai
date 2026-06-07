@@ -261,6 +261,8 @@ Templates are separated by application boundary:
 
 - `backend/.env.example` -> `backend/.env` for server, database, Supabase, AI, SMTP, and Telegram secrets.
 - `frontend/.env.example` -> `frontend/.env.local` for browser-safe `VITE_*` values only.
+- `backend/.env_local.example` / `backend/.env_cloud.example` -> `backend/.env` for server-side village or city settings.
+- `frontend/.env_local.example` / `frontend/.env_cloud.example` -> `frontend/.env.local` for browser-safe mode settings. See [Docker Environment Profiles](./docs/ENVIRONMENT_PROFILES.md).
 
 #### Backend (`backend/.env`)
 ```env

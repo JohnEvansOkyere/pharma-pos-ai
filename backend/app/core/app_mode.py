@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable
 
+from fastapi import HTTPException, status
+
 if TYPE_CHECKING:
     # Imported only for type hints — avoids circular import at runtime.
     from app.models.user import User
@@ -109,3 +111,15 @@ def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) 
 
     if current_user.branch_id is not None:
         obj.branch_id = current_user.branch_id
+
+
+def require_online_tenant_scope(current_user: "User", *, app_mode: str | None) -> None:
+    """Reject online POS writes from vendor or incompletely provisioned users."""
+    if not is_online_pos_mode(app_mode):
+        return
+
+    if current_user.organization_id is None or current_user.branch_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Online POS user must be assigned to an organization and branch",
+        )

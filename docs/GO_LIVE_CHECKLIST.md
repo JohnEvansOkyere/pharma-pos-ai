@@ -774,6 +774,107 @@
 
 ---
 
+## Phase 10: Isolated Per-Tenant Architecture & Fleet Control Plane
+
+> **Added:** 2026-06-06 UTC — supersedes the shared-database `online_pos` direction.
+> **Revised:** 2026-06-07 UTC — incorporated architecture-review corrections (isolation wording, topology-before-PITR, PII/schema policy, break-glass hardening, non-blocking publish, canary migrations, global identifiers, hosted-offline limits; reordered so transactional correctness precedes migration/reporting/AI; verification tests promoted to P0 gates).
+>
+> **Goal:** unify city (hosted) and village (on-site) pharmacies onto **one tenancy model**: every pharmacy runs the *same single-tenant backend image* against *its own database*, and every install publishes events to *one central reporting/control-plane database* for the vendor dashboard and fleet AI. Stop maintaining the shared-DB `online_pos` model.
+>
+> ```
+> City:    Hosted backend + tenant DB ─┐
+> Village: Local backend + local DB  ──┼─> Central reporting DB ─> Vendor dashboard / fleet AI
+>                                      └─> (break-glass support access)
+> ```
+>
+> **Architecture decisions recorded:**
+> - **One model, not two.** A city pharmacy is a village install that the vendor hosts. The existing sync outbox → projection → `cloud_reporting` → Clients page machinery is the foundation; the change is making *hosted* tenant backends publish events too.
+> - **Operational-DB isolation is structural, not query-level.** Each tenant has its own operational database, so there is no `WHERE organization_id` to forget on the till path. This is *not* the same as "leakage is impossible": deployment misconfiguration (a backend pointed at the wrong `DATABASE_URL`), the central reporting DB, backups, and break-glass access remain real leak surfaces and must be controlled explicitly (see 10.5, 10.8).
+> - **Two AIs, two sources.** The in-pharmacy **AI Manager** reads that tenant's **live operational tables**. **Fleet AI** and the vendor dashboard read the **central reporting DB** only.
+> - **Complexity moves to automation (deploy-time, testable), not to every transactional request.** Correct trade-off at ~10 clients.
+> - **Hosted clients trade offline resilience for real-time cloud features.** A hosted city pharmacy's backend *and* database are remote, so it cannot truly operate offline — its only buffer is the browser queue (`ONLINE-P1-01`), which must be hardened (10.9). Clients that need real offline operation use the village/local deployment, not hosted.
+>
+> **Honest scope correction (do not overclaim):** going single-tenant removes the *cross-pharmacy* dimension of `ONLINE-P0-01..05`, but it does **not** remove intra-tenant correctness work — **branch-level authorization, customer↔sale ownership, inventory stamping/integrity, and AI live-data sourcing still need fixing**. Those become ordinary single-tenant correctness instead of shared-DB breach risks, and per 10.1 they are fixed **before** any data migration, reporting, or AI is built on top.
+
+### 10.0 Decision, Topology & Reconciliation
+
+- [ ] **Choose provider, topology, and backup mechanism first** — this gates everything below. Decide between *one managed cluster with many databases* vs *separate instances/projects per tenant*, because **per-database point-in-time restore is not guaranteed when tenant databases share one managed server** (many providers do PITR at the instance level only). The recoverability promise in 10.3 depends on this choice. *(2026-06-07 UTC)*
+- [x] Record the per-tenant + central-plane decision in `MEMORY.md` and supersede the shared-DB `online_pos` direction in decisions **3.30**, **3.32**, and **3.33**. ✅ *(2026-06-07 07:31 UTC)*
+- [x] Reframe `ONLINE-P0-01..05` in `MEMORY.md`: cross-pharmacy isolation is addressed by the architecture; remaining items are intra-tenant correctness work (branch auth, customer ownership, inventory integrity, AI live-sourcing). ✅ *(2026-06-07 07:31 UTC)*
+- [x] Confirm the initial target scale of roughly 10 clients. **A separate database per client is the standard for every client.** A separate *cluster/project/instance* is reserved for a future enterprise client with contractual physical-isolation, residency, or SLA requirements. ✅ *(2026-06-07 07:31 UTC)*
+
+### 10.1 P0 Transactional Correctness — FIX BEFORE MIGRATION, REPORTING, OR AI
+
+> Migrating data or building central reporting/AI on top of integrity bugs propagates corruption into the central DB and AI answers. This is the first build step after the decision, per CLAUDE.md priority #1 (data integrity).
+
+- [x] Customer↔sale ownership validated (a sale links only to an active customer in the same tenant/branch, before any stock mutation). ✅ *(2026-06-07 07:31 UTC)*
+- [ ] Inventory stamping/integrity consistent across every write path (`ProductBatch`, all `InventoryMovement` sources). *(2026-06-07 UTC)*
+- [ ] Branch-level authorization enforced within a tenant (a branch user sees only permitted branch data). *(2026-06-07 UTC)*
+
+### 10.2 P0 Provisioning, Identifiers & Unified Runtime
+
+- [ ] **Define one operational POS mode** with deployment feature flags for *hosted* vs *offline* (replaces the `local_pos` / `online_pos` split). Hosted and offline differ only by config, not by tenancy model. *(2026-06-06 UTC)*
+  - Flags cover: hosted scheduling, outbox publishing target, customer-retention features, receipt/follow-up dispatch.
+- [ ] **Globally stable tenant / deployment / device identifiers.** `event_id` is already a UUID and ingestion is idempotent on `(source_device_id, local_sequence_number)`, but `aggregate_id` is a local integer and org/branch/device IDs must be **allocated by the control plane, never local autoincrement**, so facts from separate tenant databases cannot collide in the central DB. *(2026-06-07 UTC)*
+- [ ] **Tenant provisioning tooling:** allocate global IDs → create tenant database → run migrations → seed admin user → register in control-plane → issue per-tenant secrets/token. Repeatable script/IaC. *(2026-06-06 UTC)*
+- [ ] **Per-tenant secrets management:** each backend gets its own `DATABASE_URL`, `SECRET_KEY`, SMS keys, and central-publish token, injected at deploy and never committed (extend the per-device sync-token pattern from decision 3.12). *(2026-06-06 UTC)*
+
+### 10.3 P0 Backup / Restore Proof (depends on 10.0 topology)
+
+- [ ] **Encrypted per-tenant backups** automated for every hosted tenant database. *(2026-06-06 UTC)*
+- [ ] **Rehearsed single-tenant restore drill** — prove one pharmacy can be restored to a point in time without touching any other tenant. If tenant databases share one managed server, this requires **logical per-DB backups (`pg_dump`)**, not instance-level PITR. A restore procedure on paper does not count. *(2026-06-07 UTC)*
+- [ ] Per-tenant logical export ("give me my data" / clean offboarding). *(2026-06-06 UTC)*
+
+### 10.4 P0 Canary Migration Tooling
+
+- [ ] **Migrate-all-tenants tooling:** run Alembic migrations across every tenant database in one command, with per-tenant success/failure reporting. *(2026-06-06 UTC)*
+- [ ] **Canary migrations:** migrate one tenant first and verify before fleet-wide rollout. *(2026-06-07 UTC)*
+- [ ] **Backward-compatible (expand/contract) migration rules** so old and new app versions both work during a staged rollout. *(2026-06-07 UTC)*
+- [ ] **Rollback handling** for a failed tenant migration (forward-fix or revert path defined and tested). *(2026-06-07 UTC)*
+
+### 10.5 P0 Outbox Publishing & Central Ingestion (tests are release gates)
+
+- [ ] **Central/reporting failure must NEVER block a POS transaction.** Hosted backends publish via the existing async transactional-outbox + background delivery (already true for village installs — preserve it; do not introduce a synchronous publish in the sale path). *(2026-06-07 UTC)*
+- [ ] **Enable reliable outbox publishing from hosted tenant backends** (today only village/local installs publish; hosted `online_pos` writes direct and skips the outbox). *(2026-06-06 UTC)*
+- [ ] **Central event contract: explicit, versioned schemas + retention + PII minimization.** `schema_version` already exists on sync events; add explicit per-event schema definitions, a retention policy, and **PII restrictions — do not centrally publish customer medical/health-follow-up details or unrestricted audit payloads.** Publish aggregates/IDs, not sensitive customer content. *(2026-06-07 UTC)*
+- [ ] Central reporting DB ingests published events from *all* tenants (sales summaries, inventory snapshots/movements, audit *metadata*, login/security events, device + backend heartbeat, backup/migration status, AI findings, errors/failed jobs). *(2026-06-06 UTC)*
+- [ ] Vendor dashboard reads **only** the central DB (no per-request fan-out across tenant databases). *(2026-06-06 UTC)*
+- [ ] **P0 release gate — event idempotency tests** for central ingestion (same `event_id` + same `payload_hash` accepted, different hash rejected). *(2026-06-07 UTC)*
+- [ ] **P0 release gate — central reconciliation tests** (central facts match per-tenant source data). *(2026-06-07 UTC)*
+- [ ] **P0 release gate — fleet rollout test** (a code update + `migrate-all` succeeds across N tenant backends/DBs). *(2026-06-07 UTC)*
+
+### 10.6 P0 Migrate Existing Tenant Data (after 10.1 correctness + tooling)
+
+- [ ] **Migrate the existing shared Supabase data into the first isolated tenant database — do this while effectively single-tenant** (cheapest possible blast radius before client #2), only after transactional correctness (10.1) so corrupt data is not propagated. Include a rehearsed cutover + rollback step. *(2026-06-07 UTC)*
+
+### 10.7 P0 Tenant AI Live-Data Sourcing
+
+- [ ] **In-pharmacy AI Manager reads the tenant's live operational tables**, not the central projection tables (resolves the `online_pos` half of `ONLINE-P0-05`). *(2026-06-06 UTC)*
+  - Affects: `ai_manager_service.py`, `ai_briefing_service.py`, `ai_weekly_report_service.py` (currently hard-wired to `Cloud*` services).
+- [ ] **Fleet AI reads the central reporting DB** for cross-pharmacy intelligence; the two AI data sources are explicitly separated. *(2026-06-06 UTC)*
+
+### 10.8 P0 Control Plane & Break-Glass Support Access
+
+- [ ] **Central control-plane registry** of tenants/deployments (org, branch, deployment URL, install date, lifecycle state, current secret/token age). *(2026-06-06 UTC)*
+- [ ] **Break-glass support access — prefer application-level, time-limited support sessions over direct database access.** Require MFA and an approval step, default to read-only, support explicit revocation, and write a full audit log (explicit reason + expiry). *(2026-06-07 UTC)*
+- [ ] Cross-tenant safety test: a request authenticated for tenant A cannot reach tenant B's deployment/data. *(2026-06-07 UTC)*
+
+### 10.9 P0 Hosted-Client Offline Resilience
+
+- [ ] **Harden the hosted-client offline buffer** — the IndexedDB sale queue (`ONLINE-P1-01`) has no durable invoice/receipt ledger and failed flushes can be cleared from the UI. Database isolation does **not** fix this. Add a durable receipt/invoice ledger and prevent silent loss on failed flush. *(2026-06-07 UTC)*
+- [ ] Document the offline limit explicitly: hosted clients get a short network-drop buffer only; clients needing true offline operation deploy the village/local model. *(2026-06-07 UTC)*
+
+### 10.10 P0 Gradual Removal of Shared-DB `online_pos` (last)
+
+- [ ] Migrate, in order, onto the unified single-tenant runtime — **do not rip out `online_pos` in one shot**: (1) customer-retention features, (2) hosted scheduling, (3) outbox publishing, (4) tenant AI. *(2026-06-06 UTC)*
+- [ ] Retire the `online_pos` shared-DB direct-write code paths and tenant-scope guards once all features run on the unified runtime. *(2026-06-06 UTC)*
+
+### 10.11 Sequencing (recommended order)
+
+> 10.0 decision + topology → 10.1 transactional correctness → 10.2 provisioning + global identifiers + unified runtime → 10.3 backup/restore proof → 10.4 canary migration tooling → 10.5 outbox + central ingestion + gate tests → 10.6 migrate existing tenant data → 10.7 live tenant AI → 10.8 control plane + break-glass → 10.9 hosted-offline hardening → 10.10 remove shared `online_pos` paths.
+
+---
+
 ## Sign-Off
 
 | Role | Name | Date | Approved |

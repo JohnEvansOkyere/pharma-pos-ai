@@ -71,6 +71,21 @@ def _make_sale(db, *, org_id: int, customer_id: int | None, amount: float, days_
 # ─── Customer registration ─────────────────────────────────────────────────────
 
 class TestCustomerRegistration:
+    def test_postgres_enum_mapping_uses_lowercase_values(self):
+        assert Customer.__table__.c.sms_consent.type.enums == [
+            "granted",
+            "declined",
+            "pending",
+        ]
+        assert CustomerFollowUp.__table__.c.status.type.enums == [
+            "pending",
+            "sent",
+            "delivered",
+            "failed",
+            "skipped",
+            "responded",
+        ]
+
     def test_unique_phone_per_org_enforced_at_endpoint(self, db_session):
         """The /customers endpoint checks for duplicates before inserting.
         SQLite in-memory tests don't enforce DB-level unique indexes, so we

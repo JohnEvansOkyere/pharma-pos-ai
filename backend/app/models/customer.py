@@ -43,6 +43,11 @@ class FollowUpStatus(str, PyEnum):
     RESPONDED = "responded"     # Customer replied
 
 
+def _enum_values(enum_class):
+    """Persist enum values (lowercase), matching the PostgreSQL migration."""
+    return [member.value for member in enum_class]
+
+
 class Customer(Base):
     """Registered pharmacy customer.
 
@@ -75,8 +80,16 @@ class Customer(Base):
     notes = Column(Text, nullable=True)
 
     # Communication consent (Ghana NCA / DPA compliance)
-    sms_consent = Column(SQLEnum(ConsentStatus), default=ConsentStatus.PENDING, nullable=False)
-    whatsapp_consent = Column(SQLEnum(ConsentStatus), default=ConsentStatus.PENDING, nullable=False)
+    sms_consent = Column(
+        SQLEnum(ConsentStatus, name="consentstatus", values_callable=_enum_values),
+        default=ConsentStatus.PENDING,
+        nullable=False,
+    )
+    whatsapp_consent = Column(
+        SQLEnum(ConsentStatus, name="consentstatus", values_callable=_enum_values),
+        default=ConsentStatus.PENDING,
+        nullable=False,
+    )
     consent_recorded_at = Column(DateTime(timezone=True), nullable=True)
 
     # Preferred channel: sms, whatsapp, or none
@@ -116,7 +129,12 @@ class CustomerFollowUp(Base):
     channel = Column(String(20), nullable=False)            # sms or whatsapp
 
     # Delivery tracking
-    status = Column(SQLEnum(FollowUpStatus), default=FollowUpStatus.PENDING, nullable=False, index=True)
+    status = Column(
+        SQLEnum(FollowUpStatus, name="followupstatus", values_callable=_enum_values),
+        default=FollowUpStatus.PENDING,
+        nullable=False,
+        index=True,
+    )
     sent_at = Column(DateTime(timezone=True), nullable=True)
     delivered_at = Column(DateTime(timezone=True), nullable=True)
     attempts = Column(Integer, default=0, nullable=False)

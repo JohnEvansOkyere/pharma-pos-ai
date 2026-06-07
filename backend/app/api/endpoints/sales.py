@@ -21,6 +21,7 @@ from app.models.sale import (
     SaleStatus,
 )
 from app.models.product import Product, ProductBatch
+from app.models.customer import Customer
 from app.models.stock_adjustment import StockAdjustment, AdjustmentType
 from app.models.inventory_movement import InventoryMovementType
 from app.models.sync_event import SyncEventType
@@ -37,7 +38,7 @@ from app.schemas.sale import (
     SaleSummary,
 )
 from app.api.dependencies import get_current_active_user, require_refund_sale, require_view_reports, require_void_sale
-from app.core.app_mode import apply_tenant_scope, is_online_pos_mode
+from app.core.app_mode import apply_tenant_scope, is_online_pos_mode, require_online_tenant_scope
 from app.core.config import settings
 from app.services import customer_retention_service as retention
 
@@ -54,6 +55,40 @@ def _resolve_sale_unit_price(product: Product, pricing_mode: SalePricingMode) ->
         return round_money(product.wholesale_price)
 
     return round_money(product.selling_price)
+
+
+def _resolve_sale_customer(
+    db: Session,
+    customer_id: Optional[int],
+    current_user: User,
+) -> Optional[Customer]:
+    """Return an active customer owned by the cashier's organization and branch."""
+    if customer_id is None:
+        return None
+
+    if current_user.organization_id is None or current_user.branch_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User must be assigned to an organization and branch to link a customer",
+        )
+
+    customer = (
+        db.query(Customer)
+        .filter(
+            Customer.id == customer_id,
+            Customer.organization_id == current_user.organization_id,
+            Customer.branch_id == current_user.branch_id,
+            Customer.is_active.is_(True),
+        )
+        .first()
+    )
+    if customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Active customer not found for this organization and branch",
+        )
+    return customer
+
 
 def _allocate_product_batches(db: Session, product: Product, required_quantity: int) -> List[ProductBatch]:
     """
@@ -285,6 +320,13 @@ def create_sale(
         HTTPException: If product not found or insufficient stock
     """
     try:
+        require_online_tenant_scope(current_user, app_mode=settings.APP_MODE)
+        linked_customer = _resolve_sale_customer(
+            db,
+            getattr(sale_data, "customer_id", None),
+            current_user,
+        )
+
         # Calculate totals
         subtotal = Decimal("0.00")
         sale_items_data = []
@@ -427,7 +469,7 @@ def create_sale(
             payment_method=sale_data.payment_method,
             amount_paid=amount_paid,
             change_amount=change_amount,
-            customer_id=getattr(sale_data, 'customer_id', None),
+            customer_id=linked_customer.id if linked_customer else None,
             customer_name=sale_data.customer_name,
             customer_phone=sale_data.customer_phone,
             customer_id_number=getattr(sale_data, 'customer_id_number', None),
@@ -441,11 +483,11 @@ def create_sale(
             created_at=sale_occurred_at,
         )
 
+        # Tenant fields must be present before the first INSERT/flush.
+        apply_tenant_scope(db_sale, current_user, app_mode=settings.APP_MODE)
         db.add(db_sale)
         db.flush()  # Get sale ID from the database
         db_sale.invoice_number = f"INV-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{db_sale.id:06d}"
-        # Stamp tenant IDs from the authenticated user in online_pos mode.
-        apply_tenant_scope(db_sale, current_user, app_mode=settings.APP_MODE)
 
         # Create sale items and update stock
         touched_products = {}
@@ -459,6 +501,7 @@ def create_sale(
                 if key not in {"allocated_batch", "product", "batch_id"}
             }
             sale_item = SaleItem(sale_id=db_sale.id, **sale_item_fields)
+            apply_tenant_scope(sale_item, current_user, app_mode=settings.APP_MODE)
             db.add(sale_item)
 
             allocated_batch.quantity -= item_data["quantity"]
@@ -488,6 +531,9 @@ def create_sale(
                 source_document_id=db_sale.id,
                 reason=record["reason"],
                 created_by=current_user.id,
+                organization_id=db_sale.organization_id,
+                branch_id=db_sale.branch_id,
+                source_device_id=db_sale.source_device_id,
             )
 
         SyncOutboxService.record_event(
@@ -538,27 +584,27 @@ def create_sale(
                 "item_lines": len(sale_items_data),
                 "pricing_mode": db_sale.pricing_mode.value,
             },
+            organization_id=db_sale.organization_id,
+            branch_id=db_sale.branch_id,
+            source_device_id=db_sale.source_device_id,
         )
         db.commit()
         db.refresh(db_sale)
 
         # ── Customer retention: receipt + follow-up (non-fatal) ───────────
-        if db_sale.customer_id:
+        if linked_customer:
             try:
-                from app.models.customer import Customer as CustomerModel
-                linked_customer = db.get(CustomerModel, db_sale.customer_id)
-                if linked_customer:
-                    retention.dispatch_receipt(
-                        db,
-                        customer=linked_customer,
-                        sale=db_sale,
-                    )
-                    retention.schedule_follow_up(
-                        db,
-                        customer=linked_customer,
-                        sale=db_sale,
-                    )
-                    db.commit()
+                retention.dispatch_receipt(
+                    db,
+                    customer=linked_customer,
+                    sale=db_sale,
+                )
+                retention.schedule_follow_up(
+                    db,
+                    customer=linked_customer,
+                    sale=db_sale,
+                )
+                db.commit()
             except Exception as retention_err:
                 import logging
                 logging.getLogger(__name__).warning(
