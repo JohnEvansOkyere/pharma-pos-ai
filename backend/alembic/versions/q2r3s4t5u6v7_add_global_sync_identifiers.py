@@ -46,29 +46,84 @@ def _aggregate_uid(
     return str(uuid5(UUID(deployment_uid), f"{aggregate_type}:{aggregate_id}"))
 
 
-def upgrade() -> None:
-    op.add_column(
-        "organizations",
-        sa.Column("organization_uid", sa.String(length=36), nullable=True),
+def _backfill_postgresql(bind) -> None:
+    """Backfill UUID identity in set-based PostgreSQL statements."""
+    bind.execute(sa.text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+    bind.execute(
+        sa.text(
+            """
+            UPDATE organizations
+            SET organization_uid = uuid_generate_v5(
+                CAST(:namespace AS uuid),
+                concat('organization', chr(58), id::text)
+            )::text
+            """
+        ),
+        {"namespace": str(GLOBAL_ID_NAMESPACE)},
     )
-    op.add_column(
-        "branches",
-        sa.Column("branch_uid", sa.String(length=36), nullable=True),
+    bind.execute(
+        sa.text(
+            """
+            UPDATE branches
+            SET branch_uid = uuid_generate_v5(
+                CAST(:namespace AS uuid),
+                concat(
+                    'organization',
+                    chr(58),
+                    organization_id::text,
+                    chr(58),
+                    'branch',
+                    chr(58),
+                    id::text
+                )
+            )::text
+            """
+        ),
+        {"namespace": str(GLOBAL_ID_NAMESPACE)},
     )
-    op.add_column(
-        "devices",
-        sa.Column("deployment_uid", sa.String(length=36), nullable=True),
+    bind.execute(
+        sa.text(
+            """
+            UPDATE devices
+            SET deployment_uid = uuid_generate_v5(
+                CAST(:namespace AS uuid),
+                concat(
+                    'device',
+                    chr(58),
+                    device_uid,
+                    chr(58),
+                    'deployment'
+                )
+            )::text
+            """
+        ),
+        {"namespace": str(GLOBAL_ID_NAMESPACE)},
     )
-    op.add_column(
-        "ingested_sync_events",
-        sa.Column("deployment_uid", sa.String(length=36), nullable=True),
-    )
-    op.add_column(
-        "ingested_sync_events",
-        sa.Column("aggregate_uid", sa.String(length=36), nullable=True),
+    bind.execute(
+        sa.text(
+            """
+            UPDATE ingested_sync_events AS event
+            SET deployment_uid = device.deployment_uid,
+                aggregate_uid = CASE
+                    WHEN event.aggregate_id IS NULL THEN NULL
+                    ELSE uuid_generate_v5(
+                        CAST(device.deployment_uid AS uuid),
+                        concat(
+                            event.aggregate_type,
+                            chr(58),
+                            event.aggregate_id::text
+                        )
+                    )::text
+                END
+            FROM devices AS device
+            WHERE device.id = event.source_device_id
+            """
+        )
     )
 
-    bind = op.get_bind()
+
+def _backfill_compatibility_dialect(bind) -> None:
+    """Retain deterministic compatibility for non-PostgreSQL migration tests."""
     for row in bind.execute(sa.text("SELECT id FROM organizations")).mappings():
         bind.execute(
             sa.text(
@@ -126,6 +181,35 @@ def upgrade() -> None:
                 "id": row["id"],
             },
         )
+
+
+def upgrade() -> None:
+    op.add_column(
+        "organizations",
+        sa.Column("organization_uid", sa.String(length=36), nullable=True),
+    )
+    op.add_column(
+        "branches",
+        sa.Column("branch_uid", sa.String(length=36), nullable=True),
+    )
+    op.add_column(
+        "devices",
+        sa.Column("deployment_uid", sa.String(length=36), nullable=True),
+    )
+    op.add_column(
+        "ingested_sync_events",
+        sa.Column("deployment_uid", sa.String(length=36), nullable=True),
+    )
+    op.add_column(
+        "ingested_sync_events",
+        sa.Column("aggregate_uid", sa.String(length=36), nullable=True),
+    )
+
+    bind = op.get_bind()
+    if bind.dialect.name == "postgresql":
+        _backfill_postgresql(bind)
+    else:
+        _backfill_compatibility_dialect(bind)
 
     op.alter_column("organizations", "organization_uid", nullable=False)
     op.alter_column("branches", "branch_uid", nullable=False)

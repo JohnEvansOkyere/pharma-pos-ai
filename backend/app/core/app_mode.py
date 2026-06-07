@@ -160,15 +160,24 @@ def scope_query_to_user(
     include_branch: bool = True,
     deployment_profile: str | None = None,
 ):
-    """Apply organization and optional branch ownership to an ORM query."""
+    """Apply hosted organization and optional branch ownership to an ORM query.
+
+    Offline installations use a dedicated local database as their isolation
+    boundary and retain their legacy whole-database visibility.
+    """
+    operational_mode = is_pos_mode(app_mode)
+    hosted_operational = operational_mode and is_hosted_deployment(
+        deployment_profile,
+        app_mode=app_mode,
+    )
+    if operational_mode and not hosted_operational:
+        return query
+
     organization_id = getattr(current_user, "organization_id", None)
     branch_id = getattr(current_user, "branch_id", None)
 
     if organization_id is None:
-        if is_pos_mode(app_mode) and is_hosted_deployment(
-            deployment_profile,
-            app_mode=app_mode,
-        ):
+        if hosted_operational:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Hosted POS user must be assigned to an organization",

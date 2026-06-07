@@ -57,7 +57,8 @@ Backend:
 
 ```bash
 cd backend
-venv/bin/pytest tests
+TEST_POS_DEPLOYMENT_PROFILE=offline venv/bin/pytest tests
+TEST_POS_DEPLOYMENT_PROFILE=hosted venv/bin/pytest tests
 venv/bin/alembic heads
 venv/bin/alembic upgrade head
 ```

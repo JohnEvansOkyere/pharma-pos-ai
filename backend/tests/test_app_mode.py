@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 import pytest
+from unittest.mock import MagicMock
 
 from app.core.app_mode import (
     apply_tenant_scope,
@@ -9,6 +10,7 @@ from app.core.app_mode import (
     is_pos_mode,
     normalize_app_mode,
     require_operational_tenant_scope,
+    scope_query_to_user,
 )
 from app.core.config import Settings
 
@@ -36,8 +38,8 @@ def test_legacy_settings_aliases_derive_deployment_profile():
         "POSTGRES_PASSWORD": "test-password",
     }
 
-    local = Settings(APP_MODE="local_pos", **common)
-    hosted = Settings(APP_MODE="online_pos", **common)
+    local = Settings.model_validate({"APP_MODE": "local_pos", **common})
+    hosted = Settings.model_validate({"APP_MODE": "online_pos", **common})
 
     assert local.APP_MODE == "operational_pos"
     assert local.POS_DEPLOYMENT_PROFILE == "offline"
@@ -146,6 +148,74 @@ def test_operational_scope_is_applied_before_insert():
 
     assert row.organization_id == 12
     assert row.branch_id == 34
+
+
+def test_offline_query_scope_preserves_dedicated_database_visibility():
+    class User:
+        organization_id = 12
+        branch_id = 34
+
+    class Model:
+        organization_id = 1
+        branch_id = 2
+
+    query = MagicMock()
+    scoped = scope_query_to_user(
+        query,
+        Model,
+        User(),
+        app_mode="operational_pos",
+        deployment_profile="offline",
+    )
+
+    assert scoped is query
+    query.filter.assert_not_called()
+
+
+def test_hosted_query_scope_filters_organization_and_branch():
+    class User:
+        organization_id = 12
+        branch_id = 34
+
+    class Model:
+        organization_id = 1
+        branch_id = 2
+
+    query = MagicMock()
+    query.filter.return_value = query
+    scoped = scope_query_to_user(
+        query,
+        Model,
+        User(),
+        app_mode="operational_pos",
+        deployment_profile="hosted",
+    )
+
+    assert scoped is query
+    assert query.filter.call_count == 2
+
+
+def test_cloud_reporting_query_scope_keeps_existing_tenant_filtering():
+    class User:
+        organization_id = 12
+        branch_id = 34
+
+    class Model:
+        organization_id = 1
+        branch_id = 2
+
+    query = MagicMock()
+    query.filter.return_value = query
+    scoped = scope_query_to_user(
+        query,
+        Model,
+        User(),
+        app_mode="cloud_reporting",
+        deployment_profile="hosted",
+    )
+
+    assert scoped is query
+    assert query.filter.call_count == 2
 
 
 def test_cloud_reporting_mode_helper():

@@ -10,4 +10,5 @@ Read in this order:
 4. [Render And Vercel Deployment](render-vercel-deployment.md)
 5. [Isolated Tenant Provisioning](tenant-provisioning.md)
 6. [Hosted Tenant Backups](hosted-backups.md)
-5. [Incident Response](incident-response.md)
+7. [Testing And Release Gates](testing-and-release-gates.md)
+8. [Incident Response](incident-response.md)

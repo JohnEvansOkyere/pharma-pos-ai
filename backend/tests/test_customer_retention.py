@@ -21,7 +21,8 @@ import pytest
 
 from app.models.customer import ConsentStatus, Customer, CustomerFollowUp, FollowUpStatus
 from app.models.sale import Sale, SaleItem
-from app.models.user import UserRole
+from app.models.tenancy import Organization
+from app.models.user import User, UserRole
 from app.services.customer_analytics_service import CustomerAnalyticsService
 from app.services.message_adapter import DeliveryResult, StubAdapter, get_adapter
 
@@ -43,7 +44,35 @@ def _make_customer(db, *, org_id: int, phone: str, name: str = "Test Patient") -
     return c
 
 
-def _make_sale(db, *, org_id: int, customer_id: int | None, amount: float, days_ago: int = 0) -> Sale:
+def _make_tenant(db, *, slug: str) -> tuple[Organization, User]:
+    organization = Organization(name=f"{slug} Pharmacy")
+    db.add(organization)
+    db.flush()
+    user = User(
+        username=f"{slug}-admin",
+        email=f"{slug}-admin@example.com",
+        hashed_password="not-used-in-customer-analytics-tests",
+        full_name=f"{slug.title()} Admin",
+        role=UserRole.ADMIN,
+        organization_id=organization.id,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(organization)
+    db.refresh(user)
+    return organization, user
+
+
+def _make_sale(
+    db,
+    *,
+    org_id: int,
+    user_id: int,
+    customer_id: int | None,
+    amount: float,
+    days_ago: int = 0,
+) -> Sale:
     import time
     created = datetime.now(timezone.utc) - timedelta(days=days_ago)
     # Use a unique-enough invoice number to avoid collisions across tests
@@ -60,7 +89,7 @@ def _make_sale(db, *, org_id: int, customer_id: int | None, amount: float, days_
         change_amount=0,
         customer_id=customer_id,
         created_at=created,
-        user_id=1,
+        user_id=user_id,
     )
     db.add(sale)
     db.commit()
@@ -90,12 +119,17 @@ class TestCustomerRegistration:
         """The /customers endpoint checks for duplicates before inserting.
         SQLite in-memory tests don't enforce DB-level unique indexes, so we
         verify the service-layer de-duplication query directly."""
-        _make_customer(db_session, org_id=1, phone="0244111111")
+        organization, _user = _make_tenant(db_session, slug="unique-phone")
+        _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0244111111",
+        )
         # A second customer with the same phone in the same org should already exist
         existing = (
             db_session.query(Customer)
             .filter(
-                Customer.organization_id == 1,
+                Customer.organization_id == organization.id,
                 Customer.phone == "0244111111",
             )
             .first()
@@ -105,7 +139,7 @@ class TestCustomerRegistration:
         would_conflict = (
             db_session.query(Customer)
             .filter(
-                Customer.organization_id == 1,
+                Customer.organization_id == organization.id,
                 Customer.phone == "0244111111",
             )
             .first()
@@ -114,20 +148,40 @@ class TestCustomerRegistration:
 
     def test_same_phone_different_org_allowed(self, db_session):
         """Same phone number in two different orgs is permitted."""
-        c1 = _make_customer(db_session, org_id=10, phone="0244999999")
-        c2 = _make_customer(db_session, org_id=11, phone="0244999999")
+        organization_1, _user_1 = _make_tenant(db_session, slug="phone-org-one")
+        organization_2, _user_2 = _make_tenant(db_session, slug="phone-org-two")
+        c1 = _make_customer(
+            db_session,
+            org_id=organization_1.id,
+            phone="0244999999",
+        )
+        c2 = _make_customer(
+            db_session,
+            org_id=organization_2.id,
+            phone="0244999999",
+        )
         assert c1.id != c2.id
         assert c1.organization_id != c2.organization_id
 
     def test_consent_defaults(self, db_session):
-        c = _make_customer(db_session, org_id=2, phone="0244222222")
+        organization, _user = _make_tenant(db_session, slug="consent-defaults")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0244222222",
+        )
         assert c.sms_consent == ConsentStatus.GRANTED
         assert c.whatsapp_consent == ConsentStatus.PENDING
         assert c.preferred_channel == "sms"
         assert c.is_active is True
 
     def test_consent_update(self, db_session):
-        c = _make_customer(db_session, org_id=3, phone="0244333333")
+        organization, _user = _make_tenant(db_session, slug="consent-update")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0244333333",
+        )
         c.whatsapp_consent = ConsentStatus.GRANTED
         c.consent_recorded_at = datetime.now(timezone.utc)
         db_session.commit()
@@ -148,39 +202,113 @@ class TestCustomerAnalyticsService:
         assert result["churned_customers"] == 0
 
     def test_new_customer_counted(self, db_session):
-        _make_customer(db_session, org_id=100, phone="0201000001", name="Alice")
-        result = CustomerAnalyticsService.summary(db_session, organization_id=100, period_days=30)
+        organization, _user = _make_tenant(db_session, slug="new-customer")
+        _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000001",
+            name="Alice",
+        )
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["total_customers"] == 1
         assert result["new_customers_in_period"] == 1
 
     def test_repeat_customer_detection(self, db_session):
-        c = _make_customer(db_session, org_id=101, phone="0201000002", name="Bob")
-        _make_sale(db_session, org_id=101, customer_id=c.id, amount=10.0, days_ago=5)
-        _make_sale(db_session, org_id=101, customer_id=c.id, amount=15.0, days_ago=1)
-        result = CustomerAnalyticsService.summary(db_session, organization_id=101, period_days=30)
+        organization, user = _make_tenant(db_session, slug="repeat-customer")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000002",
+            name="Bob",
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c.id,
+            amount=10.0,
+            days_ago=5,
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c.id,
+            amount=15.0,
+            days_ago=1,
+        )
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["repeat_customers"] == 1
         assert result["repeat_rate_pct"] == 100.0
 
     def test_at_risk_customer_detection(self, db_session):
         """Customer whose last purchase was 40 days ago is at-risk."""
-        c = _make_customer(db_session, org_id=102, phone="0201000003", name="Carol")
-        _make_sale(db_session, org_id=102, customer_id=c.id, amount=20.0, days_ago=40)
-        result = CustomerAnalyticsService.summary(db_session, organization_id=102, period_days=30)
+        organization, user = _make_tenant(db_session, slug="at-risk-customer")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000003",
+            name="Carol",
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c.id,
+            amount=20.0,
+            days_ago=40,
+        )
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["at_risk_customers"] == 1
         assert result["churned_customers"] == 0
 
     def test_churned_customer_detection(self, db_session):
         """Customer whose last purchase was 100 days ago is churned."""
-        c = _make_customer(db_session, org_id=103, phone="0201000004", name="Dave")
-        _make_sale(db_session, org_id=103, customer_id=c.id, amount=30.0, days_ago=100)
-        result = CustomerAnalyticsService.summary(db_session, organization_id=103, period_days=30)
+        organization, user = _make_tenant(db_session, slug="churned-customer")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000004",
+            name="Dave",
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c.id,
+            amount=30.0,
+            days_ago=100,
+        )
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["churned_customers"] == 1
         assert result["at_risk_customers"] == 0
 
     def test_consent_stats(self, db_session):
-        c1 = _make_customer(db_session, org_id=104, phone="0201000005", name="Eve")
+        organization, _user = _make_tenant(db_session, slug="consent-stats")
+        _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000005",
+            name="Eve",
+        )
         c2 = Customer(
-            organization_id=104,
+            organization_id=organization.id,
             full_name="Frank",
             phone="0201000006",
             sms_consent=ConsentStatus.DECLINED,
@@ -189,42 +317,87 @@ class TestCustomerAnalyticsService:
         )
         db_session.add(c2)
         db_session.commit()
-        result = CustomerAnalyticsService.summary(db_session, organization_id=104, period_days=30)
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["total_customers"] == 2
         assert result["consent_stats"]["sms_granted"] == 1
         assert result["consent_stats"]["whatsapp_granted"] == 1
         assert result["consent_stats"]["sms_rate_pct"] == 50.0
 
     def test_top_customers_by_spend(self, db_session):
-        c1 = _make_customer(db_session, org_id=105, phone="0201000007", name="Ama")
-        c2 = _make_customer(db_session, org_id=105, phone="0201000008", name="Kofi")
-        _make_sale(db_session, org_id=105, customer_id=c1.id, amount=200.0)
-        _make_sale(db_session, org_id=105, customer_id=c2.id, amount=50.0)
+        organization, user = _make_tenant(db_session, slug="top-customers")
+        c1 = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000007",
+            name="Ama",
+        )
+        c2 = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000008",
+            name="Kofi",
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c1.id,
+            amount=200.0,
+        )
+        _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c2.id,
+            amount=50.0,
+        )
         top = CustomerAnalyticsService.top_customers_by_spend(
-            db_session, organization_id=105, limit=5
+            db_session,
+            organization_id=organization.id,
+            limit=5,
         )
         assert top[0]["full_name"] == "Ama"
         assert top[0]["total_spend"] == 200.0
         assert top[1]["full_name"] == "Kofi"
 
     def test_follow_up_stats_counted(self, db_session):
-        c = _make_customer(db_session, org_id=106, phone="0201000009", name="Grace")
-        sale = _make_sale(db_session, org_id=106, customer_id=c.id, amount=40.0)
+        organization, user = _make_tenant(db_session, slug="follow-up-stats")
+        c = _make_customer(
+            db_session,
+            org_id=organization.id,
+            phone="0201000009",
+            name="Grace",
+        )
+        sale = _make_sale(
+            db_session,
+            org_id=organization.id,
+            user_id=user.id,
+            customer_id=c.id,
+            amount=40.0,
+        )
         # Add one PENDING and one SENT follow-up
         fu1 = CustomerFollowUp(
-            customer_id=c.id, organization_id=106, sale_id=sale.id,
+            customer_id=c.id, organization_id=organization.id, sale_id=sale.id,
             status=FollowUpStatus.PENDING, channel="sms",
             scheduled_at=datetime.now(timezone.utc),
         )
         fu2 = CustomerFollowUp(
-            customer_id=c.id, organization_id=106, sale_id=sale.id,
+            customer_id=c.id, organization_id=organization.id, sale_id=sale.id,
             status=FollowUpStatus.SENT, channel="sms",
             scheduled_at=datetime.now(timezone.utc),
             sent_at=datetime.now(timezone.utc),
         )
         db_session.add_all([fu1, fu2])
         db_session.commit()
-        result = CustomerAnalyticsService.summary(db_session, organization_id=106, period_days=30)
+        result = CustomerAnalyticsService.summary(
+            db_session,
+            organization_id=organization.id,
+            period_days=30,
+        )
         assert result["follow_up_stats"]["pending"] == 1
         assert result["follow_up_stats"]["sent"] == 1
         assert result["follow_up_stats"]["failed"] == 0

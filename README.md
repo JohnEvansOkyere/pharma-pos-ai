@@ -345,12 +345,18 @@ The minimum set of files a client machine needs (no source code required):
 
 Local (fast, SQLite fallback):
 ```bash
-cd backend && pytest
+cd backend
+TEST_POS_DEPLOYMENT_PROFILE=offline pytest
+TEST_POS_DEPLOYMENT_PROFILE=hosted pytest
 ```
 
 Against PostgreSQL (matches production and CI):
 ```bash
-TEST_DATABASE_URL=postgresql://pharma_user:password@localhost:5435/pharma_pos pytest
+TEST_DATABASE_URL=postgresql://pharma_user:password@localhost:5435/pharma_pos \
+TEST_POS_DEPLOYMENT_PROFILE=offline pytest
+
+TEST_DATABASE_URL=postgresql://pharma_user:password@localhost:5435/pharma_pos \
+TEST_POS_DEPLOYMENT_PROFILE=hosted pytest
 ```
 
 ### Frontend Tests
@@ -358,7 +364,8 @@ TEST_DATABASE_URL=postgresql://pharma_user:password@localhost:5435/pharma_pos py
 cd frontend && npm test
 ```
 
-CI runs both test suites against PostgreSQL before any image is built or pushed.
+CI runs the complete backend suite against PostgreSQL in both offline and hosted
+profiles, plus the frontend suite, before any image is built or pushed.
 
 ---
 

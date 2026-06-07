@@ -37,7 +37,10 @@ identity for the same pharmacy. Completing that database creation and seeding
 workflow is tracked separately under Phase 10.2 tenant provisioning.
 
 Existing rows are backfilled by migration with deterministic UUIDv5 values so
-an upgrade is repeatable. New control-plane records use UUIDv4 values.
+an upgrade is repeatable. On PostgreSQL, the migration enables the standard
+`uuid-ossp` extension and performs set-based updates for organizations,
+branches, devices, and ingested events. It does not issue one update per event.
+New control-plane records use UUIDv4 values.
 
 ## Event Envelope
 

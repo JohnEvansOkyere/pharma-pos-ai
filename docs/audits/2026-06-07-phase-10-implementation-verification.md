@@ -47,3 +47,35 @@ behavior.
 2. Run the backend suite in both offline and hosted CI matrix entries.
 3. Decide and test offline branch-scoping semantics.
 4. Convert migration backfills to set-based SQL and test migration upgrade behavior.
+
+## Remediation Verification
+
+**Implemented:** 2026-06-07 13:18 UTC
+
+- Shared hosted users, products, and batches now use one real organization and
+  branch context. Deliberate cross-branch tests still create separate records.
+- `TEST_POS_DEPLOYMENT_PROFILE` is the only test deployment selector; an
+  autouse fixture pins global runtime settings and prevents `.env` leakage.
+- Offline query scoping explicitly preserves whole-database visibility because
+  the dedicated local database is the offline isolation boundary. Hosted
+  queries retain organization and branch enforcement.
+- GitHub Actions now has PostgreSQL `offline` and `hosted` matrix entries.
+- Customer-retention tests now create real organizations and sale users,
+  removing foreign-key assumptions that SQLite previously concealed.
+- PostgreSQL UUIDv5 backfills are set-based through `uuid-ossp`. A fresh
+  database drill from `p1q2r3s4t5u6` to `q2r3s4t5u6v7` verified all generated
+  identifiers against their UUIDv5 formulas.
+- Repository virtualenv dependencies were synchronized with
+  `backend/requirements.txt`.
+
+Verification results:
+
+- PostgreSQL offline profile: `204 passed, 1 warning`.
+- PostgreSQL hosted profile: `204 passed, 1 warning`.
+- SQLite fallback offline profile: `204 passed, 1 warning`.
+- SQLite fallback hosted profile: `204 passed, 1 warning`.
+- Frontend: `22 passed`; `npx tsc --noEmit` passed.
+- GitHub workflow YAML parsed successfully.
+
+The code-side remediation is complete. Final checklist acceptance remains
+pending until the pushed GitHub Actions matrix reports green.
