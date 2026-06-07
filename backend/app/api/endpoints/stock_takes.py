@@ -23,6 +23,8 @@ from app.schemas.stock_take import (
 from app.services.audit_service import AuditService
 from app.services.inventory_service import InventoryService
 from app.services.sync_outbox_service import SyncOutboxService
+from app.core.app_mode import apply_tenant_scope
+from app.core.config import settings
 
 router = APIRouter(prefix="/stock-takes", tags=["Stock Takes"])
 
@@ -79,6 +81,7 @@ def create_stock_take(
             notes=payload.notes,
             created_by=current_user.id,
         )
+        apply_tenant_scope(stock_take, current_user, app_mode=settings.APP_MODE)
         db.add(stock_take)
         db.flush()
         stock_take.reference = f"STK-{datetime.now().strftime('%Y%m%d')}-{stock_take.id:06d}"
@@ -107,17 +110,17 @@ def create_stock_take(
 
             expected_quantity = batch.quantity
             counted_quantity = item.counted_quantity
-            db.add(
-                StockTakeItem(
-                    stock_take_id=stock_take.id,
-                    product_id=product.id,
-                    batch_id=batch.id,
-                    expected_quantity=expected_quantity,
-                    counted_quantity=counted_quantity,
-                    variance_quantity=counted_quantity - expected_quantity,
-                    reason=item.reason,
-                )
+            stock_take_item = StockTakeItem(
+                stock_take_id=stock_take.id,
+                product_id=product.id,
+                batch_id=batch.id,
+                expected_quantity=expected_quantity,
+                counted_quantity=counted_quantity,
+                variance_quantity=counted_quantity - expected_quantity,
+                reason=item.reason,
             )
+            apply_tenant_scope(stock_take_item, current_user, app_mode=settings.APP_MODE)
+            db.add(stock_take_item)
 
         SyncOutboxService.record_event(
             db,
@@ -143,6 +146,9 @@ def create_stock_take(
             entity_id=stock_take.id,
             description=f"Created stock take {stock_take.reference}",
             extra_data={"line_count": len(payload.items), "reason": stock_take.reason},
+            organization_id=stock_take.organization_id,
+            branch_id=stock_take.branch_id,
+            source_device_id=stock_take.source_device_id,
         )
         db.commit()
         db.refresh(stock_take)
@@ -232,6 +238,9 @@ def complete_stock_take(
                 reason=item.reason or f"Stock take {stock_take.reference}",
                 performed_by=current_user.id,
             )
+            adjustment.organization_id = stock_take.organization_id
+            adjustment.branch_id = stock_take.branch_id
+            adjustment.source_device_id = stock_take.source_device_id
             db.add(adjustment)
             db.flush()
             InventoryService.record_movement(
@@ -245,6 +254,9 @@ def complete_stock_take(
                 source_document_id=stock_take.id,
                 reason=adjustment.reason,
                 created_by=current_user.id,
+                organization_id=stock_take.organization_id,
+                branch_id=stock_take.branch_id,
+                source_device_id=stock_take.source_device_id,
             )
             movement_count += 1
             total_variance += item.variance_quantity
@@ -285,6 +297,9 @@ def complete_stock_take(
                 "total_variance": total_variance,
                 "line_count": len(stock_take.items),
             },
+            organization_id=stock_take.organization_id,
+            branch_id=stock_take.branch_id,
+            source_device_id=stock_take.source_device_id,
         )
         db.commit()
         db.refresh(stock_take)

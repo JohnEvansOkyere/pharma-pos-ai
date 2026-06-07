@@ -95,9 +95,8 @@ def apply_tenant_scope(obj: Any, current_user: "User", *, app_mode: str | None) 
     user making the request so that rows from different city pharmacies sharing
     the same cloud database cannot bleed across organization boundaries.
 
-    Call this *after* ``db.flush()`` so the object has an id but *before*
-    ``db.commit()``, or call it right before ``db.add()`` when organization_id
-    is set on the constructor.
+    Call this before ``db.add()`` / ``db.flush()`` so scope is present on the
+    first INSERT.
 
     Usage::
 

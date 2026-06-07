@@ -454,10 +454,9 @@ def create_product(
         )
 
     db_product = Product(**payload)
+    apply_tenant_scope(db_product, current_user, app_mode=settings.APP_MODE)
     db.add(db_product)
     db.flush()
-    # Stamp tenant IDs from the authenticated user in online_pos mode.
-    apply_tenant_scope(db_product, current_user, app_mode=settings.APP_MODE)
     SyncOutboxService.record_event(
         db,
         event_type=SyncEventType.PRODUCT_CREATED,
@@ -487,6 +486,8 @@ def create_product(
         entity_id=db_product.id,
         description=f"Created product {db_product.name}",
         extra_data={"sku": db_product.sku},
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
     )
     db.commit()
     db.refresh(db_product)
@@ -583,6 +584,8 @@ def update_product(
         entity_id=db_product.id,
         description=f"Updated product {db_product.name}",
         extra_data={"updated_fields": sorted(update_data.keys())},
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
     )
     db.commit()
     db.refresh(db_product)
@@ -637,6 +640,8 @@ def delete_product(
         entity_id=db_product.id,
         description=f"Deactivated product {db_product.name}",
         extra_data={"sku": db_product.sku},
+        organization_id=db_product.organization_id,
+        branch_id=db_product.branch_id,
     )
     db.commit()
 
@@ -702,6 +707,7 @@ def add_product_batch(
         product_id=product_id,
         **batch_data
     )
+    apply_tenant_scope(db_batch, current_user, app_mode=settings.APP_MODE)
     db.add(db_batch)
     db.flush()
 
@@ -717,6 +723,8 @@ def add_product_batch(
         source_document_id=db_batch.id,
         reason="Initial batch stock",
         created_by=current_user.id,
+        organization_id=db_batch.organization_id,
+        branch_id=db_batch.branch_id,
     )
     SyncOutboxService.record_event(
         db,
@@ -745,6 +753,8 @@ def add_product_batch(
         entity_id=db_batch.id,
         description=f"Created batch {db_batch.batch_number} for product {product.name}",
         extra_data={"product_id": product.id, "quantity": db_batch.quantity},
+        organization_id=db_batch.organization_id,
+        branch_id=db_batch.branch_id,
     )
     db.commit()
     db.refresh(db_batch)
@@ -850,6 +860,8 @@ def update_product_batch(
             entity_id=batch.id,
             description=f"Updated batch {batch.batch_number} for product {product.name}",
             extra_data={"updated_fields": sorted(update_data.keys())},
+            organization_id=batch.organization_id,
+            branch_id=batch.branch_id,
         )
         db.commit()
         db.refresh(batch)
@@ -927,6 +939,7 @@ def receive_stock(
             existing_batch.cost_price = receipt_cost_price
             existing_batch.manufacture_date = receipt.manufacture_date
             existing_batch.location = _normalize_optional_text(receipt.location)
+            apply_tenant_scope(existing_batch, current_user, app_mode=settings.APP_MODE)
             batch = existing_batch
         else:
             batch = ProductBatch(
@@ -938,6 +951,7 @@ def receive_stock(
                 manufacture_date=receipt.manufacture_date,
                 location=_normalize_optional_text(receipt.location),
             )
+            apply_tenant_scope(batch, current_user, app_mode=settings.APP_MODE)
             db.add(batch)
             db.flush()
 
@@ -962,6 +976,7 @@ def receive_stock(
             reason=(receipt.reason or "Stock receipt").strip(),
             performed_by=current_user.id,
         )
+        apply_tenant_scope(stock_adjustment, current_user, app_mode=settings.APP_MODE)
         db.add(stock_adjustment)
         db.flush()
         InventoryService.record_movement(
@@ -975,6 +990,9 @@ def receive_stock(
             source_document_id=stock_adjustment.id,
             reason=stock_adjustment.reason,
             created_by=current_user.id,
+            organization_id=stock_adjustment.organization_id,
+            branch_id=stock_adjustment.branch_id,
+            source_device_id=stock_adjustment.source_device_id,
         )
         SyncOutboxService.record_event(
             db,
@@ -1003,6 +1021,9 @@ def receive_stock(
             entity_id=batch.id,
             description=f"Received stock into batch {batch.batch_number} for product {product.name}",
             extra_data={"product_id": product.id, "quantity": receipt.quantity, "new_stock": new_stock},
+            organization_id=stock_adjustment.organization_id,
+            branch_id=stock_adjustment.branch_id,
+            source_device_id=stock_adjustment.source_device_id,
         )
         db.commit()
         db.refresh(product)
@@ -1018,4 +1039,3 @@ def receive_stock(
     except Exception:
         db.rollback()
         raise
-

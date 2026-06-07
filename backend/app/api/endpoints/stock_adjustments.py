@@ -229,10 +229,9 @@ def create_stock_adjustment(
             reason=adjustment.reason,
             performed_by=current_user.id,
         )
+        apply_tenant_scope(db_adjustment, current_user, app_mode=settings.APP_MODE)
         db.add(db_adjustment)
         db.flush()
-        # Stamp tenant IDs from the authenticated user in online_pos mode.
-        apply_tenant_scope(db_adjustment, current_user, app_mode=settings.APP_MODE)
         for batch_id, quantity_delta, movement_type in movement_entries:
             InventoryService.record_movement(
                 db,
@@ -245,6 +244,9 @@ def create_stock_adjustment(
                 source_document_id=db_adjustment.id,
                 reason=adjustment.reason,
                 created_by=current_user.id,
+                organization_id=db_adjustment.organization_id,
+                branch_id=db_adjustment.branch_id,
+                source_device_id=db_adjustment.source_device_id,
             )
         SyncOutboxService.record_event(
             db,
@@ -283,6 +285,9 @@ def create_stock_adjustment(
                 "batch_id": batch.id if batch else None,
                 "quantity": adjustment_quantity,
             },
+            organization_id=db_adjustment.organization_id,
+            branch_id=db_adjustment.branch_id,
+            source_device_id=db_adjustment.source_device_id,
         )
         db.commit()
         db.refresh(db_adjustment)

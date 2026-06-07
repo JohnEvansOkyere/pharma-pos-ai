@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.db.base import Base
 from app.core.security import get_password_hash
-from app.models import Category, Product, ProductBatch, User
+from app.models import Branch, Category, Organization, Product, ProductBatch, User
 from app.models.product import DosageForm, PrescriptionStatus
 from app.models.user import UserRole
 
@@ -114,6 +114,32 @@ def category(db_session):
     db_session.commit()
     db_session.refresh(category)
     return category
+
+
+@pytest.fixture()
+def assign_tenant_scope(db_session):
+    def assign(user: User):
+        organization = Organization(name=f"Tenant Pharmacy {user.username}")
+        db_session.add(organization)
+        db_session.flush()
+        branch = Branch(
+            organization_id=organization.id,
+            name="Main Branch",
+            code="MAIN",
+        )
+        other_branch = Branch(
+            organization_id=organization.id,
+            name="Other Branch",
+            code="OTHER",
+        )
+        db_session.add_all([branch, other_branch])
+        db_session.flush()
+        user.organization_id = organization.id
+        user.branch_id = branch.id
+        db_session.commit()
+        return organization, branch, other_branch
+
+    return assign
 
 
 @pytest.fixture()

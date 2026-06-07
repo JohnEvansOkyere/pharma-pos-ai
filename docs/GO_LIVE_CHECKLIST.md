@@ -808,7 +808,7 @@
 > Migrating data or building central reporting/AI on top of integrity bugs propagates corruption into the central DB and AI answers. This is the first build step after the decision, per CLAUDE.md priority #1 (data integrity).
 
 - [x] Customer↔sale ownership validated (a sale links only to an active customer in the same tenant/branch, before any stock mutation). ✅ *(2026-06-07 07:31 UTC)*
-- [ ] Inventory stamping/integrity consistent across every write path (`ProductBatch`, all `InventoryMovement` sources). *(2026-06-07 UTC)*
+- [x] Inventory stamping/integrity consistent across every write path (`ProductBatch`, all `InventoryMovement` sources, source documents, sync metadata, and audit records). ✅ *(2026-06-07 07:42 UTC)*
 - [ ] Branch-level authorization enforced within a tenant (a branch user sees only permitted branch data). *(2026-06-07 UTC)*
 
 ### 10.2 P0 Provisioning, Identifiers & Unified Runtime

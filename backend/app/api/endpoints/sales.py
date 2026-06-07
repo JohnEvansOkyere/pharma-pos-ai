@@ -153,6 +153,8 @@ def _restore_sale_item_stock(
 
     if batch is None:
         batch = ProductBatch(
+            organization_id=sale_item.organization_id,
+            branch_id=sale_item.branch_id,
             product_id=sale_item.product_id,
             batch_number=sale_item.batch_number or f"RESTORED-SALE-{sale_item.sale_id}-{sale_item.id}",
             quantity=0,
@@ -166,6 +168,9 @@ def _restore_sale_item_stock(
     batch.quantity += sale_item.quantity
     stock_after = InventoryService.recalculate_product_stock(db, product)
     stock_adjustment = StockAdjustment(
+        organization_id=sale_item.organization_id,
+        branch_id=sale_item.branch_id,
+        source_device_id=sale_item.sale.source_device_id,
         product_id=product.id,
         batch_id=batch.id,
         adjustment_type=AdjustmentType.RETURN,
@@ -186,6 +191,9 @@ def _restore_sale_item_stock(
         source_document_id=stock_adjustment.id,
         reason=reason,
         created_by=performed_by,
+        organization_id=stock_adjustment.organization_id,
+        branch_id=stock_adjustment.branch_id,
+        source_device_id=stock_adjustment.source_device_id,
     )
 
 
@@ -235,6 +243,8 @@ def _reverse_sale(
             else SaleReversalType.VOID
         )
         reversal = SaleReversal(
+            organization_id=sale.organization_id,
+            branch_id=sale.branch_id,
             sale_id=sale.id,
             reversal_type=reversal_type,
             reason=reason,
@@ -290,6 +300,9 @@ def _reverse_sale(
                 "restored_items": restored_quantity,
                 "total_amount": reversal.total_amount,
             },
+            organization_id=sale.organization_id,
+            branch_id=sale.branch_id,
+            source_device_id=sale.source_device_id,
         )
         db.commit()
         db.refresh(sale)

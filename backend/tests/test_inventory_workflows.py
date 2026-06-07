@@ -5,8 +5,9 @@ from datetime import date, timedelta
 import pytest
 from fastapi import HTTPException
 
-from app.api.endpoints.products import list_products_catalog, receive_stock, update_product_batch
+from app.api.endpoints.products import add_product_batch, list_products_catalog, receive_stock, update_product_batch
 from app.api.endpoints.sales import create_sale
+from app.api.endpoints.stock_adjustments import create_stock_adjustment
 from app.core.config import settings
 from app.models.activity_log import ActivityLog
 from app.models.customer import Customer
@@ -14,33 +15,11 @@ from app.models.inventory_movement import InventoryMovement, InventoryMovementTy
 from app.models.product import PrescriptionStatus, Product, ProductBatch
 from app.models.sale import PaymentMethod
 from app.models.stock_adjustment import StockAdjustment
-from app.models.sync_event import SyncEvent, SyncEventType
 from app.models.tenancy import Branch, Organization
-from app.schemas.product import ProductBatchUpdate, ReceiveStock
+from app.schemas.product import ProductBatchCreate, ProductBatchUpdate, ReceiveStock
 from app.schemas.product import ProductSearchPage
 from app.schemas.sale import SaleCreate, SaleItemCreate
-
-
-def _assign_online_scope(db_session, user):
-    organization = Organization(name="Tenant Pharmacy")
-    db_session.add(organization)
-    db_session.flush()
-    branch = Branch(
-        organization_id=organization.id,
-        name="Main Branch",
-        code="MAIN",
-    )
-    other_branch = Branch(
-        organization_id=organization.id,
-        name="Other Branch",
-        code="OTHER",
-    )
-    db_session.add_all([branch, other_branch])
-    db_session.flush()
-    user.organization_id = organization.id
-    user.branch_id = branch.id
-    db_session.commit()
-    return organization, branch, other_branch
+from app.schemas.stock_adjustment import StockAdjustmentCreate
 
 
 def _sale_request(product_id: int, *, customer_id: int | None = None) -> SaleCreate:
@@ -85,8 +64,20 @@ def test_update_product_batch_records_audit_log(db_session, manager_user, catego
     assert audit_entry.action == "update_product_batch"
 
 
-def test_receive_stock_creates_batch_adjustment_and_audit_log(db_session, manager_user, category, product_factory):
+def test_receive_stock_creates_scoped_batch_adjustment_movement_and_audit(
+    db_session,
+    manager_user,
+    category,
+    product_factory,
+    assign_tenant_scope,
+    monkeypatch,
+):
+    organization, branch, _other_branch = assign_tenant_scope(manager_user)
     product = product_factory(category.id, name="Ibuprofen", sku="IBU-400")
+    product.organization_id = organization.id
+    product.branch_id = branch.id
+    db_session.commit()
+    monkeypatch.setattr(settings, "APP_MODE", "online_pos")
 
     result = receive_stock(
         product.id,
@@ -106,26 +97,125 @@ def test_receive_stock_creates_batch_adjustment_and_audit_log(db_session, manage
     saved_batch = db_session.query(ProductBatch).filter(ProductBatch.product_id == product.id).one()
     stock_adjustment = db_session.query(StockAdjustment).filter(StockAdjustment.product_id == product.id).one()
     movement = db_session.query(InventoryMovement).filter(InventoryMovement.product_id == product.id).one()
-    sync_event = db_session.query(SyncEvent).filter(
-        SyncEvent.event_type == SyncEventType.STOCK_RECEIVED,
-        SyncEvent.aggregate_id == stock_adjustment.id,
-    ).one()
     audit_entry = db_session.query(ActivityLog).filter(ActivityLog.entity_id == saved_batch.id).one()
 
     assert result["new_stock"] == 25
     assert refreshed_product.total_stock == 25
     assert saved_batch.batch_number == "IBU-NEW-001"
+    assert saved_batch.organization_id == organization.id
+    assert saved_batch.branch_id == branch.id
     assert stock_adjustment.quantity == 25
+    assert stock_adjustment.organization_id == organization.id
+    assert stock_adjustment.branch_id == branch.id
     assert movement.batch_id == saved_batch.id
+    assert movement.organization_id == organization.id
+    assert movement.branch_id == branch.id
     assert movement.movement_type == InventoryMovementType.STOCK_RECEIVED
     assert movement.quantity_delta == 25
     assert movement.stock_after == 25
     assert movement.source_document_type == "stock_adjustment"
     assert movement.source_document_id == stock_adjustment.id
-    assert sync_event.payload["product_id"] == product.id
-    assert sync_event.payload["batch_id"] == saved_batch.id
-    assert sync_event.payload["quantity"] == 25
     assert audit_entry.action == "receive_stock"
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch.id
+
+
+def test_add_product_batch_scopes_batch_movement_and_audit(
+    db_session,
+    manager_user,
+    category,
+    product_factory,
+    assign_tenant_scope,
+    monkeypatch,
+):
+    organization, branch, _other_branch = assign_tenant_scope(manager_user)
+    product = product_factory(category.id, name="Scoped Batch Product", sku="SCOPED-BATCH")
+    product.organization_id = organization.id
+    product.branch_id = branch.id
+    db_session.commit()
+    monkeypatch.setattr(settings, "APP_MODE", "online_pos")
+
+    batch = add_product_batch(
+        product.id,
+        ProductBatchCreate(
+            product_id=product.id,
+            batch_number="SCOPED-B1",
+            quantity=12,
+            expiry_date=date.today() + timedelta(days=180),
+            cost_price=2.0,
+        ),
+        db=db_session,
+        current_user=manager_user,
+    )
+
+    movement = db_session.query(InventoryMovement).filter(
+        InventoryMovement.batch_id == batch.id,
+        InventoryMovement.movement_type == InventoryMovementType.INITIAL_BATCH_STOCK,
+    ).one()
+    audit_entry = db_session.query(ActivityLog).filter(
+        ActivityLog.action == "create_product_batch",
+        ActivityLog.entity_id == batch.id,
+    ).one()
+
+    assert batch.organization_id == organization.id
+    assert batch.branch_id == branch.id
+    assert movement.organization_id == organization.id
+    assert movement.branch_id == branch.id
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch.id
+
+
+def test_manual_stock_adjustment_scopes_document_movement_and_audit(
+    db_session,
+    manager_user,
+    category,
+    product_factory,
+    batch_factory,
+    assign_tenant_scope,
+    monkeypatch,
+):
+    organization, branch, _other_branch = assign_tenant_scope(manager_user)
+    product = product_factory(category.id, name="Scoped Adjustment Product", sku="SCOPED-ADJ")
+    batch = batch_factory(
+        product.id,
+        batch_number="SCOPED-ADJ-B1",
+        quantity=10,
+        expiry_offset_days=180,
+    )
+    product.organization_id = organization.id
+    product.branch_id = branch.id
+    batch.organization_id = organization.id
+    batch.branch_id = branch.id
+    db_session.commit()
+    monkeypatch.setattr(settings, "APP_MODE", "online_pos")
+
+    adjustment = create_stock_adjustment(
+        StockAdjustmentCreate(
+            product_id=product.id,
+            batch_id=batch.id,
+            adjustment_type="damage",
+            quantity=2,
+            reason="Damaged during handling",
+        ),
+        db=db_session,
+        current_user=manager_user,
+    )
+
+    movement = db_session.query(InventoryMovement).filter(
+        InventoryMovement.source_document_type == "stock_adjustment",
+        InventoryMovement.source_document_id == adjustment.id,
+    ).one()
+    audit_entry = db_session.query(ActivityLog).filter(
+        ActivityLog.action == "create_stock_adjustment",
+        ActivityLog.entity_id == adjustment.id,
+    ).one()
+
+    assert adjustment.organization_id == organization.id
+    assert adjustment.branch_id == branch.id
+    assert movement.organization_id == organization.id
+    assert movement.branch_id == branch.id
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch.id
 
 
 def test_product_catalog_response_includes_wholesale_price(
@@ -272,9 +362,10 @@ def test_create_sale_rejects_customer_from_another_branch_before_stock_changes(
     category,
     product_factory,
     batch_factory,
+    assign_tenant_scope,
     monkeypatch,
 ):
-    organization, _branch, other_branch = _assign_online_scope(db_session, cashier_user)
+    organization, _branch, other_branch = assign_tenant_scope(cashier_user)
     customer = Customer(
         organization_id=organization.id,
         branch_id=other_branch.id,
@@ -311,9 +402,10 @@ def test_create_sale_rejects_customer_from_another_organization(
     category,
     product_factory,
     batch_factory,
+    assign_tenant_scope,
     monkeypatch,
 ):
-    _organization, _branch, _other_branch = _assign_online_scope(db_session, cashier_user)
+    _organization, _branch, _other_branch = assign_tenant_scope(cashier_user)
     other_organization = Organization(name="Other Tenant")
     db_session.add(other_organization)
     db_session.flush()
@@ -358,9 +450,10 @@ def test_create_sale_rejects_inactive_customer(
     category,
     product_factory,
     batch_factory,
+    assign_tenant_scope,
     monkeypatch,
 ):
-    organization, branch, _other_branch = _assign_online_scope(db_session, cashier_user)
+    organization, branch, _other_branch = assign_tenant_scope(cashier_user)
     customer = Customer(
         organization_id=organization.id,
         branch_id=branch.id,
@@ -396,9 +489,10 @@ def test_create_sale_links_customer_from_same_organization_and_branch(
     category,
     product_factory,
     batch_factory,
+    assign_tenant_scope,
     monkeypatch,
 ):
-    organization, branch, _other_branch = _assign_online_scope(db_session, cashier_user)
+    organization, branch, _other_branch = assign_tenant_scope(cashier_user)
     customer = Customer(
         organization_id=organization.id,
         branch_id=branch.id,

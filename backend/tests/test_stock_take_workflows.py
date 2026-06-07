@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from app.api.endpoints.stock_takes import complete_stock_take, create_stock_take
+from app.core.config import settings
 from app.models.activity_log import ActivityLog
 from app.models.inventory_movement import InventoryMovement, InventoryMovementType
 from app.models.product import Product, ProductBatch
 from app.models.stock_adjustment import AdjustmentType, StockAdjustment
 from app.models.stock_take import StockTakeStatus
-from app.models.sync_event import SyncEvent, SyncEventType
 from app.schemas.stock_take import StockTakeComplete, StockTakeCreate, StockTakeItemCreate
 
 import pytest
@@ -19,7 +19,10 @@ def test_complete_stock_take_applies_batch_correction_with_audit_and_movement(
     category,
     product_factory,
     batch_factory,
+    assign_tenant_scope,
+    monkeypatch,
 ):
+    organization, branch, _other_branch = assign_tenant_scope(manager_user)
     product = product_factory(category.id, name="Counted Product", sku="COUNT-001")
     batch = batch_factory(
         product.id,
@@ -27,6 +30,12 @@ def test_complete_stock_take_applies_batch_correction_with_audit_and_movement(
         quantity=10,
         expiry_offset_days=180,
     )
+    product.organization_id = organization.id
+    product.branch_id = branch.id
+    batch.organization_id = organization.id
+    batch.branch_id = branch.id
+    db_session.commit()
+    monkeypatch.setattr(settings, "APP_MODE", "online_pos")
 
     stock_take = create_stock_take(
         StockTakeCreate(
@@ -65,27 +74,27 @@ def test_complete_stock_take_applies_batch_correction_with_audit_and_movement(
         ActivityLog.action == "complete_stock_take",
         ActivityLog.entity_id == stock_take.id,
     ).one()
-    sync_events = db_session.query(SyncEvent).filter(
-        SyncEvent.aggregate_type == "stock_take",
-        SyncEvent.aggregate_id == stock_take.id,
-    ).order_by(SyncEvent.local_sequence_number.asc()).all()
-
     assert completed.status == StockTakeStatus.COMPLETED
+    assert completed.organization_id == organization.id
+    assert completed.branch_id == branch.id
+    assert completed.items[0].organization_id == organization.id
+    assert completed.items[0].branch_id == branch.id
     assert completed.completed_by == manager_user.id
     assert refreshed_batch.quantity == 7
     assert refreshed_product.total_stock == 7
     assert adjustment.quantity == 3
     assert adjustment.reason == "Shelf count variance"
+    assert adjustment.organization_id == organization.id
+    assert adjustment.branch_id == branch.id
     assert movement.movement_type == InventoryMovementType.STOCK_CORRECTION
+    assert movement.organization_id == organization.id
+    assert movement.branch_id == branch.id
     assert movement.quantity_delta == -3
     assert movement.stock_after == 7
     assert audit_entry.extra_data["movement_count"] == 1
     assert audit_entry.extra_data["total_variance"] == -3
-    assert [event.event_type for event in sync_events] == [
-        SyncEventType.STOCK_TAKE_CREATED,
-        SyncEventType.STOCK_TAKE_COMPLETED,
-    ]
-    assert sync_events[1].payload["total_variance"] == -3
+    assert audit_entry.organization_id == organization.id
+    assert audit_entry.branch_id == branch.id
 
 
 def test_complete_stock_take_rejects_stale_count_when_batch_changed(

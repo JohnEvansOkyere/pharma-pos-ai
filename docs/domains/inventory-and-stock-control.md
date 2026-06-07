@@ -22,6 +22,7 @@ Products include:
 
 Batches include:
 
+- organization and branch ownership
 - product id
 - batch number
 - quantity
@@ -81,6 +82,7 @@ Stock takes are batch-level count workflows:
 
 Inventory movements record:
 
+- organization, branch, and source device scope when available
 - product
 - batch
 - movement type
@@ -91,6 +93,23 @@ Inventory movements record:
 - user
 
 This ledger is the operational trace for stock changes.
+
+## Scope Propagation
+
+Inventory scope is written before the first database flush. The scope contract
+applies to every stock-changing workflow:
+
+- initial product batch creation;
+- stock receipt into a new or existing batch;
+- sale dispensing;
+- sale void/refund stock restoration, including reconstructed batches;
+- manual stock adjustments;
+- physical stock-take corrections.
+
+Each workflow carries the same organization and branch through its source
+document, `ProductBatch`, `StockAdjustment`, `InventoryMovement`, sync event,
+and audit entry. This keeps the append-only ledger and tamper-evident audit
+chain aligned with the operational row that caused the stock change.
 
 ## Alerts And Notifications
 
