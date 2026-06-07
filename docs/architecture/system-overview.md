@@ -4,15 +4,20 @@
 
 This project is a local-first pharmaceutical POS system for pharmacy operations. The primary installed product runs inside a pharmacy with a local backend and a local PostgreSQL database. The system supports POS sales, product and batch inventory, expiry tracking, stock controls, supplier management, reporting, audit logs, backups, and manager-facing AI reporting.
 
-The strategic direction is hybrid cloud:
+The strategic direction is one isolated operational deployment per pharmacy
+organization plus a central reporting plane:
 
-- each pharmacy branch keeps working locally even when internet is unavailable
-- branch events are written to a local sync outbox
-- the local backend uploads approved business events to a cloud ingestion API when connectivity exists
+- offline pharmacies run the backend and PostgreSQL locally
+- hosted pharmacies use a dedicated Render backend and paid Render Postgres instance
+- branches in one organization share its database; organizations never share an operational database
+- operational events are written to a transactional sync outbox
+- the tenant backend uploads approved business events to a central ingestion API
 - the cloud side projects those events into reporting read models
 - managers can view multi-branch cloud dashboards and use AI over approved aggregate reporting data
 
-The cloud database target discussed for production is Supabase Postgres. Neon can support similar Postgres patterns, but Supabase is the primary cloud database target for this product direction.
+The existing Supabase project is the central reporting/control-plane database,
+not a shared operational POS database. See
+[Hosted Tenant Topology And Backup](hosted-tenant-topology-and-backup.md).
 
 ## Current System Shape
 
@@ -21,15 +26,15 @@ Pharmacy workstation/browser
         |
         | React frontend
         v
-Local FastAPI backend
+Tenant FastAPI backend (local or hosted)
         |
         | SQLAlchemy transactions
         v
-Local PostgreSQL database
+Dedicated tenant PostgreSQL database
         |
-        | optional scheduled sync upload
+        | transactional outbox + scheduled upload
         v
-Cloud ingestion API / cloud backend
+Central ingestion API
         |
         | idempotent ingestion + projection
         v
@@ -66,13 +71,13 @@ Manager reporting experience
 
 ## Source Of Truth Boundaries
 
-Local source of truth:
+Tenant operational source of truth:
 
 - sales documents
 - product and batch stock used for dispensing
 - stock adjustments and stock take corrections
-- local sync outbox state
-- branch backups
+- tenant sync outbox state
+- tenant backups
 
 Cloud source of truth:
 

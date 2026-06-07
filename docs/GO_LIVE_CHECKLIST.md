@@ -1,6 +1,6 @@
 # Go-Live Checklist — 5-Shop Pharmacy Rollout
 
-> **Last updated:** 2026-05-19 UTC
+> **Last updated:** 2026-06-07 UTC
 > **Source audits:** `docs/audits/2026-05-15-production-readiness-audit.md`, `docs/audits/2026-05-15-production-readiness-audit-v2.md`, `docs/ai/AI_CLOUD_DASHBOARD_ASSESSMENT_2026-05-18.md`, `docs/ai/2026-05-19-cloud-ai-dashboard-audit.md`
 > **Status:** 🟡 **CONDITIONALLY READY** — All critical code defects resolved. Operational verification and credential rotation remain.
 
@@ -798,10 +798,10 @@
 
 ### 10.0 Decision, Topology & Reconciliation
 
-- [ ] **Choose provider, topology, and backup mechanism first** — this gates everything below. Decide between *one managed cluster with many databases* vs *separate instances/projects per tenant*, because **per-database point-in-time restore is not guaranteed when tenant databases share one managed server** (many providers do PITR at the instance level only). The recoverability promise in 10.3 depends on this choice. *(2026-06-07 UTC)*
+- [x] **Choose provider, topology, and backup mechanism first** — hosted operational pharmacies use one paid Render Postgres instance plus one Render backend service per organization; the existing Supabase project is central reporting/control-plane only. Recovery uses per-instance Render PITR plus encrypted off-platform logical backups. ✅ *(2026-06-07 07:55 UTC; see `docs/architecture/hosted-tenant-topology-and-backup.md`)*
 - [x] Record the per-tenant + central-plane decision in `MEMORY.md` and supersede the shared-DB `online_pos` direction in decisions **3.30**, **3.32**, and **3.33**. ✅ *(2026-06-07 07:31 UTC)*
 - [x] Reframe `ONLINE-P0-01..05` in `MEMORY.md`: cross-pharmacy isolation is addressed by the architecture; remaining items are intra-tenant correctness work (branch auth, customer ownership, inventory integrity, AI live-sourcing). ✅ *(2026-06-07 07:31 UTC)*
-- [x] Confirm the initial target scale of roughly 10 clients. **A separate database per client is the standard for every client.** A separate *cluster/project/instance* is reserved for a future enterprise client with contractual physical-isolation, residency, or SLA requirements. ✅ *(2026-06-07 07:31 UTC)*
+- [x] Confirm the initial target scale of roughly 10 clients. **A separate paid Render Postgres instance per client is the standard for every hosted client.** Larger compute, high availability, dedicated networking, or contractual residency/SLA controls are reserved for clients that require them. ✅ *(updated 2026-06-07 07:55 UTC)*
 
 ### 10.1 P0 Transactional Correctness — FIX BEFORE MIGRATION, REPORTING, OR AI
 

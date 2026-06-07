@@ -12,12 +12,30 @@ Minimum runtime components:
 
 The frontend is not true offline browser storage. It requires a reachable backend. The intended offline behavior is local network/local machine availability, not cloud-free browser persistence.
 
+## Hosted Pharmacy Installation
+
+Minimum runtime components per pharmacy organization:
+
+- dedicated Render backend service using the shared versioned application image
+- dedicated paid Render Postgres instance
+- tenant-specific database, application, messaging, and central-publish secrets
+- transactional outbox publisher to the central ingestion API
+- Render PITR plus encrypted off-platform logical backups
+
+Branches under one organization share its operational database. No operational
+database is shared by different pharmacy organizations. Hosted operation
+requires internet connectivity; the browser queue is only a short network-drop
+buffer.
+
+See
+[Hosted Tenant Topology And Backup](hosted-tenant-topology-and-backup.md).
+
 ## Cloud Reporting Installation
 
 Cloud-side components:
 
 - cloud backend or ingestion API
-- Supabase Postgres
+- Supabase Postgres used only for central reporting/control-plane data
 - projection worker or backend-triggered projection endpoint
 - cloud dashboard routes
 - AI manager services

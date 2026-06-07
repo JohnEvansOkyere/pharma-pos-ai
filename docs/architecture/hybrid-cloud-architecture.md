@@ -2,9 +2,13 @@
 
 ## Goal
 
-The hybrid cloud design lets each pharmacy branch operate locally while creating a cloud reporting layer for owners and managers.
+The hybrid cloud design gives each pharmacy organization an isolated
+operational backend/database while creating a central reporting layer for owners
+and vendor operations.
 
-The local branch remains operationally independent. The cloud layer receives event streams and builds reporting views. This keeps internet failure from blocking dispensing and sales.
+Offline deployments remain operationally independent when the internet is
+unavailable. Hosted deployments require internet access to their dedicated
+backend, but central reporting failure still does not block dispensing or sales.
 
 ## Tenant Model
 
@@ -21,7 +25,9 @@ Important tables:
 - `devices`
 - tenant-aware columns on operational and cloud tables
 
-The expected scaled deployment is many organizations, each with one or more branches, each branch having one or more registered devices.
+The expected scaled deployment is many isolated organization databases, each
+with one or more branches and registered devices. See
+[Hosted Tenant Topology And Backup](hosted-tenant-topology-and-backup.md).
 
 ## Event Flow
 
@@ -114,18 +120,22 @@ Current repair boundaries:
 - repairs modify cloud reporting read models only
 - local branch source data is not changed by cloud repair
 
-## Supabase Postgres Direction
+## Cloud Provider Boundaries
 
-Supabase Postgres is the cloud database target. The implementation should treat Supabase as PostgreSQL with managed hosting, backups, connection limits, and platform policies.
+Hosted operational pharmacies use one paid Render Postgres instance and one
+Render backend service per organization. The existing Supabase project remains
+the central reporting/control-plane database.
 
 Production expectations:
 
+- never place two pharmacy organizations in one operational database
 - use service-side credentials only in backend/cloud services
 - keep Supabase keys out of frontend code unless a specific public anon-key use case is designed
-- enforce tenant scoping at application level and, where practical, database policy level
+- keep tenant database URLs and publish tokens unique per deployment
 - use migrations rather than manual schema editing
 - monitor connection count, slow queries, storage, and backup status
 - keep ingestion and projection idempotent
+- retain encrypted logical backups outside the database provider
 
 ## What This Is Not Yet
 
