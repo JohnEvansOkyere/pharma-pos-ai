@@ -22,7 +22,9 @@ from app.services.tenant_provisioning_service import (  # noqa: E402
     RenderAPIClient,
     build_render_postgres_payload,
     build_render_service_payload,
+    configure_tenant_runtime_secrets,
     load_or_create_state,
+    load_tenant_runtime_env,
     register_control_plane,
     run_migrations,
     save_state,
@@ -60,6 +62,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tenant-database-url",
         default=os.getenv("TENANT_DATABASE_URL"),
+    )
+    parser.add_argument(
+        "--tenant-secrets-file",
+        type=Path,
+        default=Path(os.environ["TENANT_SECRETS_FILE"])
+        if os.getenv("TENANT_SECRETS_FILE")
+        else None,
+        help="Owner-only JSON file containing tenant-specific messaging/API keys",
     )
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--render-api-key", default=os.getenv("RENDER_API_KEY"))
@@ -143,6 +153,14 @@ def main() -> int:
     print(f"Branch UID: {identity.branch_uid}")
     print(f"Deployment UID: {identity.deployment_uid}")
     print(f"Device UID: {identity.device_uid}")
+    if args.tenant_secrets_file:
+        tenant_secrets = configure_tenant_runtime_secrets(
+            state_dir,
+            state,
+            tenant_secrets,
+            load_tenant_runtime_env(args.tenant_secrets_file),
+            require_sms_credentials=args.render,
+        )
     if not args.apply:
         print("Dry run only. Re-run with --apply to create or modify resources.")
         return 0
@@ -151,6 +169,10 @@ def main() -> int:
         args.control_plane_database_url,
         "CONTROL_PLANE_DATABASE_URL or --control-plane-database-url",
     )
+    if args.render and not tenant_secrets.runtime_env:
+        raise SystemExit(
+            "TENANT_SECRETS_FILE or --tenant-secrets-file is required for hosted tenants"
+        )
 
     render_client = None
     tenant_database_url = args.tenant_database_url

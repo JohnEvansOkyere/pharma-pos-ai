@@ -12,7 +12,9 @@ from app.services.tenant_provisioning_service import (
     TenantSecrets,
     build_render_postgres_payload,
     build_render_service_payload,
+    configure_tenant_runtime_secrets,
     load_or_create_state,
+    load_tenant_runtime_env,
     register_control_plane,
     run_migrations,
     seed_tenant_database,
@@ -207,7 +209,17 @@ def test_render_service_payload_uses_isolated_runtime_and_global_ids():
         central_ingest_url="https://central.example/api/sync/ingest",
         cors_origins="https://tenant.example",
         identity=identity,
-        tenant_secrets=_secrets(),
+        tenant_secrets=TenantSecrets(
+            secret_key="s" * 64,
+            sync_token="sync-token-value",
+            admin_password="Admin-Password-123",
+            runtime_env={
+                "SMS_PROVIDER": "africas_talking",
+                "SMS_API_KEY": "tenant-sms-key",
+                "SMS_USERNAME": "tenant-account",
+                "SMS_SENDER_ID": "PharmaPOS",
+            },
+        ),
         control_plane_ids={"organization_id": 10, "branch_id": 20},
     )
     environment = {
@@ -227,3 +239,116 @@ def test_render_service_payload_uses_isolated_runtime_and_global_ids():
     )
     assert environment["CLOUD_SYNC_BRANCH_UID"] == identity.branch_uid
     assert environment["CLOUD_SYNC_DEPLOYMENT_UID"] == identity.deployment_uid
+    assert environment["SMS_PROVIDER"] == "africas_talking"
+    assert environment["SMS_API_KEY"] == "tenant-sms-key"
+
+
+def test_runtime_secret_file_requires_owner_only_permissions(tmp_path):
+    secret_file = tmp_path / "tenant-secrets.json"
+    secret_file.write_text('{"SMS_PROVIDER":"stub"}')
+    secret_file.chmod(0o640)
+
+    with pytest.raises(RuntimeError, match="group or others"):
+        load_tenant_runtime_env(secret_file)
+
+
+def test_configure_runtime_secrets_requires_real_hosted_sms_provider(tmp_path):
+    state, _identity_value, tenant_secrets = load_or_create_state(
+        tmp_path / "tenant-a",
+        organization_name="Tenant A",
+        branch_name="Main Branch",
+        branch_code="MAIN",
+        device_name="Hosted Backend",
+        admin_username="owner",
+        admin_email="owner@example.com",
+        admin_full_name="Owner",
+    )
+
+    with pytest.raises(ValueError, match="real tenant-specific SMS provider"):
+        configure_tenant_runtime_secrets(
+            tmp_path / "tenant-a",
+            state,
+            tenant_secrets,
+            {"SMS_PROVIDER": "stub"},
+            require_sms_credentials=True,
+        )
+
+
+def test_configure_runtime_secrets_rejects_cross_tenant_key_reuse(tmp_path):
+    runtime_env = {
+        "SMS_PROVIDER": "africas_talking",
+        "SMS_API_KEY": "shared-key-is-not-allowed",
+        "SMS_USERNAME": "tenant-account",
+        "SMS_SENDER_ID": "PharmaPOS",
+    }
+    first_state, _first_identity, first_secrets = load_or_create_state(
+        tmp_path / "tenant-a",
+        organization_name="Tenant A",
+        branch_name="Main Branch",
+        branch_code="MAIN",
+        device_name="Hosted Backend",
+        admin_username="owner-a",
+        admin_email="owner-a@example.com",
+        admin_full_name="Owner A",
+    )
+    configure_tenant_runtime_secrets(
+        tmp_path / "tenant-a",
+        first_state,
+        first_secrets,
+        runtime_env,
+        require_sms_credentials=True,
+    )
+    saved_state = json.loads(
+        (tmp_path / "tenant-a" / "state.json").read_text()
+    )
+    assert "shared-key-is-not-allowed" not in json.dumps(saved_state)
+    assert saved_state["secret_fingerprints"]["SMS_API_KEY"]
+    second_state, _second_identity, second_secrets = load_or_create_state(
+        tmp_path / "tenant-b",
+        organization_name="Tenant B",
+        branch_name="Main Branch",
+        branch_code="MAIN",
+        device_name="Hosted Backend",
+        admin_username="owner-b",
+        admin_email="owner-b@example.com",
+        admin_full_name="Owner B",
+    )
+
+    with pytest.raises(RuntimeError, match="already assigned"):
+        configure_tenant_runtime_secrets(
+            tmp_path / "tenant-b",
+            second_state,
+            second_secrets,
+            runtime_env,
+            require_sms_credentials=True,
+        )
+
+
+def test_configure_runtime_secrets_rejects_reserved_deployment_variables(
+    tmp_path,
+):
+    state, _identity_value, tenant_secrets = load_or_create_state(
+        tmp_path / "tenant-a",
+        organization_name="Tenant A",
+        branch_name="Main Branch",
+        branch_code="MAIN",
+        device_name="Hosted Backend",
+        admin_username="owner",
+        admin_email="owner@example.com",
+        admin_full_name="Owner",
+    )
+
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        configure_tenant_runtime_secrets(
+            tmp_path / "tenant-a",
+            state,
+            tenant_secrets,
+            {
+                "SMS_PROVIDER": "africas_talking",
+                "SMS_API_KEY": "tenant-key",
+                "SMS_USERNAME": "tenant-account",
+                "SMS_SENDER_ID": "PharmaPOS",
+                "DATABASE_URL": "postgresql://wrong-database",
+            },
+            require_sms_credentials=True,
+        )

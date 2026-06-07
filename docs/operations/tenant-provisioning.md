@@ -45,7 +45,43 @@ export RENDER_REGION='frankfurt'
 export RENDER_PROVISIONER_CIDR='203.0.113.8/32'
 export TENANT_CORS_ORIGINS='https://tenant-pos.example.com'
 export CENTRAL_INGEST_URL='https://pharma-pos-ai.onrender.com/api/sync/ingest'
+export TENANT_SECRETS_FILE='/secure/vendor-secrets/example-pharmacy.json'
 ```
+
+The tenant secrets file must be owner-only:
+
+```bash
+chmod 600 "$TENANT_SECRETS_FILE"
+```
+
+Africa's Talking example schema:
+
+```json
+{
+  "SMS_PROVIDER": "africas_talking",
+  "SMS_API_KEY": "<tenant-specific-key>",
+  "SMS_USERNAME": "<tenant-specific-username>",
+  "SMS_SENDER_ID": "<approved-sender-id>"
+}
+```
+
+Hubtel example schema:
+
+```json
+{
+  "SMS_PROVIDER": "hubtel",
+  "SMS_CLIENT_ID": "<tenant-specific-client-id>",
+  "SMS_CLIENT_SECRET": "<tenant-specific-client-secret>",
+  "SMS_FROM_NUMBER": "<registered-number>",
+  "SMS_SENDER_ID": "<approved-sender-id>"
+}
+```
+
+Optional tenant-specific OpenAI, Anthropic, Groq, SMTP, and Telegram
+credentials may be placed in the same owner-only file using the documented
+backend environment names. Reserved deployment values such as `DATABASE_URL`,
+`SECRET_KEY`, and `CLOUD_SYNC_API_TOKEN` are rejected because the provisioner
+and infrastructure provider own them.
 
 Dry run and allocate resumable identity:
 
@@ -80,6 +116,10 @@ become available, migrates and seeds it through the temporarily allowlisted
 external connection, registers the control-plane rows, creates a dedicated
 backend service using the internal database URL, and disables external database
 access.
+
+Hosted apply refuses `SMS_PROVIDER=stub`, missing provider credentials, broad
+secret-file permissions, or a sensitive key fingerprint already assigned to
+another tenant state under the canonical provisioning root.
 
 The service uses:
 

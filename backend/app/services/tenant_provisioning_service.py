@@ -1,7 +1,7 @@
 """Repeatable provisioning helpers for isolated pharmacy deployments."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 import hashlib
 from ipaddress import ip_network
 import json
@@ -27,6 +27,39 @@ from app.services.sync_identity_service import canonical_uuid
 
 STATE_VERSION = 1
 RENDER_API_BASE_URL = "https://api.render.com/v1"
+ALLOWED_TENANT_RUNTIME_ENV = {
+    "SMS_PROVIDER",
+    "SMS_SENDER_ID",
+    "SMS_API_KEY",
+    "SMS_USERNAME",
+    "SMS_FROM_NUMBER",
+    "SMS_CLIENT_ID",
+    "SMS_CLIENT_SECRET",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GROQ_API_KEY",
+    "AI_MANAGER_PROVIDER",
+    "AI_MANAGER_MODEL",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
+    "SMTP_FROM_EMAIL",
+    "SMTP_FROM_NAME",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_WEBHOOK_SECRET",
+}
+SENSITIVE_TENANT_RUNTIME_ENV = {
+    "SMS_API_KEY",
+    "SMS_CLIENT_ID",
+    "SMS_CLIENT_SECRET",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GROQ_API_KEY",
+    "SMTP_PASSWORD",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_WEBHOOK_SECRET",
+}
 
 
 def slugify(value: str) -> str:
@@ -85,6 +118,7 @@ class TenantSecrets:
     secret_key: str
     sync_token: str
     admin_password: str
+    runtime_env: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def create(cls) -> "TenantSecrets":
@@ -92,6 +126,7 @@ class TenantSecrets:
             secret_key=secrets.token_urlsafe(64),
             sync_token=secrets.token_urlsafe(48),
             admin_password=secrets.token_urlsafe(24),
+            runtime_env={},
         )
 
 
@@ -111,6 +146,131 @@ def write_secrets_private(path: Path, tenant_secrets: TenantSecrets) -> None:
 def read_json(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_tenant_runtime_env(path: Path) -> dict[str, str]:
+    if hasattr(os, "geteuid") and path.stat().st_uid != os.geteuid():
+        raise RuntimeError(f"Tenant secrets file is not owned by the current user: {path}")
+    mode = stat_mode(path)
+    if mode & 0o077:
+        raise RuntimeError(
+            f"Tenant secrets file must not be accessible by group or others: {path}"
+        )
+    value = read_json(path)
+    if not isinstance(value, dict):
+        raise ValueError("Tenant secrets file must contain one JSON object")
+    return {
+        str(key): str(item).strip()
+        for key, item in value.items()
+        if item is not None and str(item).strip()
+    }
+
+
+def stat_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+def validate_tenant_runtime_env(
+    runtime_env: dict[str, str],
+    *,
+    require_sms_credentials: bool,
+) -> dict[str, str]:
+    unknown = set(runtime_env) - ALLOWED_TENANT_RUNTIME_ENV
+    if unknown:
+        raise ValueError(
+            "Unsupported tenant runtime secret keys: "
+            + ", ".join(sorted(unknown))
+        )
+
+    validated = dict(runtime_env)
+    provider = validated.get("SMS_PROVIDER", "stub").lower()
+    if provider not in {"stub", "africas_talking", "hubtel"}:
+        raise ValueError("SMS_PROVIDER must be stub, africas_talking, or hubtel")
+    validated["SMS_PROVIDER"] = provider
+
+    required_by_provider = {
+        "africas_talking": {"SMS_API_KEY", "SMS_USERNAME", "SMS_SENDER_ID"},
+        "hubtel": {
+            "SMS_CLIENT_ID",
+            "SMS_CLIENT_SECRET",
+            "SMS_FROM_NUMBER",
+            "SMS_SENDER_ID",
+        },
+    }
+    if require_sms_credentials and provider == "stub":
+        raise ValueError(
+            "Hosted tenant provisioning requires a real tenant-specific SMS provider"
+        )
+    missing = required_by_provider.get(provider, set()) - set(validated)
+    if missing:
+        raise ValueError(
+            f"{provider} tenant credentials are missing: "
+            + ", ".join(sorted(missing))
+        )
+    return validated
+
+
+def secret_fingerprints(tenant_secrets: TenantSecrets) -> dict[str, str]:
+    values = {
+        "SECRET_KEY": tenant_secrets.secret_key,
+        "CLOUD_SYNC_API_TOKEN": tenant_secrets.sync_token,
+        **{
+            key: value
+            for key, value in tenant_secrets.runtime_env.items()
+            if key in SENSITIVE_TENANT_RUNTIME_ENV
+        },
+    }
+    return {
+        key: hashlib.sha256(value.encode()).hexdigest()
+        for key, value in sorted(values.items())
+    }
+
+
+def _assert_secret_fingerprints_unique(
+    state_root: Path,
+    *,
+    current_state_dir: Path,
+    fingerprints: dict[str, str],
+) -> None:
+    for state_path in state_root.glob("*/state.json"):
+        if state_path.parent == current_state_dir:
+            continue
+        other = read_json(state_path).get("secret_fingerprints", {})
+        for key, fingerprint in fingerprints.items():
+            if fingerprint in other.values():
+                raise RuntimeError(
+                    f"{key} is already assigned to another tenant state"
+                )
+
+
+def configure_tenant_runtime_secrets(
+    state_dir: Path,
+    state: dict[str, Any],
+    tenant_secrets: TenantSecrets,
+    runtime_env: dict[str, str],
+    *,
+    require_sms_credentials: bool,
+) -> TenantSecrets:
+    validated = validate_tenant_runtime_env(
+        runtime_env,
+        require_sms_credentials=require_sms_credentials,
+    )
+    if tenant_secrets.runtime_env and tenant_secrets.runtime_env != validated:
+        raise RuntimeError(
+            "Tenant runtime secrets differ from the recorded bundle; use an "
+            "audited rotation workflow instead of overwriting provisioning state"
+        )
+    updated = replace(tenant_secrets, runtime_env=validated)
+    fingerprints = secret_fingerprints(updated)
+    _assert_secret_fingerprints_unique(
+        state_dir.parent,
+        current_state_dir=state_dir,
+        fingerprints=fingerprints,
+    )
+    state["secret_fingerprints"] = fingerprints
+    write_secrets_private(state_dir / "secrets.json", updated)
+    save_state(state_dir, state)
+    return updated
 
 
 def load_or_create_state(
@@ -137,7 +297,13 @@ def load_or_create_state(
             raise RuntimeError(
                 f"Unsupported provisioning state version in {state_path}"
             )
-        tenant_secrets = TenantSecrets(**read_json(secrets_path))
+        stored_secrets = read_json(secrets_path)
+        tenant_secrets = TenantSecrets(
+            secret_key=stored_secrets["secret_key"],
+            sync_token=stored_secrets["sync_token"],
+            admin_password=stored_secrets["admin_password"],
+            runtime_env=stored_secrets.get("runtime_env", {}),
+        )
         identity = TenantIdentity.from_dict(state["identity"])
         requested = (
             organization_name,
@@ -606,6 +772,7 @@ def build_render_service_payload(
         "CLOUD_SYNC_BRANCH_UID": identity.branch_uid,
         "CLOUD_PROJECTION_ENABLED": "false",
     }
+    environment.update(tenant_secrets.runtime_env)
     payload: dict[str, Any] = {
         "type": "web_service",
         "name": f"pharma-{slug}-backend",
